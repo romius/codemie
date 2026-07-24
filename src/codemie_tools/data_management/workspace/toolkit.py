@@ -24,6 +24,7 @@ from codemie.service.agent_workspace_service import AgentWorkspaceService
 from codemie_tools.base.base_toolkit import BaseToolkit
 from codemie_tools.base.models import Tool, ToolKit
 from codemie_tools.data_management.workspace.generate_image_tool_v2 import GenerateWorkspaceImageToolV2
+from codemie_tools.data_management.workspace.inspect_workspace_image_tool import InspectWorkspaceImageTool
 from codemie_tools.data_management.workspace.tools import (
     DeleteWorkspaceFileTool,
     EditWorkspaceFileTool,
@@ -40,6 +41,7 @@ from codemie_tools.data_management.workspace.tools_vars import (
     EXECUTE_WORKSPACE_SCRIPT_TOOL,
     GENERATE_WORKSPACE_IMAGE_TOOL_V2,
     GREP_WORKSPACE_FILES_TOOL,
+    INSPECT_WORKSPACE_IMAGE_TOOL,
     LIST_WORKSPACE_FILES_TOOL,
     READ_WORKSPACE_FILE_TOOL,
     WRITE_WORKSPACE_FILE_TOOL,
@@ -57,6 +59,7 @@ class AgentWorkspaceToolkitUI(ToolKit):
         Tool.from_metadata(GREP_WORKSPACE_FILES_TOOL, tool_class=GrepWorkspaceFilesTool),
         Tool.from_metadata(EXECUTE_WORKSPACE_SCRIPT_TOOL, tool_class=ExecuteWorkspaceScriptTool),
         Tool.from_metadata(GENERATE_WORKSPACE_IMAGE_TOOL_V2, tool_class=GenerateWorkspaceImageToolV2),
+        Tool.from_metadata(INSPECT_WORKSPACE_IMAGE_TOOL, tool_class=InspectWorkspaceImageTool),
     ]
     label: str | None = "Agent Workspace"
 
@@ -131,6 +134,12 @@ class AgentWorkspaceToolkit(BaseToolkit):
                 workspace_service=shared_service,
                 workspace_id=resolved_workspace_id,
                 image_generator=self.image_generator,
+            ),
+            InspectWorkspaceImageTool(
+                conversation_id=self.conversation_id,
+                user=self.user,
+                workspace_service=shared_service,
+                workspace_id=resolved_workspace_id,
             ),
         ]
 

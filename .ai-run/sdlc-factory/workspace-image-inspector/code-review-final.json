@@ -1,0 +1,65 @@
+{
+  "gate_id": "code-review.final",
+  "decision": "approve",
+  "confidence": "low",
+  "risk_flags": [],
+  "business_review": [],
+  "standards_review": [
+    {
+      "standard": "git-workflow/commit-format",
+      "status": "pass",
+      "notes": "Commit 'EPMCDME-13621: Workspace image inspector tool' matches required EPMCDME-####: Description format."
+    },
+    {
+      "standard": "code-quality/license-headers",
+      "status": "pass",
+      "notes": "New file inspect_workspace_image_tool.py includes the Apache 2.0 license header."
+    },
+    {
+      "standard": "code-quality/types",
+      "status": "pass",
+      "notes": "All new public functions have explicit parameter and return type annotations."
+    },
+    {
+      "standard": "security/secrets",
+      "status": "pass",
+      "notes": "No hardcoded credentials or sensitive values logged. File access goes through workspace_service, not direct filesystem."
+    }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "triage": "patch",
+      "severity": "major",
+      "status": "resolved",
+      "file": "src/codemie_tools/data_management/workspace/inspect_workspace_image_tool.py",
+      "line_hint": "_limit_output_content override added",
+      "problem": "When inspect_request is long enough to exceed the base class token limit, _limit_output_content replaced the InspectWorkspaceImageResponse object with a plain str before _post_process_output_content is called. The isinstance check then hit the else branch, returning (str(output), []) — the image artifact was silently discarded.",
+      "impact": "The tool would return a truncated text response with an empty artifact list. The LLM would never see the image.",
+      "resolution": "Added _limit_output_content override that delegates truncation to the base class on output.text only, then re-wraps the result into InspectWorkspaceImageResponse. _post_process_output_content now always receives the expected type and the artifact is preserved even on truncation."
+    },
+    {
+      "id": "CR-002",
+      "triage": "patch",
+      "severity": "major",
+      "status": "resolved",
+      "file": "src/codemie/agents/image_artifact_hook.py",
+      "line_hint": "accumulate_artifact and _extract_image_blocks",
+      "problem": "Guard `pending_text is not None` preserved empty-string \"\" from the first ToolMessage, permanently discarding non-empty text values from subsequent tool messages in the same batch.",
+      "impact": "The LLM would receive no meaningful analysis request when an earlier artifact carried text=\"\".",
+      "resolution": "Changed `if text is None` to `if not text` in _extract_image_blocks and `pending_text if pending_text is not None else text` to `pending_text if pending_text else text` in accumulate_artifact. Empty strings no longer shadow subsequent non-empty values."
+    },
+    {
+      "id": "CR-003",
+      "triage": "patch",
+      "severity": "major",
+      "status": "resolved",
+      "file": "src/codemie_tools/data_management/code_executor/llm_sandbox.py",
+      "line_hint": "is_sandbox_system_file_path",
+      "problem": "p.parts spans all ancestors; any file under a directory named like a sandbox system dir anywhere in the path was misclassified as a system file.",
+      "impact": "Silent data loss: files in user project directories with a matching ancestor name were excluded from processing with no error.",
+      "resolution": "Changed `any(part in SANDBOX_SYSTEM_DIR_NAMES for part in p.parts)` to `p.parent.name in SANDBOX_SYSTEM_DIR_NAMES`. Only the direct parent directory is now checked."
+    }
+  ],
+  "rationale": "All three major patch findings resolved. No story/spec was provided so the acceptance lens was skipped — no-spec round keeps confidence: low. Standards all pass. Deferred: silent no-op on missing execution state in abort_state/finish_state is intentional graceful degradation with no resource leak (confirmed by edge-case lens). Dismissed: WEBP detection edge-case is safe. Diff size: 177+/38- lines across 7 files."
+}

@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from kubernetes.stream import stream
+from llm_sandbox.core.session_base import PYTHON_PIP_CACHE_DIR_NAME, PYTHON_VENV_DIR_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -45,10 +46,12 @@ _original_session_base_run = None
 
 SANDBOX_SYSTEM_FILE_PREFIX = "SANDBOX_"
 SANDBOX_SYSTEM_FILE_RE = re.compile(rf"^{re.escape(SANDBOX_SYSTEM_FILE_PREFIX)}[0-9a-f]{{32}}\.[A-Za-z0-9_+-]+$")
+SANDBOX_SYSTEM_DIR_NAMES = frozenset({PYTHON_VENV_DIR_NAME, PYTHON_PIP_CACHE_DIR_NAME})
 
 
 def is_sandbox_system_file_path(file_path: str | Path) -> bool:
-    return bool(SANDBOX_SYSTEM_FILE_RE.fullmatch(Path(file_path).name))
+    p = Path(file_path)
+    return bool(SANDBOX_SYSTEM_FILE_RE.fullmatch(p.name)) or p.parent.name in SANDBOX_SYSTEM_DIR_NAMES
 
 
 def _build_sandbox_system_file_path(workdir: str, extension: str) -> Path:

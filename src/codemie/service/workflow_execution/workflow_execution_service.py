@@ -297,7 +297,13 @@ class WorkflowExecutionService:
             return state.id
 
     def abort_state(self, execution_state_id: str):
-        state = WorkflowExecutionState.get_by_id(id_=execution_state_id)
+        state = WorkflowExecutionState.find_by_id(id_=execution_state_id)
+        if state is None:
+            logger.warning(
+                f"Execution state {execution_state_id} not found when aborting — "
+                "it may have been deleted by a concurrent operation."
+            )
+            return
         state.status = WorkflowExecutionStatusEnum.ABORTED
         state.save()
 
@@ -316,7 +322,13 @@ class WorkflowExecutionService:
                     "Skipping tokens_usage update."
                 )
 
-            state = WorkflowExecutionState.get_by_id(id_=execution_state_id)
+            state = WorkflowExecutionState.find_by_id(id_=execution_state_id)
+            if state is None:
+                logger.warning(
+                    f"Execution state {execution_state_id} not found when finishing with status {status} — "
+                    "it may have been deleted by a concurrent operation."
+                )
+                return
             state.output = output
             state.status = status
             completed_at = datetime.now()

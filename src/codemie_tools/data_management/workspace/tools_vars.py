@@ -83,3 +83,17 @@ GENERATE_WORKSPACE_IMAGE_TOOL_V2 = ToolMetadata(
         "and reference it by workspace path or sandbox link."
     ),
 )
+
+INSPECT_WORKSPACE_IMAGE_TOOL = ToolMetadata(
+    name="inspect_workspace_image",
+    description=(
+        "Visually analyze an image file from the persistent conversation workspace. "
+        "Accepts a workspace-relative file_path and an inspect_request describing what to analyze. "
+        "Supports common image formats: JPEG, PNG, GIF, WebP, BMP, TIFF."
+    ),
+    label="Inspect workspace image",
+    user_description=(
+        "Allows the AI assistant to visually analyze an image from the workspace "
+        "and answer questions about it using vision capabilities."
+    ),
+)

@@ -14,24 +14,9 @@
 
 from typing import Any
 
-from langchain_core.messages import HumanMessage, ImageContentBlock, TextContentBlock, ToolMessage
+from langchain_core.messages import ImageContentBlock, ToolMessage
 
-
-def _extract_image_blocks(artifact: list) -> list[ImageContentBlock]:
-    return [
-        ImageContentBlock(type="image", base64=item["data"], mime_type=item["mime_type"])
-        for item in artifact
-        if isinstance(item, dict) and "data" in item and "mime_type" in item
-    ]
-
-
-def _make_image_message(blocks: list[ImageContentBlock]) -> HumanMessage:
-    return HumanMessage(
-        content=[
-            TextContentBlock(type="text", text="[Attached images from the tool response above]"),
-            *blocks,
-        ]
-    )
+from codemie.agents.image_artifact_hook import accumulate_artifact, make_image_message
 
 
 def _image_artifact_pre_model_hook(state: dict) -> dict:
@@ -39,20 +24,20 @@ def _image_artifact_pre_model_hook(state: dict) -> dict:
     messages = state.get("messages", [])
     result: list = []
     pending: list[ImageContentBlock] = []
+    pending_text: str | None = None
 
     for msg in messages:
         if isinstance(msg, ToolMessage):
-            artifact = getattr(msg, "artifact", None)
-            if isinstance(artifact, list):
-                pending.extend(_extract_image_blocks(artifact))
+            pending, pending_text = accumulate_artifact(msg, pending, pending_text)
         else:
             if pending:
-                result.append(_make_image_message(pending))
+                result.append(make_image_message(pending, pending_text))
                 pending = []
+                pending_text = None
         result.append(msg)
 
     if pending:
-        result.append(_make_image_message(pending))
+        result.append(make_image_message(pending, pending_text))
 
     if result == list(messages):
         return {"llm_input_messages": messages}

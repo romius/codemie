@@ -15,21 +15,34 @@
 from langchain_core.messages import HumanMessage, ImageContentBlock, TextContentBlock, ToolMessage
 
 
-def _extract_image_blocks(artifact: list) -> list[ImageContentBlock]:
-    return [
-        ImageContentBlock(type="image", base64=item["data"], mime_type=item["mime_type"])
-        for item in artifact
-        if isinstance(item, dict) and "data" in item and "mime_type" in item
-    ]
+def _extract_image_blocks(artifact: list) -> tuple[list[ImageContentBlock], str | None]:
+    blocks = []
+    text = None
+    for item in artifact:
+        if isinstance(item, dict) and "data" in item and "mime_type" in item:
+            blocks.append(ImageContentBlock(type="image", base64=item["data"], mime_type=item["mime_type"]))
+            if not text:
+                text = item.get("text")
+    return blocks, text
 
 
-def _make_image_message(blocks: list[ImageContentBlock]) -> HumanMessage:
+def make_image_message(blocks: list[ImageContentBlock], text: str | None = None) -> HumanMessage:
     return HumanMessage(
         content=[
-            TextContentBlock(type="text", text="[Attached images from the tool response above]"),
+            TextContentBlock(type="text", text=text or "[Attached images from the tool response above]"),
             *blocks,
         ]
     )
+
+
+def accumulate_artifact(
+    msg: ToolMessage, pending: list[ImageContentBlock], pending_text: str | None
+) -> tuple[list[ImageContentBlock], str | None]:
+    artifact = getattr(msg, "artifact", None)
+    if not isinstance(artifact, list):
+        return pending, pending_text
+    blocks, text = _extract_image_blocks(artifact)
+    return [*pending, *blocks], pending_text if pending_text else text
 
 
 def image_artifact_pre_model_hook(state: dict) -> dict:
@@ -37,19 +50,19 @@ def image_artifact_pre_model_hook(state: dict) -> dict:
     messages = state.get("messages", [])
     result: list = []
     pending: list[ImageContentBlock] = []
+    pending_text: str | None = None
 
     for msg in messages:
         if isinstance(msg, ToolMessage):
-            artifact = getattr(msg, "artifact", None)
-            if isinstance(artifact, list):
-                pending.extend(_extract_image_blocks(artifact))
+            pending, pending_text = accumulate_artifact(msg, pending, pending_text)
         else:
             if pending:
-                result.append(_make_image_message(pending))
+                result.append(make_image_message(pending, pending_text))
                 pending = []
+                pending_text = None
         result.append(msg)
 
     if pending:
-        result.append(_make_image_message(pending))
+        result.append(make_image_message(pending, pending_text))
 
     return {"llm_input_messages": result}
