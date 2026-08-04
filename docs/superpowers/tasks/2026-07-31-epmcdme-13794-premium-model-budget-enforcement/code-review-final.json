@@ -1,0 +1,86 @@
+{
+  "decision": "request-changes",
+  "rationale": "One major patch finding: the enum coercion `LiteLLMBudgetCategory(category.value)` in `_mirror_budget_assignment` is unguarded. Both enums are currently identical (platform/cli/premium_models — verified by edge-case lens reading both files), so no failure today. However, the function is now a generic helper callable with any future `CoreBudgetCategory` value; if `CoreBudgetCategory` gains a member before `LiteLLMBudgetCategory` is updated, `ValueError` propagates synchronously through `_configure_direct_runtime_overrides` and aborts LLM model creation for that request. Fix is a one-line try/except. All 8 acceptance criteria pass and all three review lenses ran cleanly. 2 deferred/dismissed findings (blind lens flagged platform-budget skip — intentional per spec three-way priority; commit format uses Conventional Commits style rather than documented ticket-prefix style — squash-merge resolves).",
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "major",
+      "triage": "patch",
+      "location": "src/codemie/enterprise/litellm/llm_factory.py:_mirror_budget_assignment (~line 405)",
+      "problem": "LiteLLMBudgetCategory(category.value) is unguarded. Both enums currently share identical values, but the conversion raises ValueError for any CoreBudgetCategory value not present in LiteLLMBudgetCategory. With the old hardcoded PLATFORM constant this was impossible; the generalization to accept any CoreBudgetCategory introduced the failure mode.",
+      "impact": "A future CoreBudgetCategory value without a matching LiteLLMBudgetCategory member causes ValueError to propagate synchronously through _configure_direct_runtime_overrides (no handler), aborting the entire LLM model creation call for that request.",
+      "recommendation": "Wrap the conversion in try/except ValueError and return early: `try: litellm_cat = LiteLLMBudgetCategory(category.value) except ValueError: logger.warning('Unknown budget category %r, skipping mirror', category.value); return`. Alternatively add a unit test asserting both enums have identical values, which fails at the point of divergence rather than silently breaking the hot path."
+    }
+  ],
+  "business_review": [
+    {
+      "criterion": "Default premium budget enforced for personal agents",
+      "status": "pass",
+      "evidence": "budgets-config.yaml adds default_premium_models entry; llm_factory guard resolves premium_budget_id via personal assignment or default config and calls check_user_budget with that budget."
+    },
+    {
+      "criterion": "Requests categorized as premium_models evaluated against default budget when no project override",
+      "status": "pass",
+      "evidence": "Guard uses _get_direct_request_category_budget_id or get_category_budget_id(PREMIUM_MODELS) as two-tier lookup. Config entry ensures fallback returns non-None."
+    },
+    {
+      "criterion": "User cannot spend beyond default premium limit",
+      "status": "pass",
+      "evidence": "check_user_budget called with premium_budget_id (max_budget 20.0, 30d duration). LiteLLM enforces the cap."
+    },
+    {
+      "criterion": "Limit reached → requests blocked with budget-exceeded response",
+      "status": "pass",
+      "evidence": "Handled by existing check_user_budget/LiteLLM error rewriting; no new code needed per spec, and the diff correctly does not add redundant handling."
+    },
+    {
+      "criterion": "Enforcement consistent across platform/CLI/project-budget flows",
+      "status": "pass",
+      "evidence": "Config fix enables is_premium_models_enabled() to return True for proxy/CLI path; llm_factory guard enables direct path for platform personal agents. No proxy_router.py changes (scope constraint respected)."
+    },
+    {
+      "criterion": "Project-level enforcement unaffected (EPMCDME-13157)",
+      "status": "pass",
+      "evidence": "Guard placed after all project-context early returns; _resolve_direct_project_budget_runtime returns non-None for PLATFORM-only projects, causing early return before the premium guard."
+    },
+    {
+      "criterion": "CLI enforcement unaffected",
+      "status": "pass",
+      "evidence": "No changes to proxy_router.py. Config fix enables existing proxy guard for project_scopes=set(). Confirmed by test_proxy_path_personal_agent_premium_model_enforced."
+    },
+    {
+      "criterion": "Regression coverage added (7 tests: 6+1)",
+      "status": "pass",
+      "evidence": "TestConfigureDirectRuntimeOverridesPremiumNoProject has 6 fully implemented tests; TestDirectPathPersonalAgentPremiumBudget has 1 fully implemented proxy regression test."
+    },
+    {
+      "criterion": "Budget attribution accurate (premium_username key, mirrored via _mirror_budget_assignment)",
+      "status": "pass",
+      "evidence": "get_premium_username returns {email}_codemie_premium_models; request_params['model_kwargs']['user'] set to premium_username; _mirror_budget_assignment called with category=CoreBudgetCategory.PREMIUM_MODELS."
+    }
+  ],
+  "standards_review": [
+    {
+      "standard": "Commit format (EPMCDME-####: Description)",
+      "status": "partial",
+      "notes": "Commits use Conventional Commits format with ticket in scope: `type(EPMCDME-13794): description`. Documented format is `EPMCDME-13794: Description`. Non-blocking — squash-merge produces a single ticket-prefixed commit per the project's merge strategy."
+    },
+    {
+      "standard": "Python type hints and modern annotations",
+      "status": "pass",
+      "notes": "New parameters properly typed (str | None). Forward reference \"CoreBudgetCategory\" used correctly."
+    },
+    {
+      "standard": "Secret handling / logging",
+      "status": "pass",
+      "notes": "Logged fields are operation context (user identifiers, model names, budget category, customer key). No credentials or tokens logged."
+    },
+    {
+      "standard": "Security (auth, validation, injection)",
+      "status": "pass",
+      "notes": "No new attack surface. Budget selection is server-side on typed inputs. No external data injected into queries or log formats."
+    }
+  ],
+  "risk_flags": [],
+  "confidence": "high"
+}

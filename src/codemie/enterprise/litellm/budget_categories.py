@@ -20,7 +20,7 @@ from enum import Enum
 class BudgetCategory(str, Enum):
     PLATFORM = "platform"  # default web/API usage; no suffix in user_id
     CLI = "cli"  # Codemie CLI proxy spending
-    PREMIUM_MODELS = "premium_models"  # costly model spending via CLI
+    PREMIUM_MODELS = "premium_models"  # premium model spend — applies to platform, proxy, and CLI paths
 
 
 def build_user_id(user_identifier: str, category: BudgetCategory) -> str:

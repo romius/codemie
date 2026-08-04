@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "task": "Fix premium model budget enforcement bypass for platform personal agent flows in llm_factory.py and proxy_router.py, with budgets-config.yaml prerequisite and mandatory regression tests.",
+  "generated": "2026-07-31T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 17,
+  "size": "M",
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Four components need changes across two independent execution paths: llm_factory._configure_direct_runtime_overrides() (primary bug), proxy_router._resolve_tracking_identity() (secondary bug), budgets-config.yaml (config prerequisite), and test additions. Both code paths share dependencies.py helpers (check_user_budget, get_category_budget_id, get_premium_username) whose lru_cache patterns create cross-cutting test concerns."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "Budget enforcement is financial access control — it governs whether users can make premium model requests, satisfying the authorization red flag. The proxy_router.py condition relaxation must preserve EPMCDME-13157 platform-only budget as a valid state. lru_cache and TTLCache frozen at process startup require autouse cache-clearing fixtures in all regression tests. Patterns exist (proxy path is the reference implementation), but dual-path correctness and cache isolation add meaningful execution risk."
+    }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from M (3) to L (4): budget enforcement controls premium model access, satisfying the authorization red flag — a budget limit is the authorization gate for premium model requests."
+  ],
+  "split_recommendation": null
+}

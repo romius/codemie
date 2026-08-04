@@ -805,3 +805,214 @@ class TestConfigureDirectRuntimeOverrides:
 
         mock_resolve.assert_not_called()
         assert "model_kwargs" not in request_params
+
+
+class TestConfigureDirectRuntimeOverridesPremiumNoProject:
+    """Tests for the premium model guard in _configure_direct_runtime_overrides
+    when litellm_context.current_project is None (personal agent, no project context).
+    """
+
+    @pytest.fixture(autouse=True)
+    def clear_caches(self):
+        from codemie.enterprise.litellm.dependencies import (
+            is_premium_model,
+            is_premium_models_enabled,
+        )
+
+        is_premium_models_enabled.cache_clear()
+        is_premium_model.cache_clear()
+        yield
+        is_premium_models_enabled.cache_clear()
+        is_premium_model.cache_clear()
+
+    def _invoke(self, *, user_email="alice@example.com", user_id="uid-1"):
+        """Call _configure_direct_runtime_overrides with no creds and no project overrides."""
+        from codemie.enterprise.litellm.llm_factory import _configure_direct_runtime_overrides
+
+        llm_model_details = MagicMock()
+        llm_model_details.base_name = "claude-opus-4"
+        request_params: dict = {}
+
+        with patch(
+            "codemie.enterprise.litellm.llm_factory._resolve_direct_project_budget_runtime",
+            return_value=(None, {}, None, None),
+        ):
+            _configure_direct_runtime_overrides(
+                llm_model_details=llm_model_details,
+                litellm_context=None,
+                user_email=user_email,
+                user_id=user_id,
+                creds=None,
+                merged_headers={},
+                request_params=request_params,
+            )
+        return request_params
+
+    def test_premium_model_no_project_context_uses_premium_budget(self):
+        """Premium model + no project context → check_user_budget called with premium username and premium budget."""
+        mock_customer = MagicMock()
+
+        with (
+            patch(
+                "codemie.enterprise.litellm.dependencies.get_premium_username",
+                return_value="alice@example.com_codemie_premium_models",
+            ),
+            patch(
+                "codemie.enterprise.litellm.llm_factory._get_direct_request_category_budget_id",
+                return_value=None,
+            ),
+            patch(
+                "codemie.enterprise.litellm.dependencies.get_category_budget_id",
+                return_value="default_premium_models",
+            ),
+            patch(
+                "codemie.enterprise.litellm.dependencies.check_user_budget",
+                return_value=mock_customer,
+            ) as mock_check,
+            patch("codemie.enterprise.litellm.llm_factory._mirror_budget_assignment"),
+        ):
+            params = self._invoke()
+
+        mock_check.assert_called_once_with(
+            user_email="alice@example.com_codemie_premium_models",
+            user_id="uid-1",
+            budget_id="default_premium_models",
+        )
+        assert params["model_kwargs"]["user"] == "alice@example.com_codemie_premium_models"
+
+    def test_non_premium_model_no_project_context_uses_platform_budget(self):
+        """Non-premium model → get_premium_username returns None → PLATFORM path unchanged."""
+        with (
+            patch(
+                "codemie.enterprise.litellm.dependencies.get_premium_username",
+                return_value=None,
+            ),
+            patch(
+                "codemie.enterprise.litellm.llm_factory._get_direct_request_category_budget_id",
+                return_value=None,
+            ),
+            patch(
+                "codemie.enterprise.litellm.dependencies.get_category_budget_id",
+                return_value="default",
+            ),
+            patch("codemie.enterprise.litellm.dependencies.check_user_budget", return_value=MagicMock()),
+            patch("codemie.enterprise.litellm.llm_factory._mirror_budget_assignment"),
+        ):
+            params = self._invoke()
+
+        assert params["model_kwargs"]["user"] == "alice@example.com"
+
+    def test_premium_model_no_budget_id_anywhere_falls_through_to_platform(self):
+        """Premium model but no personal assignment and no default config → falls through to PLATFORM."""
+
+        def category_budget_id(category):
+            if category.value == "premium_models":
+                return None
+            return "default"
+
+        with (
+            patch(
+                "codemie.enterprise.litellm.dependencies.get_premium_username",
+                return_value="alice@example.com_codemie_premium_models",
+            ),
+            patch(
+                "codemie.enterprise.litellm.llm_factory._get_direct_request_category_budget_id",
+                return_value=None,
+            ),
+            patch(
+                "codemie.enterprise.litellm.dependencies.get_category_budget_id",
+                side_effect=category_budget_id,
+            ),
+            patch("codemie.enterprise.litellm.dependencies.check_user_budget", return_value=MagicMock()),
+            patch("codemie.enterprise.litellm.llm_factory._mirror_budget_assignment"),
+        ):
+            params = self._invoke()
+
+        assert params["model_kwargs"]["user"] == "alice@example.com"
+
+    def test_premium_model_personal_assignment_wins_over_default(self):
+        """Personal PREMIUM_MODELS assignment present → used instead of default config budget."""
+        with (
+            patch(
+                "codemie.enterprise.litellm.dependencies.get_premium_username",
+                return_value="alice@example.com_codemie_premium_models",
+            ),
+            patch(
+                "codemie.enterprise.litellm.llm_factory._get_direct_request_category_budget_id",
+                return_value="personal-premium-budget",
+            ),
+            patch(
+                "codemie.enterprise.litellm.dependencies.get_category_budget_id",
+                return_value="default_premium_models",
+            ),
+            patch(
+                "codemie.enterprise.litellm.dependencies.check_user_budget",
+                return_value=MagicMock(),
+            ) as mock_check,
+            patch("codemie.enterprise.litellm.llm_factory._mirror_budget_assignment"),
+        ):
+            self._invoke()
+
+        mock_check.assert_called_once_with(
+            user_email="alice@example.com_codemie_premium_models",
+            user_id="uid-1",
+            budget_id="personal-premium-budget",
+        )
+
+    def test_mirror_budget_assignment_called_with_premium_category(self):
+        """Premium model path calls _mirror_budget_assignment with category=PREMIUM_MODELS."""
+        from codemie.service.budget.budget_enums import BudgetCategory as CoreBudgetCategory
+
+        with (
+            patch(
+                "codemie.enterprise.litellm.dependencies.get_premium_username",
+                return_value="alice@example.com_codemie_premium_models",
+            ),
+            patch(
+                "codemie.enterprise.litellm.llm_factory._get_direct_request_category_budget_id",
+                return_value=None,
+            ),
+            patch(
+                "codemie.enterprise.litellm.dependencies.get_category_budget_id",
+                return_value="default_premium_models",
+            ),
+            patch("codemie.enterprise.litellm.dependencies.check_user_budget", return_value=MagicMock()),
+            patch(
+                "codemie.enterprise.litellm.llm_factory._mirror_budget_assignment",
+            ) as mock_mirror,
+        ):
+            self._invoke()
+
+        call_kwargs = mock_mirror.call_args.kwargs
+        assert call_kwargs["category"] == CoreBudgetCategory.PREMIUM_MODELS
+        assert call_kwargs["user_id"] == "uid-1"
+
+    def test_premium_model_personal_assignment_enforced_without_default_config(self):
+        """Personal PREMIUM_MODELS assignment is enforced even when no default config entry exists."""
+        with (
+            patch(
+                "codemie.enterprise.litellm.dependencies.get_premium_username",
+                return_value="alice@example.com_codemie_premium_models",
+            ),
+            patch(
+                "codemie.enterprise.litellm.llm_factory._get_direct_request_category_budget_id",
+                return_value="personal-premium-budget",
+            ),
+            patch(
+                "codemie.enterprise.litellm.dependencies.get_category_budget_id",
+                return_value=None,
+            ),
+            patch(
+                "codemie.enterprise.litellm.dependencies.check_user_budget",
+                return_value=MagicMock(),
+            ) as mock_check,
+            patch("codemie.enterprise.litellm.llm_factory._mirror_budget_assignment"),
+        ):
+            params = self._invoke()
+
+        mock_check.assert_called_once_with(
+            user_email="alice@example.com_codemie_premium_models",
+            user_id="uid-1",
+            budget_id="personal-premium-budget",
+        )
+        assert params["model_kwargs"]["user"] == "alice@example.com_codemie_premium_models"

@@ -610,3 +610,40 @@ class TestSpendingEndpointPremiumMetric:
                 data = json.loads(response.body)
                 metric_ids = [m["id"] for m in data["data"]["metrics"]]
                 assert "premium_current_spending" not in metric_ids
+
+
+class TestDirectPathPersonalAgentPremiumBudget:
+    """Regression: proxy _resolve_tracking_identity returns PREMIUM_MODELS when
+    project_scopes is empty and a default premium budget is configured.
+
+    The proxy path was already correct before this ticket; this test prevents
+    regression by asserting the no-project-context premium enforcement is intact.
+    """
+
+    def test_proxy_path_personal_agent_premium_model_enforced(self):
+        """project_scopes=set() + default premium budget configured → PREMIUM_MODELS returned."""
+        from codemie.enterprise.litellm.budget_categories import BudgetCategory
+        from codemie.enterprise.litellm.proxy_router import BudgetAvailability, _resolve_tracking_identity
+
+        mock_user = MagicMock()
+        mock_user.id = "user-1"
+        mock_user.username = "alice@example.com"
+
+        request_info = {"llm_model": "claude-opus-4"}
+
+        availability = BudgetAvailability(
+            user_budget_ids={},
+            project_scopes=set(),
+        )
+
+        with _patch_budget_name("default_premium_models"), _patch_aliases(["opus"]):
+            category, username, budget_id, model = _resolve_tracking_identity(
+                user=mock_user,
+                request_info=request_info,
+                availability=availability,
+            )
+
+        assert category == BudgetCategory.PREMIUM_MODELS
+        assert username == "alice@example.com_codemie_premium_models"
+        assert budget_id == "default_premium_models"
+        assert model == "claude-opus-4"

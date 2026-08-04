@@ -377,8 +377,8 @@ def _apply_project_runtime_overrides(
         request_params["model_kwargs"] = {"user": runtime_user}
 
 
-def _mirror_platform_budget_assignment(*, user_id: str | None, customer: Any | None) -> None:
-    """Best-effort: mirror the PLATFORM budget assignment into user_budget_assignments.
+def _mirror_budget_assignment(*, user_id: str | None, customer: Any | None, category: "CoreBudgetCategory") -> None:
+    """Best-effort: mirror a budget assignment into user_budget_assignments.
 
     Called from the synchronous direct-runtime path after check_user_budget() creates
     the LiteLLM customer.  Dispatches to the main event loop without blocking so that
@@ -386,26 +386,33 @@ def _mirror_platform_budget_assignment(*, user_id: str | None, customer: Any | N
 
     Uses the budget_id from the actual LiteLLM customer record so that users with a
     custom budget get the correct ID mirrored.  Falls back to the configured default
-    platform budget_id when the customer has no budget table attached.
+    budget_id for the given category when the customer has no budget table attached.
     """
     if not user_id:
         return
     import asyncio
 
     from codemie.core.event_loop import _main_event_loop
-    from codemie.service.budget.budget_enums import BudgetCategory as CoreBudgetCategory
     from codemie.service.budget.budget_service import budget_service
 
     budget_table = getattr(customer, "litellm_budget_table", None) if customer is not None else None
-    platform_budget_id: str | None = getattr(budget_table, "budget_id", None) if budget_table is not None else None
+    budget_id: str | None = getattr(budget_table, "budget_id", None) if budget_table is not None else None
 
-    if not platform_budget_id:
+    if not budget_id:
         from .budget_categories import BudgetCategory as LiteLLMBudgetCategory
         from .dependencies import get_category_budget_id
 
-        platform_budget_id = get_category_budget_id(LiteLLMBudgetCategory.PLATFORM)
+        try:
+            litellm_category = LiteLLMBudgetCategory(category.value)
+        except ValueError:
+            logger.warning(
+                "budget_event=mirror_skipped component=litellm_llm_factory reason=unknown_category category=%r",
+                category.value,
+            )
+            return
+        budget_id = get_category_budget_id(litellm_category)
 
-    if not platform_budget_id:
+    if not budget_id:
         return
     loop = _main_event_loop
     if loop is None or not loop.is_running():
@@ -413,11 +420,74 @@ def _mirror_platform_budget_assignment(*, user_id: str | None, customer: Any | N
     asyncio.run_coroutine_threadsafe(
         budget_service.track_proxy_budget_assignment_for_request(
             user_id=user_id,
-            category=CoreBudgetCategory.PLATFORM,
-            budget_id=platform_budget_id,
+            category=category,
+            budget_id=budget_id,
         ),
         loop,
     )
+
+
+def _try_apply_premium_budget(
+    *,
+    llm_model_details: "LLMModel",
+    user_email: Optional[str],
+    user_id: Optional[str],
+    request_params: dict[str, Any],
+) -> bool:
+    """Apply the premium-model budget when the model/user qualify. Returns whether it was applied."""
+    from codemie.service.budget.budget_enums import BudgetCategory as CoreBudgetCategory
+    from .budget_categories import BudgetCategory as LiteLLMBudgetCategory
+    from .dependencies import check_user_budget, get_category_budget_id, get_premium_username
+
+    if not user_email:
+        return False
+
+    premium_username = get_premium_username(user_email, llm_model_details.base_name)
+    if premium_username is None:
+        return False
+
+    premium_budget_id = (
+        _get_direct_request_category_budget_id(user_id, LiteLLMBudgetCategory.PREMIUM_MODELS) if user_id else None
+    ) or get_category_budget_id(LiteLLMBudgetCategory.PREMIUM_MODELS)
+    if not premium_budget_id:
+        return False
+
+    logger.info(
+        f"budget_event=runtime_mode_selected component=litellm_llm_factory "
+        f"user_id={user_id!r} username={user_email!r} model={llm_model_details.base_name!r} "
+        f"mode={RuntimeBudgetMode.GLOBAL_OR_PERSONAL_BUDGET.value!r} "
+        f"budget_category={LiteLLMBudgetCategory.PREMIUM_MODELS.value!r} "
+        f"litellm_customer_key={premium_username!r}"
+    )
+    customer = check_user_budget(user_email=premium_username, user_id=user_id, budget_id=premium_budget_id)
+    request_params["model_kwargs"] = {"user": premium_username}
+    _mirror_budget_assignment(user_id=user_id, customer=customer, category=CoreBudgetCategory.PREMIUM_MODELS)
+    return True
+
+
+def _apply_platform_budget(
+    *,
+    llm_model_details: "LLMModel",
+    user_email: Optional[str],
+    user_id: Optional[str],
+    request_params: dict[str, Any],
+) -> None:
+    from codemie.service.budget.budget_enums import BudgetCategory as CoreBudgetCategory
+    from .budget_categories import BudgetCategory as LiteLLMBudgetCategory
+    from .dependencies import check_user_budget, get_category_budget_id
+
+    platform_budget_id = (
+        _get_direct_request_category_budget_id(user_id, LiteLLMBudgetCategory.PLATFORM) if user_id else None
+    ) or get_category_budget_id(LiteLLMBudgetCategory.PLATFORM)
+    logger.info(
+        f"budget_event=runtime_mode_selected component=litellm_llm_factory "
+        f"user_id={user_id!r} username={user_email!r} model={llm_model_details.base_name!r} "
+        f"mode={RuntimeBudgetMode.GLOBAL_OR_PERSONAL_BUDGET.value!r} "
+        f"litellm_customer_key={user_email!r}"
+    )
+    customer = check_user_budget(user_email=user_email, user_id=user_id, budget_id=platform_budget_id)
+    request_params["model_kwargs"] = {"user": user_email}
+    _mirror_budget_assignment(user_id=user_id, customer=customer, category=CoreBudgetCategory.PLATFORM)
 
 
 def _configure_direct_runtime_overrides(
@@ -481,21 +551,20 @@ def _configure_direct_runtime_overrides(
         )
         return
 
-    from .budget_categories import BudgetCategory as LiteLLMBudgetCategory
-    from .dependencies import check_user_budget, get_category_budget_id
+    if _try_apply_premium_budget(
+        llm_model_details=llm_model_details,
+        user_email=user_email,
+        user_id=user_id,
+        request_params=request_params,
+    ):
+        return
 
-    platform_budget_id = (
-        _get_direct_request_category_budget_id(user_id, LiteLLMBudgetCategory.PLATFORM) if user_id else None
-    ) or get_category_budget_id(LiteLLMBudgetCategory.PLATFORM)
-    logger.info(
-        f"budget_event=runtime_mode_selected component=litellm_llm_factory "
-        f"user_id={user_id!r} username={user_email!r} model={llm_model_details.base_name!r} "
-        f"mode={RuntimeBudgetMode.GLOBAL_OR_PERSONAL_BUDGET.value!r} "
-        f"litellm_customer_key={user_email!r}"
+    _apply_platform_budget(
+        llm_model_details=llm_model_details,
+        user_email=user_email,
+        user_id=user_id,
+        request_params=request_params,
     )
-    customer = check_user_budget(user_email=user_email, user_id=user_id, budget_id=platform_budget_id)
-    request_params["model_kwargs"] = {"user": user_email}
-    _mirror_platform_budget_assignment(user_id=user_id, customer=customer)
 
 
 def _get_direct_request_category_budget_id(user_id: str, category: str) -> str | None:
