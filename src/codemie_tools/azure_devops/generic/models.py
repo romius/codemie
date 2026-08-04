@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import ClassVar
+from typing import ClassVar, Optional
 
 from pydantic import Field
 
@@ -36,6 +36,10 @@ class GenericAzureDevOpsConfig(CodeMieToolConfig):
         description="Azure DevOps organization URL",
         json_schema_extra={"placeholder": get_tool_default(TOOL_NAME, "url_placeholder") or ""},
     )
+
+    organization: str = RequiredField(description="Azure DevOps organization name")
+
+    project: Optional[str] = Field(default=None, description="Azure DevOps project name (optional)")
 
     token: str = RequiredField(
         description="Personal Access Token",

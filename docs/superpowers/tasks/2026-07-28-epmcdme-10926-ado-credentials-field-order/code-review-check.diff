@@ -1,0 +1,42 @@
+diff --git a/src/codemie/datasource/azure_devops_wiki/azure_devops_wiki_datasource_processor.py b/src/codemie/datasource/azure_devops_wiki/azure_devops_wiki_datasource_processor.py
+index 5c1ebba59..5d275c4df 100644
+--- a/src/codemie/datasource/azure_devops_wiki/azure_devops_wiki_datasource_processor.py
++++ b/src/codemie/datasource/azure_devops_wiki/azure_devops_wiki_datasource_processor.py
+@@ -26,6 +26,7 @@ from codemie.datasource.base_datasource_processor import (
+     DatasourceProcessorCallback,
+ )
+ from codemie.datasource.datasources_config import AZURE_DEVOPS_WIKI_CONFIG
++from codemie.datasource.exceptions import MissingIntegrationException
+ from codemie.datasource.loader.azure_devops_wiki_loader import AzureDevOpsWikiLoader
+ from codemie.rest_api.models.guardrail import GuardrailAssignmentItem
+ from codemie.rest_api.models.index import AzureDevOpsWikiIndexInfo, IndexInfo
+@@ -101,6 +102,8 @@ class AzureDevOpsWikiDatasourceProcessor(BaseDatasourceProcessor):
+ 
+     def _init_loader(self):
+         """Initialize Azure DevOps Wiki loader with an optional vision-capable chat model"""
++        if not self.credentials.project:
++            raise MissingIntegrationException("AzureDevOps Wiki")
+         chat_model = None
+         try:
+             from codemie.core.dependecies import get_llm_by_credentials
+diff --git a/src/codemie/datasource/azure_devops_work_item/azure_devops_work_item_datasource_processor.py b/src/codemie/datasource/azure_devops_work_item/azure_devops_work_item_datasource_processor.py
+index 67489e671..48c3c9293 100644
+--- a/src/codemie/datasource/azure_devops_work_item/azure_devops_work_item_datasource_processor.py
++++ b/src/codemie/datasource/azure_devops_work_item/azure_devops_work_item_datasource_processor.py
+@@ -26,6 +26,7 @@ from codemie.datasource.base_datasource_processor import (
+     DatasourceProcessorCallback,
+ )
+ from codemie.datasource.datasources_config import AZURE_DEVOPS_WORK_ITEM_CONFIG
++from codemie.datasource.exceptions import MissingIntegrationException
+ from codemie.datasource.loader.azure_devops_work_item_loader import AzureDevOpsWorkItemLoader
+ from codemie.rest_api.models.guardrail import GuardrailAssignmentItem
+ from codemie.rest_api.models.index import AzureDevOpsWorkItemIndexInfo, IndexInfo
+@@ -114,6 +115,8 @@ class AzureDevOpsWorkItemDatasourceProcessor(BaseDatasourceProcessor):
+ 
+     def _init_loader(self):
+         """Initialize Azure DevOps Work Item loader with an optional vision-capable chat model."""
++        if not self.credentials.project:
++            raise MissingIntegrationException("AzureDevOps Work Item")
+         chat_model = None
+         try:
+             from codemie.core.dependecies import get_llm_by_credentials

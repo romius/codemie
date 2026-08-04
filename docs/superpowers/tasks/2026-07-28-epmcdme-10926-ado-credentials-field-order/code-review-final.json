@@ -1,0 +1,78 @@
+{
+  "decision": "approve",
+  "rationale": "All findings resolved. CR-001 (wiki and work-item processors passing Optional[str] project to str-typed loader constructors, producing 'None' in ADO REST URLs) was fixed by adding MissingIntegrationException guards in _init_loader for both processors. Check round (code-review-check.json) confirmed resolution. All three lenses ran; acceptance lens shows AC-1/2/3/4/6 pass, AC-5 partial (RequiredField lazy-validation for organization is project-standard behavior), AC-7 partial (test_settings_service.py unrunnable due to pre-existing tree_sitter_languages incompatibility — confirmed pre-existing before this change). 19/19 new tests pass, ruff clean.",
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "major",
+      "triage": "patch",
+      "status": "resolved",
+      "file": "src/codemie/datasource/azure_devops_wiki/azure_devops_wiki_datasource_processor.py:121 + src/codemie/datasource/azure_devops_work_item/azure_devops_work_item_datasource_processor.py:134",
+      "problem": "Both datasource processors pass self.credentials.project (now Optional[str]) to AzureDevOpsWikiLoader and AzureDevOpsWorkItemLoader constructors, which both declare project: str (non-optional). The loaders embed self.project in every URL construction (e.g. f'{self.base_url}/{self.project}/_apis') and all SDK calls. When project=None, the URL contains literal '/None/' and SDK calls receive None for a str parameter.",
+      "resolution": "Added 'if not self.credentials.project: raise MissingIntegrationException(...)' guard at the top of _init_loader in both processors. Committed in EPMCDME-10926: Guard against None project in ADO wiki and work-item processors."
+    }
+  ],
+  "business_review": [
+    {
+      "criterion_id": "AC-1",
+      "criterion": "Reorder AzureDevOpsCredentials fields: base_url first, then organization, then project, then access_token",
+      "status": "pass",
+      "notes": "Declaration order in settings.py confirmed: base_url, organization, project, access_token. test_field_order asserts it."
+    },
+    {
+      "criterion_id": "AC-2",
+      "criterion": "Make base_url, organization, and access_token mandatory (reject blank/missing with 422)",
+      "status": "pass",
+      "notes": "Field(min_length=1) on all three fields. Parametrized tests confirm empty-string and missing-field rejections raise ValidationError."
+    },
+    {
+      "criterion_id": "AC-3",
+      "criterion": "Keep project optional (absent or null accepted without error)",
+      "status": "pass",
+      "notes": "Optional[str] = None. test_valid_without_project and test_project_none_explicit confirm both None and absent project accepted."
+    },
+    {
+      "criterion_id": "AC-4",
+      "criterion": "Reorder GenericAzureDevOpsConfig fields: url, organization, project, token",
+      "status": "pass",
+      "notes": "Declaration order in models.py confirmed: url, organization, project, token. test_field_order asserts it (excluding credential_type)."
+    },
+    {
+      "criterion_id": "AC-5",
+      "criterion": "GenericAzureDevOpsConfig rejects instantiation with missing organization",
+      "status": "partial",
+      "notes": "RequiredField uses lazy-validation: default='' with json_schema_extra['required_at_runtime']=True. No constructor-time ValidationError; instantiation with no organization succeeds (organization=''). This is the project's established pattern for UI-facing credential configs. Test correctly validates the metadata rather than a ValidationError. AC partially met via metadata, not Pydantic strict enforcement."
+    },
+    {
+      "criterion_id": "AC-6",
+      "criterion": "get_azure_devops_creds() returns project=None when stored value is empty string",
+      "status": "pass",
+      "notes": "project or None coercion in the service layer return statement. New test confirms this behavior."
+    },
+    {
+      "criterion_id": "AC-7",
+      "criterion": "Existing tests pass; new tests cover mandatory-field rejection and optional project",
+      "status": "partial",
+      "notes": "19/19 new tests pass across test_azure_devops_credentials.py (10 tests) and test_models.py (9 tests). test_settings_service.py is unrunnable due to pre-existing tree_sitter_languages incompatibility with Python 3.13 — confirmed pre-existing before this change by stashing changes and re-running. New test in that file is correct but untestable in this environment."
+    }
+  ],
+  "standards_review": [
+    {
+      "standard": "commit-format",
+      "status": "pass",
+      "notes": "All commits use 'EPMCDME-10926: <description>' format matching the project convention."
+    },
+    {
+      "standard": "code-quality",
+      "status": "pass",
+      "notes": "ruff format, ruff check --fix, and ruff check all pass on changed files. No new linting issues introduced."
+    },
+    {
+      "standard": "security",
+      "status": "pass",
+      "notes": "No secrets, no injection surfaces, no auth bypass. access_token remains a plain str with min_length=1 (no logging exposure introduced). sensitive marker on GenericAzureDevOpsConfig.token preserved."
+    }
+  ],
+  "risk_flags": [],
+  "confidence": "medium"
+}

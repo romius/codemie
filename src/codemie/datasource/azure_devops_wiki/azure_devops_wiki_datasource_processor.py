@@ -26,6 +26,7 @@ from codemie.datasource.base_datasource_processor import (
     DatasourceProcessorCallback,
 )
 from codemie.datasource.datasources_config import AZURE_DEVOPS_WIKI_CONFIG
+from codemie.datasource.exceptions import MissingIntegrationException
 from codemie.datasource.loader.azure_devops_wiki_loader import AzureDevOpsWikiLoader
 from codemie.rest_api.models.guardrail import GuardrailAssignmentItem
 from codemie.rest_api.models.index import AzureDevOpsWikiIndexInfo, IndexInfo
@@ -101,6 +102,8 @@ class AzureDevOpsWikiDatasourceProcessor(BaseDatasourceProcessor):
 
     def _init_loader(self):
         """Initialize Azure DevOps Wiki loader with an optional vision-capable chat model"""
+        if not self.credentials.project:
+            raise MissingIntegrationException("AzureDevOps Wiki")
         chat_model = None
         try:
             from codemie.core.dependecies import get_llm_by_credentials

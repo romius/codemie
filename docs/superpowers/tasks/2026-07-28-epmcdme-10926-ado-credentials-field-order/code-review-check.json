@@ -1,0 +1,75 @@
+{
+  "decision": "approve",
+  "rationale": "CR-001 is resolved: both datasource processors (wiki and work-item) now raise MissingIntegrationException before constructing the loader when credentials.project is None or empty. The guard 'if not self.credentials.project' covers both None and '' correctly. Exception string matches the codebase convention used by the loaders themselves (e.g. 'AzureDevOps Wiki'). Ruff clean, 19/19 tests passing. No new issues introduced in the 6-line fix-up diff.",
+  "finding_status": [
+    {
+      "id": "CR-001",
+      "status": "resolved",
+      "notes": "Guard added to _init_loader in both AzureDevOpsWikiDatasourceProcessor and AzureDevOpsWorkItemDatasourceProcessor. Uses 'if not self.credentials.project: raise MissingIntegrationException(...)' — covers None and empty string. Exception message follows project convention."
+    }
+  ],
+  "findings": [],
+  "business_review": [
+    {
+      "criterion_id": "AC-1",
+      "criterion": "Reorder AzureDevOpsCredentials fields: base_url first, then organization, then project, then access_token",
+      "status": "pass",
+      "notes": "Carried forward from final round — unchanged."
+    },
+    {
+      "criterion_id": "AC-2",
+      "criterion": "Make base_url, organization, and access_token mandatory (reject blank/missing with 422)",
+      "status": "pass",
+      "notes": "Carried forward from final round — unchanged."
+    },
+    {
+      "criterion_id": "AC-3",
+      "criterion": "Keep project optional (absent or null accepted without error)",
+      "status": "pass",
+      "notes": "Carried forward from final round — unchanged."
+    },
+    {
+      "criterion_id": "AC-4",
+      "criterion": "Reorder GenericAzureDevOpsConfig fields: url, organization, project, token",
+      "status": "pass",
+      "notes": "Carried forward from final round — unchanged."
+    },
+    {
+      "criterion_id": "AC-5",
+      "criterion": "GenericAzureDevOpsConfig rejects instantiation with missing organization",
+      "status": "partial",
+      "notes": "Carried forward from final round — lazy-validation via RequiredField metadata, consistent with project pattern."
+    },
+    {
+      "criterion_id": "AC-6",
+      "criterion": "get_azure_devops_creds() returns project=None when stored value is empty string",
+      "status": "pass",
+      "notes": "Carried forward from final round — unchanged."
+    },
+    {
+      "criterion_id": "AC-7",
+      "criterion": "Existing tests pass; new tests cover mandatory-field rejection and optional project",
+      "status": "partial",
+      "notes": "Carried forward from final round — 19/19 new tests pass; test_settings_service.py unrunnable due to pre-existing tree_sitter_languages incompatibility."
+    }
+  ],
+  "standards_review": [
+    {
+      "standard": "commit-format",
+      "status": "pass",
+      "notes": "Fix-up commit uses 'EPMCDME-10926: Guard against None project in ADO wiki and work-item processors' — matches project convention."
+    },
+    {
+      "standard": "code-quality",
+      "status": "pass",
+      "notes": "ruff format + check pass on both modified processor files."
+    },
+    {
+      "standard": "security",
+      "status": "pass",
+      "notes": "No new surfaces in the fix-up diff."
+    }
+  ],
+  "risk_flags": [],
+  "confidence": "medium"
+}

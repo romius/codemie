@@ -1,0 +1,227 @@
+diff --git a/src/codemie/rest_api/models/settings.py b/src/codemie/rest_api/models/settings.py
+index 4374f7e4e..ad0414d58 100644
+--- a/src/codemie/rest_api/models/settings.py
++++ b/src/codemie/rest_api/models/settings.py
+@@ -192,10 +192,10 @@ class LiteLLMContext(BaseModel):
+ 
+ 
+ class AzureDevOpsCredentials(BaseModel):
+-    base_url: str
+-    project: str
+-    organization: str
+-    access_token: str
++    base_url: str = Field(min_length=1)
++    organization: str = Field(min_length=1)
++    project: Optional[str] = None
++    access_token: str = Field(min_length=1)
+ 
+ 
+ class SharePointCredentials(BaseModel):
+diff --git a/src/codemie/service/settings/settings.py b/src/codemie/service/settings/settings.py
+index 595ea89e9..f15d54827 100644
+--- a/src/codemie/service/settings/settings.py
++++ b/src/codemie/service/settings/settings.py
+@@ -1283,7 +1283,9 @@ class SettingsService(BaseSettingsService):
+         organization = get_credential(cls.ORGANIZATION, organization_name)
+         token = get_credential(cls.TOKEN, creds.token if creds else "")
+ 
+-        return AzureDevOpsCredentials(base_url=base_url, project=project, organization=organization, access_token=token)
++        return AzureDevOpsCredentials(
++            base_url=base_url, project=project or None, organization=organization, access_token=token
++        )
+ 
+     @classmethod
+     def get_elastic_creds(
+diff --git a/src/codemie_tools/azure_devops/generic/models.py b/src/codemie_tools/azure_devops/generic/models.py
+index ea314cb07..1191d0596 100644
+--- a/src/codemie_tools/azure_devops/generic/models.py
++++ b/src/codemie_tools/azure_devops/generic/models.py
+@@ -12,7 +12,7 @@
+ # See the License for the specific language governing permissions and
+ # limitations under the License.
+ 
+-from typing import ClassVar
++from typing import ClassVar, Optional
+ 
+ from pydantic import Field
+ 
+@@ -37,6 +37,10 @@ class GenericAzureDevOpsConfig(CodeMieToolConfig):
+         json_schema_extra={"placeholder": get_tool_default(TOOL_NAME, "url_placeholder") or ""},
+     )
+ 
++    organization: str = RequiredField(description="Azure DevOps organization name")
++
++    project: Optional[str] = Field(default=None, description="Azure DevOps project name (optional)")
++
+     token: str = RequiredField(
+         description="Personal Access Token",
+         json_schema_extra={"sensitive": True},
+diff --git a/tests/codemie/rest_api/models/test_azure_devops_credentials.py b/tests/codemie/rest_api/models/test_azure_devops_credentials.py
+new file mode 100644
+index 000000000..51eff0bc7
+--- /dev/null
++++ b/tests/codemie/rest_api/models/test_azure_devops_credentials.py
+@@ -0,0 +1,61 @@
++# Copyright 2026 EPAM Systems, Inc. ("EPAM")
++#
++# Licensed under the Apache License, Version 2.0 (the "License");
++# you may not use this file except in compliance with the License.
++# You may obtain a copy of the License at
++#
++#     http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing, software
++# distributed under the License is distributed on an "AS IS" BASIS,
++# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++# See the License for the specific language governing permissions and
++# limitations under the License.
++
++import pytest
++from pydantic import ValidationError
++
++from codemie.rest_api.models.settings import AzureDevOpsCredentials
++
++
++class TestAzureDevOpsCredentials:
++    def _valid_payload(self, **overrides):
++        return {
++            "base_url": "https://dev.azure.com",
++            "organization": "my-org",
++            "access_token": "secret-pat",
++            **overrides,
++        }
++
++    def test_valid_with_project(self):
++        creds = AzureDevOpsCredentials(**self._valid_payload(project="my-project"))
++        assert creds.base_url == "https://dev.azure.com"
++        assert creds.organization == "my-org"
++        assert creds.project == "my-project"
++        assert creds.access_token == "secret-pat"
++
++    def test_valid_without_project(self):
++        creds = AzureDevOpsCredentials(**self._valid_payload())
++        assert creds.project is None
++
++    def test_project_none_explicit(self):
++        creds = AzureDevOpsCredentials(**self._valid_payload(project=None))
++        assert creds.project is None
++
++    @pytest.mark.parametrize("field", ["base_url", "organization", "access_token"])
++    def test_mandatory_fields_reject_empty_string(self, field):
++        with pytest.raises(ValidationError) as exc_info:
++            AzureDevOpsCredentials(**self._valid_payload(**{field: ""}))
++        assert field in str(exc_info.value)
++
++    @pytest.mark.parametrize("field", ["base_url", "organization", "access_token"])
++    def test_mandatory_fields_reject_missing(self, field):
++        payload = self._valid_payload()
++        del payload[field]
++        with pytest.raises(ValidationError) as exc_info:
++            AzureDevOpsCredentials(**payload)
++        assert field in str(exc_info.value)
++
++    def test_field_order(self):
++        fields = list(AzureDevOpsCredentials.model_fields.keys())
++        assert fields == ["base_url", "organization", "project", "access_token"]
+diff --git a/tests/codemie/service/settings/test_settings_service.py b/tests/codemie/service/settings/test_settings_service.py
+index fa08a22c4..c7258839f 100644
+--- a/tests/codemie/service/settings/test_settings_service.py
++++ b/tests/codemie/service/settings/test_settings_service.py
+@@ -577,6 +577,32 @@ def test_get_azure_devops_creds_uses_setting_id_when_provided(mock_retrieve):
+     assert call_args[2] == "ado-id"
+ 
+ 
++@patch.object(SettingsService, 'retrieve_setting')
++def test_get_azure_devops_creds_returns_none_project_when_empty(mock_retrieve):
++    # Given: a stored integration where project value is empty (not set)
++    mock_setting = MagicMock()
++
++    def credential_side_effect(key):
++        return {
++            SettingsService.URL: "https://dev.azure.com",
++            SettingsService.PROJECT: "",
++            SettingsService.ORGANIZATION: "my-org",
++            SettingsService.TOKEN: "secret-pat",
++        }.get(key, "")
++
++    mock_setting.credential.side_effect = credential_side_effect
++    mock_retrieve.return_value = mock_setting
++
++    # When: indexed_repo=None so project_name fallback is also ""
++    result = SettingsService.get_azure_devops_creds(user_id="u1", project_name="p1")
++
++    # Then: project is None, not empty string
++    assert result.project is None
++    assert result.base_url == "https://dev.azure.com"
++    assert result.organization == "my-org"
++    assert result.access_token == "secret-pat"
++
++
+ # ---------------------------------------------------------------------------
+ # hide_sensitive_fields: empty values must not be masked
+ # ---------------------------------------------------------------------------
+diff --git a/tests/codemie_tools/azure_devops/generic/test_models.py b/tests/codemie_tools/azure_devops/generic/test_models.py
+index 6d7872954..163f3a9a0 100644
+--- a/tests/codemie_tools/azure_devops/generic/test_models.py
++++ b/tests/codemie_tools/azure_devops/generic/test_models.py
+@@ -12,13 +12,19 @@
+ # See the License for the specific language governing permissions and
+ # limitations under the License.
+ 
++
+ from codemie_tools.azure_devops.generic.models import GenericAzureDevOpsConfig
+ 
+ 
+ class TestGenericAzureDevOpsConfig:
+     def test_valid_config(self):
+-        config = GenericAzureDevOpsConfig(url="https://dev.azure.com/myorg", token="test_token")
++        config = GenericAzureDevOpsConfig(
++            url="https://dev.azure.com/myorg",
++            organization="myorg",
++            token="test_token",
++        )
+         assert config.url == "https://dev.azure.com/myorg"
++        assert config.organization == "myorg"
+         assert config.token == "test_token"
+ 
+     def test_url_placeholder_from_tool_defaults(self, monkeypatch):
+@@ -48,3 +54,39 @@ def test_url_default_wired_to_tool_default():
+ 
+     expected = customer_config.get_tool_default(GenericAzureDevOpsConfig.TOOL_NAME, "url") or ""
+     assert GenericAzureDevOpsConfig.model_fields["url"].default == expected
++
++
++class TestGenericAzureDevOpsConfigOrganizationAndProject:
++    def test_organization_marked_required_at_runtime(self):
++        # RequiredField uses lazy-validation: default="" but json_schema_extra flags it for runtime
++        field = GenericAzureDevOpsConfig.model_fields["organization"]
++        assert field.json_schema_extra.get("required_at_runtime") is True
++
++    def test_organization_accepted(self):
++        config = GenericAzureDevOpsConfig(
++            url="https://dev.azure.com",
++            organization="my-org",
++            token="pat",
++        )
++        assert config.organization == "my-org"
++
++    def test_project_optional_defaults_to_none(self):
++        config = GenericAzureDevOpsConfig(
++            url="https://dev.azure.com",
++            organization="my-org",
++            token="pat",
++        )
++        assert config.project is None
++
++    def test_project_accepted_when_provided(self):
++        config = GenericAzureDevOpsConfig(
++            url="https://dev.azure.com",
++            organization="my-org",
++            project="my-project",
++            token="pat",
++        )
++        assert config.project == "my-project"
++
++    def test_field_order(self):
++        fields = [f for f in GenericAzureDevOpsConfig.model_fields if f != "credential_type"]
++        assert fields == ["url", "organization", "project", "token"]
