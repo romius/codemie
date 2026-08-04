@@ -20,6 +20,7 @@ import os
 
 from markitdown import MarkItDown
 
+from codemie_tools.file_analysis.workers.utf8_safe_plain_text_converter import Utf8SafePlainTextConverter
 from codemie_tools.file_analysis.workers.xlsx_workers import process_xlsx_to_markdown
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,10 @@ def convert_file_to_markdown(file_bytes: bytes, file_name: str, llm_client=None,
             llm_client=llm_client,
             # llm_model=llm_model,
         )
+        # Register before the built-in PlainTextConverter (priority 10) so UTF-8 Cyrillic
+        # content is handled correctly when charset detection reads only the first 4 KiB
+        # and incorrectly returns 'ascii' for files with non-ASCII bytes past that boundary.
+        md.register_converter(Utf8SafePlainTextConverter(), priority=9)
         binary_content = io.BytesIO(file_bytes)
 
         result = md.convert(binary_content)
