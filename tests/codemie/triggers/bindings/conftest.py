@@ -16,7 +16,14 @@ import pytest
 
 
 def _mr_payload(action: str, state: str = "opened", **attr_overrides) -> dict:
-    """Build a GitLab merge_request webhook payload for the given action."""
+    """Build a GitLab merge_request webhook payload for the given action.
+
+    Mirrors the shape GitLab actually delivers (verified against GitLab 17.11):
+    the action lives in ``object_attributes.action`` and there is NO top-level
+    ``action`` key. Top-level keys of a real delivery are exactly
+    ``changes``, ``event_type``, ``labels``, ``object_attributes``,
+    ``object_kind``, ``project``, ``repository`` and ``user``.
+    """
     object_attributes = {
         "id": 100,
         "iid": 1,
@@ -25,21 +32,36 @@ def _mr_payload(action: str, state: str = "opened", **attr_overrides) -> dict:
         "source_branch": "feature/test",
         "target_branch": "main",
         "state": state,
+        "action": action,
         "url": "https://gitlab.com/group/test-project/-/merge_requests/1",
     }
     object_attributes.update(attr_overrides)
     return {
         "object_kind": "merge_request",
-        "action": action,
         "event_type": "merge_request",
         "user": {"id": 1, "name": "John Doe", "username": "johndoe"},
+        "labels": [],
+        "changes": {},
         "project": {
             "id": 12345,
             "name": "test-project",
             "path_with_namespace": "group/test-project",
         },
+        "repository": {"name": "test-project", "homepage": "https://gitlab.com/group/test-project"},
         "object_attributes": object_attributes,
     }
+
+
+def _mr_payload_top_level_action(action: str) -> dict:
+    """MR payload carrying the action at the top level only.
+
+    Not a shape GitLab sends natively, but reachable through a custom webhook
+    template, so the extractor keeps supporting it as a fallback.
+    """
+    payload = _mr_payload(action)
+    payload["object_attributes"].pop("action", None)
+    payload["action"] = action
+    return payload
 
 
 @pytest.fixture
@@ -75,6 +97,12 @@ def gitlab_mr_approved_payload():
 @pytest.fixture
 def gitlab_mr_unapproved_payload():
     return _mr_payload("unapproved", "opened")
+
+
+@pytest.fixture
+def gitlab_mr_open_payload_top_level_action():
+    """Legacy/custom-template shape: action at the top level, not in object_attributes."""
+    return _mr_payload_top_level_action("open")
 
 
 @pytest.fixture

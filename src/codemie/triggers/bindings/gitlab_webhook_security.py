@@ -63,23 +63,20 @@ class GitLabWebhookSecurity:
     def extract_mr_action(cls, body: bytes | str | dict[str, object]) -> str | None:
         """Return the MR action for merge_request events, else None.
 
+        GitLab delivers the action inside ``object_attributes.action``; a real
+        ``Merge Request Hook`` payload has no top-level ``action`` key at all.
+        The top level is still consulted as a fallback because a custom webhook
+        template can put it there.
+
         Accepts a dict, a JSON str, or raw bytes.
         """
-        if isinstance(body, (bytes, bytearray)):
-            try:
-                body = body.decode("utf-8", errors="strict")
-            except UnicodeDecodeError:
-                return None
-        if isinstance(body, str):
-            try:
-                body = json.loads(body)
-            except (json.JSONDecodeError, TypeError):
-                return None
-        if not isinstance(body, dict):
+        parsed = cls._parse_body(body)
+        if parsed.get("object_kind") != "merge_request":
             return None
-        if body.get("object_kind") != "merge_request":
-            return None
-        action = body.get("action")
+        object_attributes = parsed.get("object_attributes")
+        action = object_attributes.get("action") if isinstance(object_attributes, dict) else None
+        if action is None:
+            action = parsed.get("action")
         return action if action in cls.MR_ACTIONS else None
 
     @classmethod

@@ -33,8 +33,15 @@ an HMAC signature.) Always use HTTPS so the plaintext token is not exposed in tr
 ### MR event filtering
 
 Set **GitLab MR Event Filter** to a comma-separated list of merge-request actions. Only
-those actions trigger the workflow; every other MR action returns `400` and does not run.
-Leaving the filter empty triggers on **all** MR actions (default behavior).
+those actions trigger the workflow; every other MR action is acknowledged with `200`
+(`Webhook received, event filtered out`) and does not run. The ACK is deliberate: GitLab
+auto-disables a webhook after repeated non-2xx responses, so a filtered event must not
+look like a failure. Leaving the filter empty triggers on **all** MR actions (default
+behavior).
+
+The action is read from `object_attributes.action`, which is where GitLab puts it (a real
+`Merge Request Hook` payload has no top-level `action` key); a top-level `action` is still
+honored as a fallback for custom webhook templates.
 
 Supported actions:
 
@@ -56,7 +63,8 @@ Examples:
 
 - **401 Invalid GitLab token** — the `X-Gitlab-Token` sent by GitLab does not match the
   stored `GitLab Webhook Secret Token`. Re-copy the token into both places (no extra spaces).
-- **400 GitLab MR event action '…' is not allowed** — the MR action is not in your filter.
-  Add it to **GitLab MR Event Filter**, or clear the filter to allow all actions.
+- **200 `Webhook received, event filtered out`** — the MR action is not in your filter, so
+  the delivery was acknowledged without running the resource. Add the action to **GitLab MR
+  Event Filter**, or clear the filter to allow all actions.
 - **Workflow not triggering** — confirm the webhook is enabled, the token matches, and the
   MR action is within the filter. Check CodeMie logs for the delivery and verification result.

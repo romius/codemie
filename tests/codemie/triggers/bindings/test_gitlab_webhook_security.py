@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
+
 import pytest
 from unittest.mock import Mock
 
@@ -211,3 +213,56 @@ def test_extract_gitlab_metadata(mock_gitlab_request):
     assert metadata["event_type"] == "Merge Request Hook"
     assert metadata["delivery_id"] == "12345-67890-abcdef"
     assert "GitLab" in metadata["user_agent"]
+
+
+def test_extract_mr_action_reads_object_attributes_not_top_level(gitlab_mr_open_payload):
+    """Regression: real GitLab payloads carry the action in object_attributes only.
+
+    A live GitLab 17.11 `Merge Request Hook` delivery has no top-level `action`
+    key; reading it there yields None and silently drops every MR event once a
+    filter is configured.
+    """
+    assert "action" not in gitlab_mr_open_payload
+    assert gitlab_mr_open_payload["object_attributes"]["action"] == "open"
+    assert GitLabWebhookSecurity.extract_mr_action(gitlab_mr_open_payload) == "open"
+
+
+def test_extract_mr_action_falls_back_to_top_level(gitlab_mr_open_payload_top_level_action):
+    """Custom webhook templates may place the action at the top level."""
+    payload = gitlab_mr_open_payload_top_level_action
+    assert "action" not in payload["object_attributes"]
+    assert GitLabWebhookSecurity.extract_mr_action(payload) == "open"
+
+
+def test_extract_mr_action_object_attributes_wins_over_top_level(gitlab_mr_open_payload):
+    """object_attributes is the authoritative source when both are present."""
+    payload = dict(gitlab_mr_open_payload)
+    payload["action"] = "update"
+    assert GitLabWebhookSecurity.extract_mr_action(payload) == "open"
+
+
+def test_extract_mr_action_unknown_object_attributes_action(gitlab_mr_open_payload):
+    """An action outside MR_ACTIONS is not extracted."""
+    payload = dict(gitlab_mr_open_payload)
+    payload["object_attributes"] = {**payload["object_attributes"], "action": "unknown_action"}
+    assert GitLabWebhookSecurity.extract_mr_action(payload) is None
+
+
+def test_apply_mr_action_filter_dispatches_real_gitlab_open_payload(gitlab_mr_open_payload):
+    """Regression: an allowed action in a real payload must dispatch, not be filtered."""
+    dispatch, filtered_action = GitLabWebhookSecurity.apply_mr_action_filter(gitlab_mr_open_payload, "open,merge")
+    assert dispatch is True
+    assert filtered_action is None
+
+
+def test_apply_mr_action_filter_blocks_real_gitlab_update_payload(gitlab_mr_update_payload):
+    """A real payload whose action is outside the allowlist is still filtered out."""
+    dispatch, filtered_action = GitLabWebhookSecurity.apply_mr_action_filter(gitlab_mr_update_payload, "open,merge")
+    assert dispatch is False
+    assert filtered_action == "update"
+
+
+def test_apply_mr_action_filter_serialized_real_payload_dispatches(gitlab_mr_open_payload):
+    """The bytes path (raw request body) must behave like the dict path."""
+    raw = json.dumps(gitlab_mr_open_payload).encode("utf-8")
+    assert GitLabWebhookSecurity.apply_mr_action_filter(raw, "open,merge") == (True, None)
