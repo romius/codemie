@@ -1,0 +1,105 @@
+{
+  "task": "Closed 10 code-review gaps in .xlsb ingestion/extraction parity: tightened the python-calamine version constraint, added MIME-only routing to the markitdown XlsxConverter, added filename-extension MIME fallback for ADO/XWiki attachment dispatch, added a typed UnreadableWorkbookError propagated through serial and multiprocessing datasource paths, and updated config, tool descriptions, and tests.",
+  "generated": "2026-07-24T00:00:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 6,
+      "label": "XXL",
+      "affected": "XlsbLoader, FilesDatasourceLoader/file_extraction_utils (serial + multiprocessing paths), AzureDevOpsWikiLoader, AzureDevOpsWorkItemLoader, AttachmentContentMixin, XWiki ReadPageAttachmentContentTool, EmailAnalysisTool, XlsxTool, markitdown XlsxConverter, and the shared UnreadableWorkbookError exception contract",
+      "layers": "Workflow (datasource ingestion loaders, serial + multiprocessing) + Agent-Tool (ADO, xwiki, email, xlsx) + shared core exceptions"
+    },
+    "requirements_clarity": {
+      "score": 2,
+      "label": "S",
+      "status": "Mostly Clear",
+      "gaps": "Scope was a concrete 10-item checklist derived from named code-review findings (CR-001..CR-005 plus follow-ups); minor per-call-site judgment needed on MIME-vs-extension fallback precedence, otherwise well-specified."
+    },
+    "technical_risk": {
+      "score": 3,
+      "label": "M",
+      "risk_factors": "Custom UnreadableWorkbookError must survive pickling across the ProcessPoolExecutor boundary (multiprocessing datasource path) via an explicit __reduce__; MIME-vs-extension read-engine resolution logic is duplicated across 4+ independent call sites (ADO wiki loader, ADO work item loader, AttachmentContentMixin, XWiki attachment tool), risking inconsistency if one site diverges.",
+      "mitigation": "Explicit __reduce__ implementation for clean cross-process reconstruction; consistent _resolve_excel_ext-style helper pattern reused per call site; rewritten/added tests across all touched loaders and tools; no security- or performance-critical path affected."
+    },
+    "file_change_estimate": {
+      "score": 6,
+      "label": "XXL",
+      "modified_files": 26,
+      "modified_file_list": [
+        "config/datasources/datasources-config.yaml",
+        "pyproject.toml",
+        "src/codemie/datasource/exceptions.py",
+        "src/codemie/datasource/loader/azure_devops_wiki_loader.py",
+        "src/codemie/datasource/loader/azure_devops_work_item_loader.py",
+        "src/codemie/datasource/loader/file_extraction_utils.py",
+        "src/codemie/datasource/loader/file_loader.py",
+        "src/codemie/datasource/loader/xlsb_loader.py",
+        "src/codemie_tools/azure_devops/attachment_content_mixin.py",
+        "src/codemie_tools/azure_devops/work_item/tools_vars.py",
+        "src/codemie_tools/core/project_management/xwiki/tools.py",
+        "src/codemie_tools/core/project_management/xwiki/tools_vars.py",
+        "src/codemie_tools/file_analysis/email/tools.py",
+        "src/codemie_tools/file_analysis/tool_vars.py",
+        "src/codemie_tools/file_analysis/xlsx/markitdown_xlsx_converter.py",
+        "src/codemie_tools/file_analysis/xlsx/tools.py",
+        "tests/codemie/datasource/loader/test_xlsb_loader.py",
+        "tests/codemie/datasource/loader/test_azure_devops_wiki_loader.py",
+        "tests/codemie/datasource/loader/test_azure_devops_work_item_loader.py",
+        "tests/codemie_tools/file_analysis/xlsx/test_xlsx_converter.py",
+        "tests/codemie_tools/file_analysis/xlsx/test_xlsx_processor.py",
+        "tests/codemie_tools/file_analysis/email/test_email_analysis_tool.py",
+        "tests/codemie_tools/core/project_management/xwiki/test_tools.py",
+        "tests/codemie_tools/azure_devops/work_item/test_tools.py",
+        "tests/codemie_tools/azure_devops/wiki/test_tools.py",
+        "tests/codemie_tools/file_analysis/xlsx/conftest.py"
+      ],
+      "new_files": 1,
+      "new_file_list": [
+        "tests/codemie/datasource/loader/test_xlsb_real_fixtures.py"
+      ],
+      "affected_dirs": [
+        "config/datasources",
+        "src/codemie/datasource",
+        "src/codemie/datasource/loader",
+        "src/codemie_tools/azure_devops",
+        "src/codemie_tools/azure_devops/work_item",
+        "src/codemie_tools/core/project_management/xwiki",
+        "src/codemie_tools/file_analysis",
+        "src/codemie_tools/file_analysis/email",
+        "src/codemie_tools/file_analysis/xlsx",
+        "tests/codemie/datasource/loader",
+        "tests/codemie_tools/file_analysis/xlsx",
+        "tests/codemie_tools/file_analysis/email",
+        "tests/codemie_tools/core/project_management/xwiki",
+        "tests/codemie_tools/azure_devops/work_item",
+        "tests/codemie_tools/azure_devops/wiki"
+      ]
+    },
+    "dependencies": {
+      "score": 2,
+      "label": "S",
+      "new_packages": [],
+      "version_changes": ["python-calamine constraint tightened in pyproject.toml (pre-existing dependency, no new package added)"]
+    },
+    "affected_layers": {
+      "score": 3,
+      "label": "M",
+      "layers_changed": ["Workflow (datasource ingestion loaders)", "Agent-Tool (ADO, xwiki, email, xlsx tools)", "Infra/Config (datasources-config.yaml, pyproject.toml)"],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 22,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 27,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Touches 10+ distinct components across the datasource ingestion pipeline (serial + multiprocessing paths), Azure DevOps wiki/work-item loaders, xwiki attachment tool, email tool, and xlsx tool/converter, plus the shared UnreadableWorkbookError exception contract used across process boundaries — breadth spans multiple independent subsystems." },
+    { "dimension": "file_change_estimate", "reason": "27 files changed (26 modified + 1 new), exceeding the 16+ modified-file threshold; individual diffs are small (601 insertions/53 deletions, ~22 lines/file average) but the fix pattern was applied consistently across nearly every subsystem touched by the original xlsb feature." }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from XL (5) to XXL (6): touches the shared UnreadableWorkbookError exception contract in src/codemie/datasource/exceptions.py, reused across the serial and multiprocessing (ProcessPoolExecutor) extraction paths.",
+    "Component Scope also matches 'affects multiple workflows or agents' (ADO wiki, ADO work item, xwiki, email, xlsx tool all touched) — already capped at XXL (6)."
+  ],
+  "split_recommendation": null
+}

@@ -13,6 +13,7 @@ paths = [
   '''.keys/.*''',                      # Local dev keys (gitignored, never committed)
   '''.env_local''',                    # Local environment variables (gitignored, never committed)
   '''.env\.local''',                   # Local environment variables (gitignored, never committed)
+  '''tests/codemie/datasource/loader/fixtures/xlsb/.*\.xlsb$''',  # Binary Excel test fixtures; password-protected workbook stores encryption key material (encryptedHmacKey/encryptedKeyValue), not real secrets
 ]
 
 stopwords = [

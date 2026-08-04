@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "gate_id": "code-review.final",
+  "decision": "request-changes",
+  "rationale": "All three lenses ran (blind, edge-case, acceptance); acceptance audited the full 10-criteria spec and all 10 pass. One blocking finding survived triage: the multiprocessing datasource path (_load_docs_parallel) still swallows the new UnreadableWorkbookError via a bare `except Exception`, so item 5's requirement that BOTH serial and parallel paths account a corrupt xlsb as failed (not silently dropped) is only met on the serial path. Dismissed as non-blocking: the propagate-and-abort behavior on the serial path (intentional per AC6), .xlsm->.xlsx ext coercion (no engine-selection change — XlsxProcessor only branches on .xlsb), the latent **kwargs->Exception.__init__ forward (matches existing SkippedFileException style, no caller passes kwargs), the unregistered/dead-code XlsxConverter (explicitly accepted PO decision in item 2), and one lenient test-only assertion in the skipped e2e scaffold.",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    {"criterion": "Item 1: python-calamine ^0.8.2, lock untouched", "status": "pass"},
+    {"criterion": "Item 2: XlsxConverter accepts()/convert() MIME-only + dead imports removed", "status": "pass"},
+    {"criterion": "Item 3: extension fallback in ADO mixin + xwiki _process_content", "status": "pass"},
+    {"criterion": "Item 4: MIME-based Excel engine resolution in both ADO loaders", "status": "pass"},
+    {"criterion": "Item 5: UnreadableWorkbookError raised + not swallowed; ADO silent-empty preserved", "status": "pass"},
+    {"criterion": "Item 6: 5 xlsb loader tests rewritten to mock XlsxProcessor", "status": "pass"},
+    {"criterion": "Item 7: e2e fixture scaffold + README committed; skips cleanly", "status": "pass"},
+    {"criterion": "Item 8: .xlsb in docs_only exclusions", "status": "pass"},
+    {"criterion": "Item 9: XLSB in tool descriptions (4 spots)", "status": "pass"},
+    {"criterion": "Item 10: .xlsb in email _EXT_TO_MIME", "status": "pass"}
+  ],
+  "standards_review": [
+    {"standard": "commit-format (git-workflow)", "status": "pass", "notes": "EPMCDME-11738: subject prefix; AI attribution trailer present."},
+    {"standard": "code-quality (ruff)", "status": "pass", "notes": "ruff check clean on all changed source + new test."},
+    {"standard": "security", "status": "pass", "notes": "No secrets, injection, or unsafe file/process handling; new exception carries only filename + engine error string."}
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/datasource/loader/file_loader.py",
+      "line": 131,
+      "problem": "_load_docs_parallel's bare `except Exception as e: logger.error(...)` catches the propagated UnreadableWorkbookError and continues without re-raising or incrementing any stats counter. When ENABLE_FILE_MULTIPROCESSING is true, a corrupt/encrypted xlsb is logged but the job still produces the generic NoChunksImportedException (if it was the only file) or silently omits the file among valid ones — exactly the behavior item 5 set out to eliminate. The serial path (_lazy_load_documents) propagates the typed exception, so the two ingestion paths are inconsistent.",
+      "impact": "With multiprocessing enabled, ingesting a single corrupt report.xlsb yields the generic NoChunksImportedException instead of the actionable UnreadableWorkbookError message (AC6); a corrupt file among valid ones is dropped with only a log line.",
+      "recommendation": "In _load_docs_parallel, catch UnreadableWorkbookError before the generic `except Exception` and re-raise it (propagate), matching _lazy_load_documents. Add a test asserting the parallel path propagates it."
+    }
+  ]
+}

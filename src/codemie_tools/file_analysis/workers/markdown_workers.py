@@ -16,7 +16,11 @@
 
 import io
 import logging
+import os
+
 from markitdown import MarkItDown
+
+from codemie_tools.file_analysis.workers.xlsx_workers import process_xlsx_to_markdown
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +39,10 @@ def convert_file_to_markdown(file_bytes: bytes, file_name: str, llm_client=None,
         Markdown text content
     """
     try:
+        ext = os.path.splitext(file_name or "")[1].lower()
+        if ext == ".xlsb":
+            return process_xlsx_to_markdown(file_bytes, sheet_names=None, visible_only=False, file_ext=".xlsb")
+
         md = MarkItDown(
             enable_builtins=True,
             llm_client=llm_client,

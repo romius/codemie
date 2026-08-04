@@ -274,3 +274,117 @@ class TestXlsxToolPreconvertedCache:
             result = tool._process_excel_file(file_obj, sheet_names=None)
         assert result == "converted"
         mock_proc.assert_called_once()
+
+
+class TestXlsxConverterXlsb:
+    def test_accepts_xlsb_extension(self):
+        from codemie_tools.file_analysis.xlsx.markitdown_xlsx_converter import XlsxConverter
+
+        conv = XlsxConverter()
+        stream_info = MagicMock()
+        stream_info.extension = ".xlsb"
+        assert conv.accepts(io.BytesIO(b""), stream_info) is True
+
+    def test_accepts_xlsx_extension(self):
+        from codemie_tools.file_analysis.xlsx.markitdown_xlsx_converter import XlsxConverter
+
+        conv = XlsxConverter()
+        stream_info = MagicMock()
+        stream_info.extension = ".xlsx"
+        assert conv.accepts(io.BytesIO(b""), stream_info) is True
+
+    def test_does_not_accept_csv(self):
+        from codemie_tools.file_analysis.xlsx.markitdown_xlsx_converter import XlsxConverter
+
+        conv = XlsxConverter()
+        stream_info = MagicMock()
+        stream_info.extension = ".csv"
+        stream_info.mimetype = "text/csv"
+        assert conv.accepts(io.BytesIO(b""), stream_info) is False
+
+    def test_convert_xlsb_passes_file_ext(self):
+        from unittest.mock import ANY
+
+        from codemie_tools.file_analysis.xlsx.markitdown_xlsx_converter import XlsxConverter
+
+        df = pd.DataFrame({"A": ["val"]})
+        with patch.object(XlsxProcessor, "load", return_value={"S": df}) as mock_load:
+            with patch.object(XlsxProcessor, "convert", return_value="## S\nval"):
+                conv = XlsxConverter()
+                stream_info = MagicMock()
+                stream_info.extension = ".xlsb"
+                result = conv.convert(io.BytesIO(b""), stream_info)
+        mock_load.assert_called_once_with(ANY, clean_data=True, file_ext=".xlsb")
+        assert result.markdown == "## S\nval"
+
+    def test_xlsb_converter_produces_markdown(self):
+        from codemie_tools.file_analysis.xlsx.markitdown_xlsx_converter import XlsxConverter
+
+        df = pd.DataFrame({"Col": ["data"]})
+        with patch(
+            "codemie_tools.file_analysis.workers.xlsx_workers._load_xlsb_sheets",
+            return_value={"Sheet1": df},
+        ):
+            conv = XlsxConverter(visible_only=False)
+            stream_info = MagicMock()
+            stream_info.extension = ".xlsb"
+            result = conv.convert(io.BytesIO(b"fake xlsb"), stream_info)
+        assert "data" in result.markdown
+        assert "Sheet1" in result.markdown
+
+
+class TestXlsxConverterMimeOnly:
+    """A StreamInfo carrying only a MIME type (no extension) must still be accepted and
+    routed to the correct engine (EPMCDME-11738 follow-up item 2)."""
+
+    XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    XLSB_MIME = "application/vnd.ms-excel.sheet.binary.macroenabled.12"
+
+    def _converter(self):
+        from codemie_tools.file_analysis.xlsx.markitdown_xlsx_converter import XlsxConverter
+
+        return XlsxConverter()
+
+    def test_accepts_mime_only_xlsx(self):
+        from markitdown import StreamInfo
+
+        info = StreamInfo(mimetype=self.XLSX_MIME, extension=None)
+        assert self._converter().accepts(io.BytesIO(b""), info) is True
+
+    def test_accepts_mime_only_xlsb(self):
+        from markitdown import StreamInfo
+
+        info = StreamInfo(mimetype=self.XLSB_MIME, extension=None)
+        assert self._converter().accepts(io.BytesIO(b""), info) is True
+
+    def test_accepts_mixed_case_xlsb_mime_with_params(self):
+        from markitdown import StreamInfo
+
+        info = StreamInfo(
+            mimetype="Application/VND.ms-excel.sheet.binary.macroEnabled.12; charset=binary", extension=None
+        )
+        assert self._converter().accepts(io.BytesIO(b""), info) is True
+
+    def test_convert_mime_only_xlsx_uses_openpyxl_engine(self):
+        from unittest.mock import ANY
+
+        from markitdown import StreamInfo
+
+        df = pd.DataFrame({"A": ["v"]})
+        with patch.object(XlsxProcessor, "load", return_value={"S": df}) as mock_load:
+            with patch.object(XlsxProcessor, "convert", return_value="## S\nv"):
+                info = StreamInfo(mimetype=self.XLSX_MIME, extension=None)
+                self._converter().convert(io.BytesIO(b""), info)
+        mock_load.assert_called_once_with(ANY, clean_data=True, file_ext=".xlsx")
+
+    def test_convert_mime_only_xlsb_uses_calamine_engine(self):
+        from unittest.mock import ANY
+
+        from markitdown import StreamInfo
+
+        df = pd.DataFrame({"A": ["v"]})
+        with patch.object(XlsxProcessor, "load", return_value={"S": df}) as mock_load:
+            with patch.object(XlsxProcessor, "convert", return_value="## S\nv"):
+                info = StreamInfo(mimetype=self.XLSB_MIME, extension=None)
+                self._converter().convert(io.BytesIO(b""), info)
+        mock_load.assert_called_once_with(ANY, clean_data=True, file_ext=".xlsb")

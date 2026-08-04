@@ -1690,6 +1690,7 @@ class IndexKnowledgeBaseFileTypes(Enum):
     PPTX = 'pptx'
     DOCX = 'docx'
     XLSX = 'xlsx'
+    XLSB = 'xlsb'
     HTML = 'html'
     EPUB = 'epub'
     IPYNB = 'ipynb'

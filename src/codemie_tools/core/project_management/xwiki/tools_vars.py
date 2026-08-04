@@ -911,7 +911,7 @@ File-Type Handling:
 - Images (png, jpg, gif, bmp, webp, etc.): base64-encoded content with a note (AI vision description requires a chat model).
 - DOCX (Word): extracted text content from the document.
 - PPTX (PowerPoint): extracted text from all slides.
-- XLSX (Excel): extracted tabular content as text.
+- XLSX / XLSB (Excel): extracted tabular content as text.
 - Other/unknown types: base64-encoded content with metadata note.
 
 Return Format:

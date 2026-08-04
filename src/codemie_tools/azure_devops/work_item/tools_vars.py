@@ -306,7 +306,7 @@ GET_WORK_ITEM_ATTACHMENT_CONTENT_TOOL = ToolMetadata(
           available; otherwise base64-encoded content with a note.
         - DOCX (Word): extracted text content from the document.
         - PPTX (PowerPoint): extracted text from all slides.
-        - XLSX / XLS (Excel): sheet data converted to text.
+        - XLSX / XLS / XLSB (Excel): sheet data converted to text.
         - Other/unknown types: base64-encoded content (if ≤ 50 KB) or metadata-only note.
 
         Return Format:

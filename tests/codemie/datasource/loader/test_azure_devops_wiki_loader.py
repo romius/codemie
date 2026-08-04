@@ -1015,7 +1015,7 @@ def test_extract_attachment_text_dispatches_to_xlsx(loader):
 
     result = loader._extract_attachment_text(b"bytes", mime, "data.xlsx")
 
-    loader._extract_xlsx_text.assert_called_once_with(b"bytes")
+    loader._extract_xlsx_text.assert_called_once_with(b"bytes", mime, "data.xlsx")
     assert result == "Table text"
 
 
@@ -1161,15 +1161,14 @@ def test_extract_docx_text_error(loader):
 
 def test_extract_xlsx_text_success(loader):
     """Returns markdown tables from XlsxProcessor"""
-    import sys
-
     mock_processor_instance = MagicMock()
     mock_processor_instance.load.return_value = [MagicMock()]
     mock_processor_instance.convert.return_value = "| col1 | col2 |\n|------|------|"
-    mock_module = MagicMock()
-    mock_module.XlsxProcessor.return_value = mock_processor_instance
 
-    with patch.dict(sys.modules, {"codemie_tools.file_analysis.xlsx.processor": mock_module}):
+    with patch(
+        "codemie.datasource.loader.azure_devops_wiki_loader.XlsxProcessor",
+        return_value=mock_processor_instance,
+    ):
         result = loader._extract_xlsx_text(b"xlsx bytes")
 
     assert "col1" in result
@@ -1365,3 +1364,57 @@ def test_lazy_load_yields_attachment_doc(mock_connection_class, loader, mock_wik
     assert len(docs) == 2
     attachment_doc = next(d for d in docs if d.metadata.get("content_type") == "attachment")
     assert attachment_doc.metadata["attachment_name"] == "diagram.png"
+
+
+# ---------------------------------------------------------------------------
+# _extract_attachment_text — xlsb support
+# ---------------------------------------------------------------------------
+
+
+class TestXlsbWikiAttachment:
+    def test_xlsb_wiki_attachment_extracted(self, loader):
+        import pandas as pd
+
+        df = pd.DataFrame({"A": ["wiki-cell"]})
+        with patch("codemie.datasource.loader.azure_devops_wiki_loader.XlsxProcessor") as mock_proc:
+            instance = mock_proc.return_value
+            instance.load.return_value = {"Sheet1": df}
+            instance.convert.return_value = "## Sheet1\nwiki-cell"
+            text = loader._extract_attachment_text(
+                b"fake xlsb",
+                "application/vnd.ms-excel.sheet.binary.macroenabled.12",
+                "wiki.xlsb",
+            )
+        assert "wiki-cell" in text
+
+    # --- engine resolution from MIME when the filename is unreliable (item 4) ---
+
+    _XLSB_MIME = "application/vnd.ms-excel.sheet.binary.macroenabled.12"
+    _XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+    def _load_ext(self, loader, content_type: str, filename: str) -> str:
+        import pandas as pd
+
+        df = pd.DataFrame({"A": ["v"]})
+        with patch("codemie.datasource.loader.azure_devops_wiki_loader.XlsxProcessor") as mock_proc:
+            instance = mock_proc.return_value
+            instance.load.return_value = {"S": df}
+            instance.convert.return_value = "content"
+            loader._extract_attachment_text(b"bytes", content_type, filename)
+        return instance.load.call_args.kwargs.get("file_ext")
+
+    def test_engine_xlsb_from_filename_with_octet_stream_mime(self, loader):
+        assert self._load_ext(loader, "application/octet-stream", "report.xlsb") == ".xlsb"
+
+    def test_engine_xlsb_from_mime_when_extensionless(self, loader):
+        assert self._load_ext(loader, self._XLSB_MIME, "attachment") == ".xlsb"
+
+    def test_engine_xlsb_from_mime_with_bin_filename(self, loader):
+        assert self._load_ext(loader, self._XLSB_MIME, "download.bin") == ".xlsb"
+
+    def test_engine_xlsb_from_mixed_case_macro_enabled_mime(self, loader):
+        mime = "Application/VND.ms-excel.sheet.binary.macroEnabled.12"
+        assert self._load_ext(loader, mime, "download.bin") == ".xlsb"
+
+    def test_engine_defaults_to_xlsx_for_generic_name_and_xlsx_mime(self, loader):
+        assert self._load_ext(loader, self._XLSX_MIME, "attachment") == ".xlsx"

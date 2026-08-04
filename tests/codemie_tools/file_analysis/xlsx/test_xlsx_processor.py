@@ -463,3 +463,42 @@ def test_processor_load_with_multiple_filter_values_no_matches(mock_read_excel, 
     assert "Sheet1" in result
     filtered_df = result["Sheet1"]
     assert len(filtered_df) == 0
+
+
+class TestXlsxProcessorXlsb:
+    """xlsb dispatch via file_ext parameter."""
+
+    def test_load_xlsb_calls_calamine_path(self):
+        df = pd.DataFrame({"A": ["cell"]})
+        with patch(
+            "codemie_tools.file_analysis.workers.xlsx_workers._load_xlsb_sheets",
+            return_value={"Sheet1": df},
+        ) as mock_xlsb:
+            proc = XlsxProcessor(visible_only=False)
+            result = proc.load(b"fake xlsb", file_ext=".xlsb")
+        mock_xlsb.assert_called_once()
+        assert "Sheet1" in result
+
+    def test_load_xlsb_visible_only_false_loads_all(self):
+        df = pd.DataFrame({"A": ["v"]})
+        with patch(
+            "codemie_tools.file_analysis.workers.xlsx_workers._load_xlsb_sheets",
+            return_value={"Sheet1": df, "Hidden": df},
+        ):
+            proc = XlsxProcessor(visible_only=False)
+            result = proc.load(b"fake xlsb", file_ext=".xlsb")
+        assert set(result.keys()) == {"Sheet1", "Hidden"}
+
+    def test_load_xlsb_corrupt_raises_clear_error(self):
+        # CalamineError is NOT imported here — calamine raises a generic Exception
+        # with "Cannot detect file format" for both corrupt and password-protected files.
+        with patch("pandas.read_excel", side_effect=Exception("Cannot detect file format")):
+            proc = XlsxProcessor(visible_only=False)
+            with pytest.raises(Exception, match="Cannot detect file format"):
+                proc.load(b"corrupt", file_ext=".xlsb")
+
+    def test_load_xlsb_password_protected_raises_clear_error(self):
+        with patch("pandas.read_excel", side_effect=Exception("Cannot detect file format")):
+            proc = XlsxProcessor(visible_only=False)
+            with pytest.raises(Exception, match="Cannot detect file format"):
+                proc.load(b"pw protected", file_ext=".xlsb")

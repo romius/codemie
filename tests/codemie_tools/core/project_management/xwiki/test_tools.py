@@ -495,6 +495,38 @@ class TestReadPageAttachmentContentTool:
         result = tool._process_content("photo.png", b"\x89PNG\r\n")
         assert result["content_type"] in ("base64", "metadata_only")
 
+    def test_process_content_xlsb_passes_file_ext(self, xwiki_config):
+        mock_processor = MagicMock()
+        mock_processor.load.return_value = [{"name": "Sheet1", "data": [["val"]]}]
+        mock_processor.convert.return_value = "| val |"
+        with patch(
+            "codemie_tools.core.project_management.xwiki.tools.XlsxProcessor",
+            return_value=mock_processor,
+        ):
+            tool = self._make_tool(xwiki_config)
+            result = tool._process_content("data.xlsb", b"xlsb_bytes")
+        mock_processor.load.assert_called_once_with(b"xlsb_bytes", file_ext=".xlsb")
+        assert result["content_type"] == "text"
+        assert result["content"] == "| val |"
+
+    def test_process_content_xlsb_extension_fallback_when_mime_unknown(self, xwiki_config):
+        """In a slim Linux container without /etc/mime.types, guess_type returns None for
+        .xlsb; the extension must still route to Excel extraction rather than base64
+        (EPMCDME-11738 follow-up item 3)."""
+        mock_processor = MagicMock()
+        mock_processor.load.return_value = {"Sheet1": MagicMock()}
+        mock_processor.convert.return_value = "| val |"
+        with patch("mimetypes.guess_type", return_value=(None, None)):
+            with patch(
+                "codemie_tools.core.project_management.xwiki.tools.XlsxProcessor",
+                return_value=mock_processor,
+            ):
+                tool = self._make_tool(xwiki_config)
+                result = tool._process_content("report.xlsb", b"xlsb_bytes")
+        assert result["content_type"] == "text"
+        assert result["content"] == "| val |"
+        assert mock_processor.load.call_args.kwargs.get("file_ext") == ".xlsb"
+
     @patch("codemie_tools.core.project_management.xwiki.tools.validate_creds")
     @patch("codemie_tools.core.project_management.xwiki.tools.httpx.Client")
     def test_execute_http_error_raises(self, mock_client_cls, mock_validate, xwiki_config):

@@ -20,7 +20,7 @@ FILE_ANALYSIS_TOOL = ToolMetadata(
     Use this tool to read the content of files and convert it into markdown format.
     It supports various file types such as plain text files, HTML, zip archives, etc.
     This tool ensures that content is structured and easy to read with markdown syntax.
-    Do not use this tool for PDFs, PowerPoint presentations (PPTX), Excel files (XLS/XLSX), Word documents (DOCX),
+    Do not use this tool for PDFs, PowerPoint presentations (PPTX), Excel files (XLS/XLSX/XLSB), Word documents (DOCX),
     CSV files, or email files (EML/MSG), as separate tools handle those formats.
     Call this tool when tasks involve reading and analyzing file content or
     extracting information in a structured, markdown-friendly format. The output will include elements like headers,
@@ -102,7 +102,7 @@ CSV_TOOL = ToolMetadata(
 EXCEL_TOOL = ToolMetadata(
     name="excel_tool",
     description="""
-    Use this tool to extract and analyze content from Excel files (XLS, XLSX). The tool processes spreadsheet data,
+    Use this tool to extract and analyze content from Excel files (XLS, XLSX, XLSB). The tool processes spreadsheet data,
     converting it into readable markdown tables. It can handle multiple sheets, filter out empty rows and columns,
     and filter rows based on multiple cell values with AND logic. Works with pivot tables and complex Excel layouts.
     Ideal for tasks requiring analysis, data extraction, or question-answering based on tabular data in Excel format.

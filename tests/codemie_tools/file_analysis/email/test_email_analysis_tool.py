@@ -220,6 +220,26 @@ def test_analyze_attachment_dispatches_to_xlsx_tool_for_xls():
     assert result == "xls text"
 
 
+def test_analyze_attachment_dispatches_to_xlsx_tool_for_xlsb():
+    tool = EmailAnalysisTool(config=_make_config())
+    with patch("codemie_tools.file_analysis.xlsx.tools.XlsxTool") as mock_xlsx_cls:
+        mock_xlsx_cls.return_value.execute.return_value = "xlsb text"
+        result = tool._analyze_attachment(b"xlsb_bytes", "report.xlsb")
+    mock_xlsx_cls.assert_called_once()
+    assert result == "xlsb text"
+
+
+def test_xlsb_attachment_fileobject_has_correct_mime():
+    """The FileObject built for an .xlsb email attachment must carry the XLSB MIME type,
+    not application/octet-stream (EPMCDME-11738 follow-up item 10)."""
+    tool = EmailAnalysisTool(config=_make_config())
+    with patch("codemie_tools.file_analysis.xlsx.tools.XlsxTool") as mock_xlsx_cls:
+        mock_xlsx_cls.return_value.execute.return_value = "xlsb text"
+        tool._analyze_attachment(b"xlsb_bytes", "report.xlsb")
+    cfg = mock_xlsx_cls.call_args.kwargs["config"]
+    assert cfg.input_files[0].mime_type == "application/vnd.ms-excel.sheet.binary.macroenabled.12"
+
+
 def test_analyze_attachment_dispatches_to_pptx_tool():
     tool = EmailAnalysisTool(config=_make_config())
     with patch("codemie_tools.file_analysis.pptx.tools.PPTXTool") as mock_pptx_cls:

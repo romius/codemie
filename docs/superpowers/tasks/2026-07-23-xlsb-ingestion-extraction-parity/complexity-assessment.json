@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "task": "Add native .xlsb ingestion and extraction parity with .xlsx across File Data Source ingestion, chat file attachments, and Azure DevOps work-item/wiki attachment loading.",
+  "generated": "2026-07-23",
+  "dimensions": {
+    "component_scope":      { "score": 6, "label": "XXL" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 5, "label": "XL" },
+    "dependencies":         { "score": 3, "label": "M" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 24,
+  "size": "L",
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Touches 7 distinct components (IndexKnowledgeBaseFileTypes enum, LOADERS dict, xlsx_workers dispatch, XlsxTool, MimeType, ADO work-item loader, ADO wiki loader) spanning 3 subsystems — File Data Source ingestion, chat-attachment XlsxTool, and Azure DevOps loaders — plus the shared core MimeType.is_excel utility. Capped at XXL after the shared-utility red flag." },
+    { "dimension": "technical_risk", "reason": "New pyxlsb engine dispatch alongside the existing openpyxl path; open risk items per technical-analysis.md include multiprocessing-pool safety for pyxlsb file handles, platform-dependent MIME registration (verified on macOS, unverified on the Linux prod image), and pyxlsb's sheet-visibility API having different semantics than openpyxl's sheet_state, requiring a defensive fallback." },
+    { "dimension": "file_change_estimate", "reason": "Predicted surface spans 8 modified source files (pyproject.toml, file_object.py, index.py, file_extraction_utils.py, xlsx_workers.py, tools.py, azure_devops_work_item_loader.py, azure_devops_wiki_loader.py) plus updates across 7 existing xlsx test suites, touching 5+ directories (rest_api/models, datasource/loader, file_analysis/workers, file_analysis/xlsx, base, tests)." },
+    { "dimension": "affected_layers", "reason": "Touches Workflow (File Data Source ingestion pipeline), Service (xlsx_workers.py / XlsxProcessor core parsing), Agent-Tool (XlsxTool chat attachments), and External (Azure DevOps work-item and wiki attachment loaders)." }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from XL (5) to XXL (6, capped): touches the core shared MimeType.is_excel utility relied on by chat attachments, XlsxProcessor consumers, and the Azure DevOps AttachmentContentMixin"
+  ],
+  "split_recommendation": null
+}

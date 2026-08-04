@@ -70,6 +70,7 @@ _EXT_TO_MIME: dict[str, str] = {
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ".xls": "application/vnd.ms-excel",
+    ".xlsb": "application/vnd.ms-excel.sheet.binary.macroenabled.12",
     ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     ".csv": "text/csv",
     ".png": "image/png",
@@ -726,7 +727,7 @@ class EmailAnalysisTool(CodeMieTool, FileToolMixin):
                 return str(PDFTool(config=cfg).execute(pages=[], query=PDFQueryType.TEXT))
             if ext == ".docx":
                 return str(DocxTool(config=cfg).execute(query=DocxQueryType.TEXT))
-            if ext in (".xlsx", ".xls"):
+            if ext in (".xlsx", ".xls", ".xlsb"):
                 return str(XlsxTool(config=cfg).execute())
             if ext == ".pptx":
                 return str(PPTXTool(config=cfg).execute(slides=[], query=PPTXQueryType.TEXT))

@@ -119,6 +119,7 @@ loaders:
         - .json
         - .pdf
         - .xlsx
+        - .xlsb
       code_only: []
 
   jira_loader:

@@ -56,12 +56,15 @@ class XlsxProcessor:
         self._html_converter = HtmlConverter()
         logger.info("Initialized XlsxProcessor")
 
-    def load(self, file_content: bytes | BinaryIO, clean_data: bool = True) -> Dict[str, pd.DataFrame]:
+    def load(
+        self, file_content: bytes | BinaryIO, clean_data: bool = True, file_ext: str = ".xlsx"
+    ) -> Dict[str, pd.DataFrame]:
         """Load an Excel file and return a dictionary of DataFrames for each sheet
 
         Args:
             file_content: The Excel file content as bytes or file-like object
             clean_data: If True, clean the data by removing empty rows and columns
+            file_ext: File extension ('.xlsx' or '.xlsb') controls the read engine
 
         Returns:
             Dictionary of DataFrames for each sheet
@@ -74,8 +77,6 @@ class XlsxProcessor:
                 file_bytes = file_content.read()
                 file_content.seek(0)
 
-            # Use process pool if enabled
-
             return maybe_pool_submit(
                 load_xlsx,
                 file_bytes,
@@ -84,6 +85,7 @@ class XlsxProcessor:
                 clean_data,
                 self.filter_values,
                 self.filter_mode,
+                file_ext,
             )
         except Exception as e:
             logger.error(f"Failed to load Excel file: {str(e)}")

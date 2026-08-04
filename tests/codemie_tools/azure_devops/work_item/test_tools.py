@@ -275,6 +275,36 @@ class TestGetWorkItemAttachmentContentTool:
         result = tool._process_content("blob.bin", data)
         assert result["content_type"] == "base64"
 
+    def test_process_content_xlsb_extension_fallback_when_mime_unknown(self, tool):
+        """In a slim Linux container without /etc/mime.types, guess_type returns None for
+        .xlsb; the extension must still route to Excel extraction rather than base64
+        (EPMCDME-11738 follow-up item 3)."""
+        import pandas as pd
+
+        df = pd.DataFrame({"A": ["cell"]})
+        with patch("mimetypes.guess_type", return_value=(None, None)):
+            with patch("codemie_tools.azure_devops.attachment_content_mixin.XlsxProcessor") as mock_proc:
+                instance = mock_proc.return_value
+                instance.load.return_value = {"Sheet1": df}
+                instance.convert.return_value = "## Sheet1\ncell"
+                result = tool._process_content("report.xlsb", b"fake xlsb")
+        assert result["content_type"] == "text"
+        assert "cell" in result["content"]
+        assert instance.load.call_args.kwargs.get("file_ext") == ".xlsb"
+
+    def test_process_content_xls_extension_fallback_when_mime_unknown(self, tool):
+        """.xls extension fallback (guess_type None) must also reach Excel extraction."""
+        import pandas as pd
+
+        df = pd.DataFrame({"A": ["v"]})
+        with patch("mimetypes.guess_type", return_value=(None, None)):
+            with patch("codemie_tools.azure_devops.attachment_content_mixin.XlsxProcessor") as mock_proc:
+                instance = mock_proc.return_value
+                instance.load.return_value = {"Sheet1": df}
+                instance.convert.return_value = "content"
+                result = tool._process_content("legacy.xls", b"fake xls")
+        assert result["content_type"] == "text"
+
     # ------------------------------------------------ _find_attachment_in_relations
 
     def test_find_attachment_success(self, tool):

@@ -40,6 +40,7 @@ class MimeType:
     PPTX_TYPE = 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
     XLSX_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     XLS_TYPE = 'application/vnd.ms-excel'
+    XLSB_TYPE = 'application/vnd.ms-excel.sheet.binary.macroenabled.12'
     DOCX_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 
     ACTIVE_CONTENT_TYPES: frozenset = frozenset(
@@ -89,8 +90,8 @@ class MimeType:
 
     @property
     def is_excel(self) -> bool:
-        """Check if the mime type is an Excel file (XLS or XLSX)"""
-        return self.mime_type in [self.XLSX_TYPE, self.XLS_TYPE]
+        """Check if the mime type is an Excel file (XLS, XLSX, or XLSB)"""
+        return normalise_mime(self.mime_type) in [self.XLSX_TYPE, self.XLS_TYPE, self.XLSB_TYPE]
 
     @property
     def is_docx(self) -> bool:

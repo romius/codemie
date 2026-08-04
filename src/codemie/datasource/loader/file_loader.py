@@ -21,7 +21,7 @@ from typing import Any, Union, List, Optional
 from codemie_tools.base.file_object import FileObject
 from langchain_core.documents import Document
 
-from codemie.datasource.exceptions import SkippedFileException
+from codemie.datasource.exceptions import SkippedFileException, UnreadableWorkbookError
 from codemie.datasource.loader.base_datasource_loader import BaseDatasourceLoader
 from codemie.datasource.loader.file_extraction_utils import extract_documents_from_bytes
 from codemie.repository.repository_factory import FileRepositoryFactory
@@ -128,6 +128,11 @@ class FilesDatasourceLoader(BaseDatasourceLoader):
             except SkippedFileException:
                 self._skipped_count += 1
                 yield []
+            except UnreadableWorkbookError:
+                # A corrupt/encrypted workbook is a genuine failure, not a skip. Propagate it
+                # (like the serial path) so the actionable error surfaces instead of the file
+                # being silently dropped with only a log line.
+                raise
             except Exception as e:
                 logger.error(f"Failed to extract documents from file {file_data.name}: {e}")
 

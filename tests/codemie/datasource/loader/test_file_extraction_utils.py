@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, patch
 
 from langchain_core.documents import Document
 
+from codemie.datasource.exceptions import UnreadableWorkbookError
 from codemie.datasource.loader.binary.image_loader import ImageLoader
 from codemie.datasource.loader.file_extraction_utils import (
     LOADERS,
@@ -194,6 +195,25 @@ class TestExtractDocumentsFromBytes(unittest.TestCase):
 
         # Assert
         self.assertEqual(result, [])
+
+    def test_unreadable_workbook_error_propagates_not_swallowed(self):
+        """A corrupt/unreadable workbook must surface as a typed failure, not be swallowed
+        as an 'unsupported file type' empty result (EPMCDME-11738 AC6)."""
+        mock_loader_instance = MagicMock()
+        mock_loader_instance.lazy_load.side_effect = UnreadableWorkbookError("report.xlsb", "boom")
+
+        import codemie.datasource.loader.file_extraction_utils as utils
+
+        original_loaders = dict(utils.LOADERS)
+        utils.LOADERS["xlsb"] = MagicMock(return_value=mock_loader_instance)
+        try:
+            with self.assertRaises(UnreadableWorkbookError) as ctx:
+                extract_documents_from_bytes(b"corrupt", "report.xlsb", datasource_id="")
+        finally:
+            utils.LOADERS.update(original_loaders)
+
+        # The actionable message must carry the filename.
+        self.assertIn("report.xlsb", str(ctx.exception))
 
     @patch("codemie.datasource.loader.file_extraction_utils._build_images_parser")
     def test_image_extension_uses_image_loader(self, mock_build_parser):

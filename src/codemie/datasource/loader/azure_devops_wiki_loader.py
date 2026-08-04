@@ -35,6 +35,27 @@ from codemie.datasource.exceptions import (
     UnauthorizedException,
 )
 from codemie.datasource.loader.base_datasource_loader import BaseDatasourceLoader
+from codemie_tools.base.file_object import MimeType, normalise_mime
+from codemie_tools.file_analysis.xlsx.processor import XlsxProcessor
+
+# Extensions that unambiguously identify the Excel read engine.
+_XLSX_EXTENSION = ".xlsx"
+_XLSB_EXTENSION = ".xlsb"
+_EXCEL_EXTENSIONS = frozenset({_XLSX_EXTENSION, ".xls", _XLSB_EXTENSION})
+
+
+def _resolve_excel_ext(filename: str, content_type: str) -> str:
+    """Resolve the Excel read-engine extension from the filename or, failing that, the MIME type.
+
+    A generic/extensionless attachment name (``attachment``, ``download.bin``) must still route
+    XLSB-MIME content to the calamine engine instead of defaulting to openpyxl (which fails).
+    """
+    ext = os.path.splitext(filename)[1].lower()
+    if ext in _EXCEL_EXTENSIONS:
+        return ext
+    if normalise_mime(content_type or "") == MimeType.XLSB_TYPE:
+        return _XLSB_EXTENSION
+    return _XLSX_EXTENSION
 
 
 class AzureDevOpsWikiLoader(BaseLoader, BaseDatasourceLoader):
@@ -69,6 +90,7 @@ class AzureDevOpsWikiLoader(BaseLoader, BaseDatasourceLoader):
         {
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             "application/vnd.ms-excel",
+            "application/vnd.ms-excel.sheet.binary.macroenabled.12",
         }
     )
     PPTX_MIME_TYPES = frozenset(
@@ -621,8 +643,8 @@ class AzureDevOpsWikiLoader(BaseLoader, BaseDatasourceLoader):
             return self._extract_pdf_text(content_bytes)
         if content_type in self.DOCX_MIME_TYPES or ext in {".docx", ".doc"}:
             return self._extract_docx_text(content_bytes, filename)
-        if content_type in self.XLSX_MIME_TYPES or ext in {".xlsx", ".xls"}:
-            return self._extract_xlsx_text(content_bytes)
+        if normalise_mime(content_type) in self.XLSX_MIME_TYPES or ext in {_XLSX_EXTENSION, ".xls", _XLSB_EXTENSION}:
+            return self._extract_xlsx_text(content_bytes, content_type, filename)
         if content_type in self.PPTX_MIME_TYPES or ext in {".pptx", ".ppt"}:
             return self._extract_pptx_text(content_bytes)
         if content_type in self.MSG_MIME_TYPES or ext == ".msg":
@@ -668,13 +690,16 @@ class AzureDevOpsWikiLoader(BaseLoader, BaseDatasourceLoader):
             logger.warning(f"Failed to extract text from DOCX attachment '{filename}': {e}")
             return ""
 
-    def _extract_xlsx_text(self, content_bytes: bytes) -> str:
-        """Extract text from an XLSX/XLS attachment as markdown tables"""
-        try:
-            from codemie_tools.file_analysis.xlsx.processor import XlsxProcessor
+    def _extract_xlsx_text(self, content_bytes: bytes, content_type: str = "", filename: str = "") -> str:
+        """Extract text from an XLSX/XLS/XLSB attachment as markdown tables.
 
+        The read engine is resolved from the filename extension when recognisable, otherwise
+        from the MIME type — so XLSB content with a generic/extensionless name still uses calamine.
+        """
+        try:
+            file_ext = _resolve_excel_ext(filename, content_type)
             processor = XlsxProcessor()
-            sheets = processor.load(content_bytes)
+            sheets = processor.load(content_bytes, file_ext=file_ext)
             return processor.convert(sheets) or ""
         except Exception as e:
             logger.warning(f"Failed to extract text from Excel attachment: {e}")

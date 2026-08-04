@@ -500,7 +500,7 @@ class ToolExecutionService:
             file_urls = request.tool_args.pop("file_names", [])
             if not file_urls:
                 error_msg = """
-                    "Tool requires uploaded file. Supported formats: PPTX, DOCX, XLSX, PDF, CSV, JPEG, PNG,
+                    "Tool requires uploaded file. Supported formats: PPTX, DOCX, XLSX, XLSB, PDF, CSV, JPEG, PNG,
                     JPG, GIF, HTML, ZIP archives. Other files types will be treated as plain text files.
                 """
                 raise ValueError(error_msg)

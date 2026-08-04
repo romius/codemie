@@ -38,6 +38,7 @@ from codemie.configs import logger
 from codemie.configs.pyroscope_config import pyroscope_profile
 from codemie.core.utils import get_file_extension
 from codemie.datasource.datasource_file_storage import DatasourceFileStorage
+from codemie.datasource.exceptions import UnreadableWorkbookError
 from codemie.datasource.loader.binary.image_loader import ImageLoader
 from codemie.core.dependecies import get_llm_by_credentials
 from codemie.datasource.loader.docx_loader import DocxLoader
@@ -45,6 +46,7 @@ from codemie.datasource.loader.eml_loader import EmlLoader
 from codemie.datasource.loader.binary.msg_loader import OutlookMsgWithAttachmentsLoader
 from codemie.datasource.loader.binary.pdf_plumber_loader import PDFPlumberLoader
 from codemie.datasource.loader.vsdx_loader import VsdxLoader
+from codemie.datasource.loader.xlsb_loader import XlsbLoader
 from codemie.repository.repository_factory import FileRepositoryFactory
 from codemie.rest_api.models.index import IndexKnowledgeBaseFileTypes
 
@@ -54,6 +56,7 @@ LOADERS: dict[str, type] = {
     IndexKnowledgeBaseFileTypes.PPTX.value: UnstructuredPowerPointLoader,
     IndexKnowledgeBaseFileTypes.DOCX.value: DocxLoader,
     IndexKnowledgeBaseFileTypes.XLSX.value: XlsxLoader,
+    IndexKnowledgeBaseFileTypes.XLSB.value: XlsbLoader,
     IndexKnowledgeBaseFileTypes.HTML.value: HtmlLoader,
     IndexKnowledgeBaseFileTypes.EPUB.value: EpubLoader,
     IndexKnowledgeBaseFileTypes.IPYNB.value: IpynbLoader,
@@ -76,6 +79,7 @@ DEFAULT_LOADER_KWARGS: dict[str, dict] = {
         "extract_tables": "markdown",
     },
     IndexKnowledgeBaseFileTypes.XLSX.value: {"split_by_page": True},
+    IndexKnowledgeBaseFileTypes.XLSB.value: {"split_by_page": True},
 }
 
 
@@ -177,6 +181,12 @@ def extract_documents_from_bytes(
                 f"File cannot be decoded with default encoding: {e}",
                 exc_info=True,
             )
+        except UnreadableWorkbookError:
+            # A corrupt/encrypted workbook is a genuine failure, not an unsupported type.
+            # Propagate so the file is accounted for as failed (with an actionable message)
+            # instead of being silently swallowed and counted as skipped/unsupported.
+            logger.error(f"Failed to extract documents from file {file_name}: unreadable workbook", exc_info=True)
+            raise
         except ValueError:
             logger.warning(f"Unsupported file type: {file_ext} for file {file_name}", exc_info=True)
     finally:

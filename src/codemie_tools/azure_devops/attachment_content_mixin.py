@@ -40,6 +40,9 @@ class AttachmentContentMixin:
 
     _MAX_BASE64_BYTES: int = 50_000
     _TEXT_PREFIX: str = "text/"
+    # Excel extensions used as a fallback when the OS MIME table cannot resolve the
+    # type (e.g. a slim Linux container without /etc/mime.types has no .xlsb entry).
+    _EXCEL_EXTENSIONS: frozenset = frozenset({".xlsx", ".xls", ".xlsb"})
     _TEXT_EXTENSIONS: frozenset = frozenset(
         {
             ".txt",
@@ -270,10 +273,11 @@ class AttachmentContentMixin:
                     f"PPTX extraction failed: {e}.",
                 )
 
-        if mime.is_excel:
+        if mime.is_excel or os.path.splitext(filename)[1].lower() in self._EXCEL_EXTENSIONS:
             try:
+                file_ext = os.path.splitext(filename)[1].lower() or ".xlsx"
                 processor = XlsxProcessor()
-                sheets = processor.load(content_bytes)
+                sheets = processor.load(content_bytes, file_ext=file_ext)
                 text = processor.convert(sheets)
                 return {"content_type": "text", "content": text, "note": None}
             except Exception as e:

@@ -14,10 +14,10 @@
 
 import io
 import logging
+import os
 from typing import Type, Optional, List, Dict, Any
 
 import pandas as pd
-from markitdown import MarkItDown, PRIORITY_SPECIFIC_FILE_FORMAT
 from pandas import DataFrame
 from pydantic import BaseModel, Field
 
@@ -34,7 +34,6 @@ from codemie_tools.file_analysis.models import FileAnalysisConfig
 from codemie_tools.file_analysis.tool_vars import EXCEL_TOOL
 from codemie_tools.file_analysis.workers import process_xlsx_to_markdown
 from codemie_tools.file_analysis.workers.common import process_files_with_worker
-from codemie_tools.file_analysis.xlsx.markitdown_xlsx_converter import XlsxConverter
 from codemie_tools.file_analysis.xlsx.processor import XlsxProcessor
 
 logger = logging.getLogger(__name__)
@@ -98,7 +97,11 @@ class XlsxTool(CodeMieTool, FileToolMixin):
         Returns:
             List of Excel mime types
         """
-        return ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel']
+        return [
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'application/vnd.ms-excel',
+            'application/vnd.ms-excel.sheet.binary.macroenabled.12',
+        ]
 
     def _get_supported_extensions(self) -> Optional[List[str]]:
         """
@@ -107,7 +110,7 @@ class XlsxTool(CodeMieTool, FileToolMixin):
         Returns:
             List of Excel file extensions
         """
-        return ['.xlsx', '.xls']
+        return ['.xlsx', '.xls', '.xlsb']
 
     @staticmethod
     def _load_excel_file(
@@ -132,13 +135,14 @@ class XlsxTool(CodeMieTool, FileToolMixin):
             Dictionary of DataFrames for each sheet
         """
         try:
+            file_ext = os.path.splitext(file_object.name)[1].lower() or ".xlsx"
             processor = XlsxProcessor(
                 sheet_names=sheet_names,
                 visible_only=visible_only,
                 filter_values=filter_values,
                 filter_mode=filter_mode,
             )
-            return processor.load(file_object.bytes_content(), clean_data=clean_data)
+            return processor.load(file_object.bytes_content(), clean_data=clean_data, file_ext=file_ext)
         except Exception as e:
             logger.error(f"Failed to load Excel file: {str(e)}")
             raise e
@@ -292,11 +296,13 @@ class XlsxTool(CodeMieTool, FileToolMixin):
             return self.config.preconverted_content[file_object.name]
 
         try:
+            file_ext = os.path.splitext(file_object.name)[1].lower() or ".xlsx"
             return maybe_pool_submit(
                 process_xlsx_to_markdown,
                 file_object.bytes_content(),
                 sheet_names,
                 visible_only,
+                file_ext,
             )
 
         except FileNotFoundError as e:

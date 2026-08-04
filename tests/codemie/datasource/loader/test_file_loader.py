@@ -309,3 +309,28 @@ class TestLoadDocsParallel:
 
         assert results == [[]]
         assert loader.get_load_stats() == {"skipped_documents": 1}
+
+    def test_unreadable_workbook_error_propagates(self):
+        """A corrupt/unreadable workbook must NOT be swallowed by the parallel path's
+        blanket except; it propagates so the file is surfaced as failed, consistent with
+        the serial path (EPMCDME-11738 CR-001 / AC6)."""
+        from codemie.datasource.exceptions import UnreadableWorkbookError
+
+        fd1 = MagicMock()
+        fd1.name = "report.xlsb"
+        fd1.owner = "u1"
+
+        loader = self._make_loader([fd1])
+        file1 = FileObject(name="report.xlsb", content=b"corrupt", owner="u1", mime_type="application/octet-stream")
+        loader.file_repo.read_file = MagicMock(return_value=file1)
+
+        with patch(
+            "codemie.datasource.loader.file_loader.maybe_pool_submit",
+            side_effect=UnreadableWorkbookError("report.xlsb", "boom"),
+        ):
+            with pytest.raises(UnreadableWorkbookError) as exc_info:
+                list(loader._load_docs_parallel())
+
+        assert "report.xlsb" in str(exc_info.value)
+        # A failed workbook is accounted as failed, not silently counted as skipped.
+        assert loader.get_load_stats() == {"skipped_documents": 0}

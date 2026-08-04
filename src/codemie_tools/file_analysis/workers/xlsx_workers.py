@@ -19,6 +19,8 @@ import logging
 from typing import Dict, List, Optional, BinaryIO
 import openpyxl
 import pandas as pd
+import python_calamine
+from python_calamine import SheetVisibleEnum
 from markitdown.converters import HtmlConverter
 
 logger = logging.getLogger(__name__)
@@ -45,6 +47,27 @@ def _get_visible_sheets(binary_content: BinaryIO) -> Optional[List[str]]:
     except Exception as e:
         logger.warning(f"Failed to check sheet visibility: {str(e)}. Processing all sheets.")
         return None
+
+
+def _get_visible_sheets_xlsb(binary_content: bytes) -> Optional[List[str]]:
+    """Return names of visible sheets in an xlsb workbook. Returns None on failure."""
+    try:
+        wb = python_calamine.CalamineWorkbook.from_filelike(io.BytesIO(binary_content))
+        return [m.name for m in wb.sheets_metadata if m.visible == SheetVisibleEnum.Visible]
+    except Exception as e:
+        logger.warning(f"xlsb sheet visibility detection failed, loading all sheets: {e}")
+        return None
+
+
+def _load_xlsb_sheets(binary_content: bytes, sheets_to_load: Optional[List[str]]) -> dict[str, pd.DataFrame]:
+    """Load xlsb sheets via pandas calamine engine."""
+    return pd.read_excel(
+        io.BytesIO(binary_content),
+        engine="calamine",
+        sheet_name=sheets_to_load,
+        keep_default_na=True,
+        na_filter=True,
+    )
 
 
 def _normalize_column_names(df: pd.DataFrame):
@@ -173,20 +196,22 @@ def process_xlsx_to_markdown(
     file_bytes: bytes,
     sheet_names: Optional[List[str]],
     visible_only: bool,
+    file_ext: str = '.xlsx',
 ) -> str:
     """
-    Load XLSX file and convert all sheets to markdown.
+    Load XLSX/XLSB file and convert all sheets to markdown.
 
     Args:
         file_bytes: Excel file content as bytes
         sheet_names: Optional list of sheets to process
         visible_only: If True, only visible sheets
+        file_ext: File extension ('.xlsx' or '.xlsb') controls the read engine
 
     Returns:
         Markdown string with all sheets as tables
     """
     try:
-        sheets = load_xlsx(file_bytes, sheet_names, visible_only, True, None, "exact")
+        sheets = load_xlsx(file_bytes, sheet_names, visible_only, True, None, "exact", file_ext)
         return _sheets_to_markdown(sheets)
     except Exception as e:
         logger.error(f"XLSX to markdown failed: {e}")
@@ -200,9 +225,10 @@ def load_xlsx(
     clean_data: bool,
     filter_values: Optional[List[str]],
     filter_mode: str,
+    file_ext: str = '.xlsx',
 ) -> Dict[str, dict]:
     """
-    Load XLSX file into DataFrames with cleaning and filtering.
+    Load XLSX/XLSB file into DataFrames with cleaning and filtering.
 
     Args:
         file_bytes: Excel file content as bytes
@@ -211,31 +237,42 @@ def load_xlsx(
         clean_data: If True, clean empty rows/cols
         filter_values: Optional row filter values
         filter_mode: Filter mode ('exact' or 'contains')
+        file_ext: File extension ('.xlsx' or '.xlsb') controls the read engine
 
     Returns:
         Dictionary of sheet name to DataFrame
     """
     try:
-        binary_content = io.BytesIO(file_bytes)
+        if file_ext == '.xlsb':
+            visible_sheet_names = _get_visible_sheets_xlsb(file_bytes) if visible_only else None
+            sheets_to_load = sheet_names if sheet_names else None
+            if visible_only and visible_sheet_names:
+                if sheet_names:
+                    sheets_to_load = [n for n in sheet_names if n in visible_sheet_names]
+                else:
+                    sheets_to_load = visible_sheet_names
+            sheets = _load_xlsb_sheets(file_bytes, sheets_to_load)
+        else:
+            binary_content = io.BytesIO(file_bytes)
 
-        visible_sheet_names = None
-        if visible_only:
-            visible_sheet_names = _get_visible_sheets(binary_content)
+            visible_sheet_names = None
+            if visible_only:
+                visible_sheet_names = _get_visible_sheets(binary_content)
 
-        sheets_to_load = sheet_names if sheet_names else None
-        if visible_only and visible_sheet_names:
-            if sheet_names:
-                sheets_to_load = [name for name in sheet_names if name in visible_sheet_names]
-            else:
-                sheets_to_load = visible_sheet_names
+            sheets_to_load = sheet_names if sheet_names else None
+            if visible_only and visible_sheet_names:
+                if sheet_names:
+                    sheets_to_load = [name for name in sheet_names if name in visible_sheet_names]
+                else:
+                    sheets_to_load = visible_sheet_names
 
-        sheets = pd.read_excel(
-            binary_content,
-            engine="openpyxl",
-            sheet_name=sheets_to_load,
-            keep_default_na=True,
-            na_filter=True,
-        )
+            sheets = pd.read_excel(
+                binary_content,
+                engine="openpyxl",
+                sheet_name=sheets_to_load,
+                keep_default_na=True,
+                na_filter=True,
+            )
 
         processed_sheets = {}
         for sheet_name, df in sheets.items():

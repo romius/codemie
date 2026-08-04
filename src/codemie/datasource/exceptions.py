@@ -70,6 +70,32 @@ class SkippedFileException(Exception):
         super().__init__(f"Skipped {file_name}: {reason}", *args, **kwargs)
 
 
+class UnreadableWorkbookError(Exception):
+    """Raised when a workbook (e.g. XLSB/XLSX) cannot be parsed by the extraction engine.
+
+    Distinct from a plain ``ValueError`` ("unsupported file type") so that a corrupt or
+    encrypted workbook is accounted for as a *failure* rather than silently skipped. The
+    calamine engine raises the same generic error for corrupt and for
+    password-protected files, so the hint covers both causes.
+    """
+
+    ERROR_MSG = (
+        "Could not read workbook '{file_name}': {details}. "
+        "The file may be corrupt, encrypted or password-protected, "
+        "or not a valid Excel workbook."
+    )
+
+    def __init__(self, file_name: str = "", details: str = "", *args, **kwargs):
+        self.file_name = file_name
+        self.details = details
+        super().__init__(self.ERROR_MSG.format(file_name=file_name, details=details), *args, **kwargs)
+
+    def __reduce__(self):
+        # Reconstruct cleanly across the file process pool (ProcessPoolExecutor) boundary
+        # without re-wrapping the already-formatted message.
+        return (self.__class__, (self.file_name, self.details))
+
+
 class NoChunksImportedException(Exception):
     """Exception raised when datasource processing completes but no chunks were imported."""
 

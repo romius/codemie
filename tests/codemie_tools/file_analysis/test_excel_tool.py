@@ -588,3 +588,92 @@ def test_load_excel_file_passes_filter_parameters(mock_load_excel_file, excel_to
     call_kwargs = mock_load_excel_file.call_args[1]
     assert call_kwargs['filter_values'] == ["test_value"]
     assert call_kwargs['filter_mode'] == "contains"
+
+
+# ─────────────────────── Task 5: xlsb support in XlsxTool ───────────────────
+
+
+class TestXlsxToolXlsbSupportedTypes:
+    def test_xlsb_in_supported_mime_types(self):
+        from codemie_tools.base.file_object import MimeType
+
+        tool = XlsxTool(config=FileAnalysisConfig(input_files=[]))
+        assert MimeType.XLSB_TYPE in tool._get_supported_mime_types()
+
+    def test_xlsb_in_supported_extensions(self):
+        tool = XlsxTool(config=FileAnalysisConfig(input_files=[]))
+        assert '.xlsb' in tool._get_supported_extensions()
+
+    def test_xlsb_file_object_is_supported(self):
+        from codemie_tools.base.file_object import MimeType
+
+        xlsb_obj = MagicMock(spec=FileObject)
+        xlsb_obj.name = "report.xlsb"
+        xlsb_obj.mime_type = MimeType.XLSB_TYPE
+        tool = XlsxTool(config=FileAnalysisConfig(input_files=[xlsb_obj]))
+        assert tool._is_supported_file(xlsb_obj) is True
+
+
+class TestXlsxToolFileExtThreading:
+    @patch('codemie_tools.file_analysis.xlsx.tools.XlsxProcessor')
+    def test_load_excel_file_passes_xlsb_ext(self, mock_processor_cls):
+        from codemie_tools.base.file_object import MimeType
+
+        xlsb_obj = MagicMock(spec=FileObject)
+        xlsb_obj.name = "report.xlsb"
+        xlsb_obj.mime_type = MimeType.XLSB_TYPE
+        xlsb_obj.bytes_content.return_value = b"fake"
+        mock_instance = mock_processor_cls.return_value
+        mock_instance.load.return_value = {}
+
+        XlsxTool._load_excel_file(xlsb_obj)
+
+        mock_instance.load.assert_called_once()
+        _, kwargs = mock_instance.load.call_args
+        assert kwargs.get("file_ext") == ".xlsb"
+
+    @patch('codemie_tools.file_analysis.xlsx.tools.XlsxProcessor')
+    def test_load_excel_file_defaults_to_xlsx_ext(self, mock_processor_cls):
+        xlsx_obj = MagicMock(spec=FileObject)
+        xlsx_obj.name = "report.xlsx"
+        xlsx_obj.mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        xlsx_obj.bytes_content.return_value = b"fake"
+        mock_instance = mock_processor_cls.return_value
+        mock_instance.load.return_value = {}
+
+        XlsxTool._load_excel_file(xlsx_obj)
+
+        _, kwargs = mock_instance.load.call_args
+        assert kwargs.get("file_ext") == ".xlsx"
+
+    @patch('codemie_tools.file_analysis.xlsx.tools.maybe_pool_submit')
+    def test_process_excel_file_passes_xlsb_ext(self, mock_pool):
+        from codemie_tools.base.file_object import MimeType
+
+        xlsb_obj = MagicMock(spec=FileObject)
+        xlsb_obj.name = "data.xlsb"
+        xlsb_obj.mime_type = MimeType.XLSB_TYPE
+        xlsb_obj.bytes_content.return_value = b"fake"
+        mock_pool.return_value = "## Sheet1\n| A |\n| 1 |"
+        tool = XlsxTool(config=FileAnalysisConfig(input_files=[xlsb_obj]))
+
+        tool._process_excel_file(xlsb_obj, sheet_names=None, visible_only=False)
+
+        mock_pool.assert_called_once()
+        args = mock_pool.call_args[0]
+        # args: (fn, file_bytes, sheet_names, visible_only, file_ext)
+        assert args[-1] == ".xlsb"
+
+    @patch('codemie_tools.file_analysis.xlsx.tools.maybe_pool_submit')
+    def test_process_excel_file_defaults_xlsx_ext(self, mock_pool):
+        xlsx_obj = MagicMock(spec=FileObject)
+        xlsx_obj.name = "data.xlsx"
+        xlsx_obj.mime_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        xlsx_obj.bytes_content.return_value = b"fake"
+        mock_pool.return_value = "## Sheet1\n| A |\n| 1 |"
+        tool = XlsxTool(config=FileAnalysisConfig(input_files=[xlsx_obj]))
+
+        tool._process_excel_file(xlsx_obj, sheet_names=None, visible_only=False)
+
+        args = mock_pool.call_args[0]
+        assert args[-1] == ".xlsx"

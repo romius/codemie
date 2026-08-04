@@ -497,6 +497,10 @@ class ReadPageAttachmentContentTool(_XWikiBaseTool):
 
     _MAX_BASE64_BYTES: int = 50_000
 
+    # Excel extensions used as a fallback when the OS MIME table cannot resolve the
+    # type (e.g. a slim Linux container without /etc/mime.types has no .xlsb entry).
+    _EXCEL_EXTENSIONS: frozenset = frozenset({".xlsx", ".xls", ".xlsb"})
+
     _TEXT_EXTENSIONS: frozenset = frozenset(
         {
             ".txt",
@@ -650,10 +654,11 @@ class ReadPageAttachmentContentTool(_XWikiBaseTool):
                 logger.warning(f"PPTX text extraction failed for '{filename}': {e}")
                 return self._build_base64_response(content_bytes, f"PPTX extraction failed: {e}.")
 
-        if mime.is_excel:
+        if mime.is_excel or os.path.splitext(filename)[1].lower() in self._EXCEL_EXTENSIONS:
             try:
+                file_ext = os.path.splitext(filename)[1].lower() or ".xlsx"
                 processor = XlsxProcessor()
-                sheets = processor.load(content_bytes)
+                sheets = processor.load(content_bytes, file_ext=file_ext)
                 text = processor.convert(sheets)
                 return {"content_type": "text", "content": text, "note": None}
             except Exception as e:
