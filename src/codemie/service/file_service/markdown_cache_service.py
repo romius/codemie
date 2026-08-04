@@ -68,7 +68,19 @@ class MarkdownCacheService:
             )
 
         logger.debug("MarkdownCache: miss for %s/%s, converting", file_obj.owner, file_obj.name)
-        markdown = convert_file_to_markdown(file_obj.bytes_content(), file_obj.name)
+        raw_bytes = file_obj.bytes_content()
+        try:
+            markdown = convert_file_to_markdown(raw_bytes, file_obj.name)
+        except Exception as e:
+            markdown = f"[Conversion failed for {file_obj.name}: {type(e).__name__}]"
+            logger.warning(
+                "MarkdownCache: conversion failed for %s/%s (%s, %d bytes): %s",
+                file_obj.owner,
+                file_obj.name,
+                file_obj.mime_type,
+                len(raw_bytes or b""),
+                e,
+            )
 
         try:
             repo.write_file(

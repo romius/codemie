@@ -1,0 +1,37 @@
+{
+  "decision": "request-changes",
+  "rationale": "Critical defect: bytes_content() called twice (line 72 for conversion, line 80 for logging). If the original exception was raised by bytes_content() itself, the second call inside the except block raises again BEFORE markdown = fallback is assigned (line 82 comes after logger.warning at line 80), defeating the entire fallback mechanism. A FileObject with exotic content type (content: Optional[Any] admits non-bytes/str values) would escape the guard. Additionally, transient failures are permanently cached with no retry mechanism. No-spec round (no acceptance criteria).",
+  "confidence": "low",
+  "risk_flags": ["correctness"],
+  "business_review": [],
+  "standards_review": [
+    {
+      "standard": "git-workflow",
+      "description": "Commit messages follow EPMCDME-####: Description format",
+      "status": "pass",
+      "notes": "All 7 commits in range conform to documented format"
+    }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "problem": "bytes_content() called twice on exception path; second call inside except handler is unguarded and precedes fallback assignment",
+      "location": "src/codemie/service/file_service/markdown_cache_service.py:72,80,82",
+      "impact": "If the original exception was raised by bytes_content() (e.g. FileObject with content type int/list/dict instead of bytes/str), the second call at line 80 raises again before markdown = fallback (line 82) executes. The unassigned markdown variable causes NameError at line 84 (return markdown), defeating the entire guard. FileObject.content is typed Optional[Any], so exotic types can reach bytes_content().",
+      "recommendation": "Move 'markdown = fallback' to the FIRST line of the except block (before logger.warning), and cache bytes_content() result in a local variable before the try block to avoid the second call: raw = file_obj.bytes_content(); convert_file_to_markdown(raw, ...); logger.warning(..., len(raw or b\"\"), ...).",
+      "severity": "critical",
+      "triage": "patch",
+      "sources": ["blind", "edge-case"]
+    },
+    {
+      "id": "CR-002",
+      "problem": "Transient failures permanently cached with no retry mechanism",
+      "location": "src/codemie/service/file_service/markdown_cache_service.py:73-92",
+      "impact": "A one-time MemoryError, TimeoutError, or temporary I/O error is caught by except Exception and the fallback string is written to cache. On subsequent reads, the truthy fallback is returned without retry (line 62: if cached and cached.content). The poisoned cache entry persists indefinitely (no TTL). Recovery requires explicit invalidate() call, which no caller triggers automatically.",
+      "recommendation": "Consider skipping cache write for the fallback, writing a distinct error-marker sentinel that get_or_convert treats as a miss (forcing retry), or adding TTL to cache entries. Alternatively, classify exceptions: write cache for permanent failures (UnsupportedFormatException) but skip for transient ones (MemoryError, TimeoutError).",
+      "severity": "major",
+      "triage": "defer",
+      "sources": ["blind", "edge-case"]
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "task": "Fix markitdown exception handling in MarkdownCacheService to gracefully handle UnsupportedFormatException and FileConversionException with fallback strings cached to storage.",
+  "generated": "2026-07-31T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 2, "label": "S" },
+    "requirements_clarity": { "score": 1, "label": "XS" },
+    "technical_risk":       { "score": 2, "label": "S" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 12,
+  "size": "S",
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "file_change_estimate",
+      "reason": "Diffstat reports 7 files changed (642 insertions, 5 deletions), placing this at L per the 7–10 file bracket. The two primary files — markdown_cache_service.py and test_markdown_cache_service.py — account for roughly 500 of those insertions; the remaining five files likely cover __init__ exports, wiring points, or conftest additions."
+    },
+    {
+      "dimension": "component_scope",
+      "reason": "Scoped to a single service class (MarkdownCacheService). The fix adds try/except blocks around convert_file_to_markdown calls, introduces MIME-type and extension skip logic for CSV/EML/MSG files, and caches fallback strings for failed conversions — all within one file."
+    }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}
