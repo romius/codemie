@@ -133,3 +133,19 @@ GENERATE_IMAGE_TOOL = ToolMetadata(
     Enables the AI assistant to create images based on textual descriptions.
     """.strip(),
 )
+
+EXPORT_TABLES_TOOL = ToolMetadata(
+    name="export_tables_tool",
+    description="""
+    Export structured tables to a downloadable .xlsx (multi-sheet) or .csv file.
+    Input is a list of tables, each {sheet_name, columns, rows} - NOT markdown text.
+    Use this when the user wants a real spreadsheet or CSV file to download instead
+    of a table rendered in chat. For .xlsx each table becomes its own sheet with a
+    bold, frozen header row. For .csv provide exactly one table.
+    """.strip(),
+    label="Export tables",
+    user_description="""
+    Lets the AI assistant export structured tabular data as a downloadable Excel
+    (.xlsx, multi-sheet) or CSV file.
+    """.strip(),
+)

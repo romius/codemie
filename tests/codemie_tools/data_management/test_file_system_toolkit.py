@@ -17,6 +17,8 @@ import pytest
 from codemie_tools.data_management.code_executor.code_executor_tool import CodeExecutorTool
 from codemie_tools.data_management.code_executor.tools_vars import CODE_EXECUTOR_TOOL
 from codemie_tools.data_management.file_system.generate_image_tool import GenerateImageTool
+from codemie_tools.data_management.file_system.export_tables_tool import ExportTablesTool
+from codemie_tools.data_management.file_system.tools_vars import EXPORT_TABLES_TOOL
 from codemie_tools.data_management.file_system.toolkit import FileSystemToolkit
 from codemie_tools.data_management.file_system.tools import (
     ListDirectoryTool,
@@ -33,36 +35,47 @@ class TestFileSystemToolkit:
     def toolkit(self):
         return FileSystemToolkit.get_toolkit(configs={})
 
+    def test_export_tables_tool_always_available(self, toolkit):
+        # The export tool is a safe, always-on tool (like GenerateImage), no env gating.
+        tools = toolkit.get_tools()
+        assert any(isinstance(tool, ExportTablesTool) for tool in tools), "ExportTablesTool missing from get_tools()"
+
+    def test_export_tables_tool_in_safe_ui_catalog(self, toolkit):
+        # It must surface for non-admins in the UI catalog.
+        result = toolkit.get_tools_ui_info(is_admin=False)
+        names = [tool['name'] for tool in result['tools']]
+        assert EXPORT_TABLES_TOOL.name in names, "ExportTablesTool missing from non-admin UI catalog"
+
     def test_get_tools_ui_info_admin_without_env_var(self, toolkit):
-        # Admin without env vars should only see the safe tool (GenerateImage) in UI
+        # Admin without env vars should only see the safe tools (GenerateImage + ExportTables) in UI
         result = toolkit.get_tools_ui_info(is_admin=True)
         assert 'tools' in result, "UI info does not contain 'tools'"
-        assert len(result['tools']) == 1, "Admin without env vars should see only 1 tool in UI"
+        assert len(result['tools']) == 2, "Admin without env vars should see only the 2 safe tools in UI"
 
     def test_get_tools_ui_info_admin_with_env_var(self, toolkit, monkeypatch):
-        # Admin with file system env var should see file system tools (7 without executor)
+        # Admin with file system env var should see file system tools (8 without executor)
         monkeypatch.setenv("FILE_SYSTEM_TOOLS_ENABLED", "true")
         result = toolkit.get_tools_ui_info(is_admin=True)
         assert 'tools' in result, "UI info does not contain 'tools'"
-        assert len(result['tools']) == 7, "Admin with env var should see 7 tools in UI (executor gated off)"
+        assert len(result['tools']) == 8, "Admin with env var should see 8 tools in UI (executor gated off)"
 
     def test_get_tools_ui_info_non_admin(self, toolkit):
-        # Non-admin should only see the safe tool in UI
+        # Non-admin should only see the safe tools in UI
         result = toolkit.get_tools_ui_info(is_admin=False)
         assert 'tools' in result, "UI info does not contain 'tools'"
-        assert len(result['tools']) == 1, "Non-admin should see only 1 tool in UI"
+        assert len(result['tools']) == 2, "Non-admin should see only the 2 safe tools in UI"
 
     def test_get_tools_ui_info_non_admin_with_env_var(self, toolkit, monkeypatch):
-        # Non-admin with env var should still only see the safe tool in UI
+        # Non-admin with env var should still only see the safe tools in UI
         monkeypatch.setenv("FILE_SYSTEM_TOOLS_ENABLED", "true")
         result = toolkit.get_tools_ui_info(is_admin=False)
         assert 'tools' in result, "UI info does not contain 'tools'"
-        assert len(result['tools']) == 1, "Non-admin should see only 1 tool in UI even with env var"
+        assert len(result['tools']) == 2, "Non-admin should see only the 2 safe tools in UI even with env var"
 
     def test_get_tools_non_admin(self, toolkit):
-        # Non-admin users should only get the safe tool (executor gated off by default)
+        # Non-admin users should only get the safe tools (executor gated off by default)
         tools = toolkit.get_tools()
-        assert len(tools) == 1, "Non-admin should only get 1 safe tool"
+        assert len(tools) == 2, "Non-admin should only get the 2 safe tools"
         assert any(isinstance(tool, GenerateImageTool) for tool in tools), "GenerateImageTool missing"
         assert not any(isinstance(tool, CodeExecutorTool) for tool in tools), "CodeExecutor should be gated off"
         # Verify admin tools are NOT present
@@ -76,21 +89,22 @@ class TestFileSystemToolkit:
         assert not any(isinstance(tool, ReplaceStringTool) for tool in tools), "ReplaceStringTool should not be present"
 
     def test_get_tools_without_env_var(self):
-        # Without env vars should only get the safe tool
+        # Without env vars should only get the safe tools
         toolkit = FileSystemToolkit.get_toolkit(configs={})
         tools = toolkit.get_tools()
-        assert len(tools) == 1, "Without env vars should only get 1 safe tool"
+        assert len(tools) == 2, "Without env vars should only get the 2 safe tools"
         assert any(isinstance(tool, GenerateImageTool) for tool in tools), "GenerateImageTool missing"
+        assert any(isinstance(tool, ExportTablesTool) for tool in tools), "ExportTablesTool missing"
         assert not any(isinstance(tool, CodeExecutorTool) for tool in tools), "CodeExecutor should be gated off"
         # Verify file system tools are NOT present
         assert not any(isinstance(tool, ReadFileTool) for tool in tools), "ReadFileTool should not be present"
 
     def test_get_tools_with_env_var(self, monkeypatch):
-        # With file system env var set should get file system tools (7 without executor)
+        # With file system env var set should get file system tools (8 without executor)
         monkeypatch.setenv("FILE_SYSTEM_TOOLS_ENABLED", "true")
         toolkit = FileSystemToolkit.get_toolkit(configs={})
         tools = toolkit.get_tools()
-        assert len(tools) == 7, "With env var should get 7 tools (executor gated off)"
+        assert len(tools) == 8, "With env var should get 8 tools (executor gated off)"
         assert any(isinstance(tool, ReadFileTool) for tool in tools), "ReadFileTool missing"
         assert any(isinstance(tool, ListDirectoryTool) for tool in tools), "ListDirectoryTool missing"
         assert any(isinstance(tool, WriteFileTool) for tool in tools), "WriteFileTool missing"
@@ -134,7 +148,7 @@ class TestFileSystemToolkit:
         result = toolkit.get_tools_ui_info(is_admin=True)
         names = [tool['name'] for tool in result['tools']]
         assert CODE_EXECUTOR_TOOL.name in names, "CodeExecutor should be listed for admins when enabled"
-        assert len(result['tools']) == 8, "Admin with both env vars should see all 8 tools in UI"
+        assert len(result['tools']) == 9, "Admin with both env vars should see all 9 tools in UI"
 
     def test_get_tools_ui_info_code_executor_disabled_by_default(self, toolkit):
         # By default the executor must not appear in any UI catalog

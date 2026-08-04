@@ -24,6 +24,7 @@ from codemie_tools.base.models import ToolKit, ToolSet, Tool
 from codemie_tools.data_management.code_executor.code_executor_tool import CodeExecutorTool
 from codemie_tools.data_management.code_executor.tools_vars import CODE_EXECUTOR_TOOL
 from codemie_tools.data_management.file_system.generate_image_tool import GenerateImageTool
+from codemie_tools.data_management.file_system.export_tables_tool import ExportTablesTool
 from codemie_tools.data_management.file_system.tools import (
     ListDirectoryTool,
     ReadFileTool,
@@ -38,6 +39,7 @@ from codemie_tools.data_management.file_system.tools_vars import (
     LIST_DIRECTORY_TOOL,
     COMMAND_LINE_TOOL,
     GENERATE_IMAGE_TOOL,
+    EXPORT_TABLES_TOOL,
     DIFF_UPDATE_FILE_TOOL,
     REPLACE_STRING_TOOL,
 )
@@ -54,6 +56,7 @@ class FileSystemToolkitUI(ToolKit):
         Tool.from_metadata(LIST_DIRECTORY_TOOL),
         Tool.from_metadata(COMMAND_LINE_TOOL),
         Tool.from_metadata(GENERATE_IMAGE_TOOL),
+        Tool.from_metadata(EXPORT_TABLES_TOOL),
         Tool.from_metadata(DIFF_UPDATE_FILE_TOOL),
         Tool.from_metadata(REPLACE_STRING_TOOL),
         Tool.from_metadata(CODE_EXECUTOR_TOOL),
@@ -105,7 +108,10 @@ class FileSystemToolkit(BaseToolkit):
             return toolkit.model_dump()
 
         # Otherwise, return only safe tools
-        tools = [Tool.from_metadata(GENERATE_IMAGE_TOOL)]
+        tools = [
+            Tool.from_metadata(GENERATE_IMAGE_TOOL),
+            Tool.from_metadata(EXPORT_TABLES_TOOL),
+        ]
         if code_executor_enabled:
             tools.append(Tool.from_metadata(CODE_EXECUTOR_TOOL))
         return ToolKit(
@@ -117,6 +123,10 @@ class FileSystemToolkit(BaseToolkit):
         tools = [
             GenerateImageTool(
                 image_generator=self.image_generator,
+                file_repository=self.file_repository,
+                user_id=self.user_id or "",
+            ),
+            ExportTablesTool(
                 file_repository=self.file_repository,
                 user_id=self.user_id or "",
             ),

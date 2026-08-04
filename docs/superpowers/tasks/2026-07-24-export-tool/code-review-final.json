@@ -1,0 +1,31 @@
+{
+  "gate_id": "code-review.final",
+  "decision": "approve",
+  "confidence": "high",
+  "risk_flags": [],
+  "rationale": "Fresh three-lens re-review of the completed diff, superseding the stale round-1 request-changes. Both previously-raised blockers are confirmed resolved: a shared _sanitize_cell helper now routes through _build_csv and _build_xlsx to coerce non-primitive cells and strip openpyxl-illegal control chars (former CR-001) and to neutralize leading =,+,-,@,\\t,\\r formula-injection (former CR-002), each backed by regression tests (test_non_primitive_cells_are_stringified, test_illegal_control_chars_stripped, test_native_numeric_cells_preserved, test_xlsx/csv_neutralizes_formula_injection). Acceptance lens: every in-scope criterion passes; 3 items are na by design (openpyxl direct-dep promotion reverted per spec, in-chat download flow verified separately, suite not executed in review). No blocking findings survived triage. 4 dismissed (incl. a blind-lens false-positive 'missing type annotation' the real source has as file_repository: Optional[Any]; a backslash path-traversal concern that is non-exploitable because the storage backend assigns its own id and filename is display metadata; an unconfirmed empty-columns crash; and a None-masks-storage-error item that is pre-existing behavior of the reused FileExportService and matches the documented contract). 4 deferred as non-blocking edge cases on exotic input: lone UTF-16 surrogates not stripped by _sanitize_cell (crash on serialize); sheet titles not run through control-char sanitization (asymmetric with cells); case-insensitive sheet-name dedup ('Sales'/'sales') risking an Excel repair prompt; and no 32,767-char cell-length cap.",
+  "business_review": [
+    {"criterion": "Produce real .xlsx/.csv from structured tables (not markdown)", "status": "pass", "notes": "ExportTablesInput(tables, filename, format); real bytes via openpyxl/csv."},
+    {"criterion": "Multi-sheet xlsx (one sheet per table)", "status": "pass", "notes": "_build_xlsx create_sheet per table; test asserts sheetnames order."},
+    {"criterion": "Bold + frozen header + auto width", "status": "pass", "notes": "Font(bold=True), freeze_panes='A2', width capped at 60."},
+    {"criterion": "Reuse FileExportService.store_exported_bytes; return verbatim; None->ValueError", "status": "pass", "notes": "execute returns result unchanged; test_missing_repository_raises."},
+    {"criterion": "Registered always-on in FileSystemToolkit + non-admin UI", "status": "pass", "notes": "unconditional in get_tools() and safe UI list; toolkit tests assert counts."},
+    {"criterion": "CSV single table, clear rejection of multiple, None->empty, UTF-8 bytes", "status": "pass", "notes": "ValueError before any write; round-trip escaping test."},
+    {"criterion": "Sheet title: strip illegal chars, truncate 31, fall back 'Sheet', numeric-suffix dedup", "status": "pass", "notes": "_INVALID_SHEET_CHARS + _sheet_title; test_sheet_name_sanitized_and_deduped."},
+    {"criterion": "Filename normalized to correct extension", "status": "pass", "notes": "_normalize_filename; tests assert *.csv / *.xlsx."},
+    {"criterion": "Validation: empty tables->ValueError, csv>1->ValueError, header-only valid, ragged rows as-is", "status": "pass", "notes": "guards present + tests."},
+    {"criterion": "Cell sanitization: non-primitive coercion, control-char strip, formula-injection neutralization (former CR-001/CR-002)", "status": "pass", "notes": "_sanitize_cell shared across both output paths; four regression tests."},
+    {"criterion": "Handles thousands of rows", "status": "pass", "notes": "3000-row test passes."},
+    {"criterion": "Commits ticket-prefixed EPMCDME-12313", "status": "pass", "notes": "all branch commits use the required prefix."},
+    {"criterion": "openpyxl direct-dependency promotion", "status": "na", "notes": "explicitly reverted per spec; stays resolved transitive main dep (poetry lock unavailable in env); deferred to a maintainer with registry access."},
+    {"criterion": "One-click chat download via existing file-download flow", "status": "na", "notes": "out of this diff's scope; verified separately per spec."},
+    {"criterion": "Test suite passes", "status": "na", "notes": "not executed in review; QA gates own execution. Tests present and internally consistent with the implementation."}
+  ],
+  "standards_review": [
+    {"standard": "Commit format (EPMCDME-####: ...)", "status": "pass", "notes": "all branch commits follow the ticket-prefixed format."},
+    {"standard": "License headers on new files", "status": "pass", "notes": "Apache-2.0 header present in tool + test files."},
+    {"standard": "Code quality", "status": "pass", "notes": "typed, follows existing tool/toolkit patterns; no blocking violations in changed files."},
+    {"standard": "Security (untrusted cell-data handling)", "status": "pass", "notes": "CSV/formula injection neutralized in both output paths; control-char stripping; stored filename is display metadata (backend assigns id) so no exploitable path traversal; no auth/secret handling introduced."}
+  ],
+  "findings": []
+}
