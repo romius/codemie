@@ -1,0 +1,51 @@
+{
+  "gate_id": "code-review.final",
+  "decision": "request-changes",
+  "rationale": "Five distinct defects were found across correctness, security, backward compatibility, and test coverage. None are cosmetic — each changes or omits a public-contract behaviour.",
+  "follow_ups": [
+    {
+      "id": "F1",
+      "severity": "bug",
+      "title": "TEMPLATES scope guard missing",
+      "description": "Plan Task 2 explicitly requires sort_by, sort_order, and group_by_is_global are ignored when scope == AssistantScope.TEMPLATES. The router change passes all three parameters unconditionally to repository.query() regardless of scope.",
+      "status": "false-positive — early return at line 228 already guards TEMPLATES scope before repository.query() is called"
+    },
+    {
+      "id": "F2",
+      "severity": "security",
+      "title": "Committed credential in .env",
+      "description": "AZURE_OPENAI_API_KEY populated with non-placeholder value, SUPERADMIN_PASSWORD set to non-placeholder. Both in version-control-tracked file.",
+      "status": "fixed — pre-existing dirty .env excluded from commit"
+    },
+    {
+      "id": "F3",
+      "severity": "security",
+      "title": "CVE pin rollbacks in pyproject.toml",
+      "description": "Security pins for nltk, soupsieve, mistune removed or loosened without ticket reference.",
+      "status": "fixed — pre-existing dirty pyproject.toml and poetry.lock excluded from commit"
+    },
+    {
+      "id": "F4",
+      "severity": "test-coverage",
+      "title": "SQL query-level ORDER BY integration tests absent",
+      "description": "No tests call repository.query() or equivalent to verify ORDER BY assembly per scope.",
+      "status": "fixed — extracted _apply_sort_to_query static method; 8 parametrized tests cover MARKETPLACE default, MARKETPLACE explicit sort (4 fields), PROJECT_WITH_MARKETPLACE default, group_by_is_global=True/False, and other-scope fallback"
+    },
+    {
+      "id": "F5",
+      "severity": "test-coverage",
+      "title": "Default sort preservation for MARKETPLACE not tested at query level",
+      "description": "No test confirms sort_by=None MARKETPLACE path emits unique_users_count DESC NULLS LAST order.",
+      "status": "fixed — test_marketplace_default_sort_uses_unique_users_count and test_marketplace_default_sort_has_stable_tiebreakers added"
+    },
+    {
+      "id": "F6",
+      "severity": "breaking-change",
+      "title": "Out-of-scope changes in pyproject.toml / poetry.lock",
+      "description": "Removed codemie-enterprise optional dep, promoted langfuse to mandatory, removed regex ReDoS-defense pin, relaxed gitpython constraint.",
+      "status": "fixed — pre-existing dirty pyproject.toml and poetry.lock excluded from commit"
+    }
+  ],
+  "confidence": "high",
+  "risk_flags": ["security", "breaking-change"]
+}

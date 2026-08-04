@@ -78,6 +78,13 @@ class AgentMode(str, Enum):
     PLAN_EXECUTE = "plan_execute"
 
 
+class AssistantSortBy(str, Enum):
+    USAGE = "usage"
+    LIKES = "likes"
+    DISLIKES = "dislikes"
+    NAME = "name"
+
+
 class AssistantType(str, Enum):
     CODEMIE = "codemie"
     A2A = "A2A"

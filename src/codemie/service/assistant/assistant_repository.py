@@ -17,12 +17,14 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
+from sqlalchemy.sql.selectable import Select
 from sqlmodel import select, or_, and_, Session, func, case
 
 from codemie.configs import config
 from codemie.core.ability import Ability
 from codemie.core.models import CreatedByUser
-from codemie.rest_api.models.assistant import Assistant, AssistantListResponse, AssistantRequest
+from codemie.rest_api.models.assistant import Assistant, AssistantListResponse, AssistantRequest, AssistantSortBy
+from codemie.rest_api.models.index import SortOrder
 from codemie.rest_api.security.user import User
 from codemie.service.filter.filter_services import AssistantFilter, AssistantNameFilter
 
@@ -57,6 +59,77 @@ class AssistantRepository:
     _UPDATE_DATE_FIELD = "update_date"
     _DATE_ORDER = "desc"
 
+    @staticmethod
+    def _build_sort_column(sort_by: AssistantSortBy | None, sort_order: SortOrder) -> Any | None:
+        """Return a SQLAlchemy ORDER BY expression for the given sort field and direction."""
+        if sort_by is None:
+            return None
+        column_map = {
+            AssistantSortBy.USAGE: Assistant.unique_users_count,
+            AssistantSortBy.LIKES: Assistant.unique_likes_count,
+            AssistantSortBy.DISLIKES: Assistant.unique_dislikes_count,
+            AssistantSortBy.NAME: Assistant.name,
+        }
+        col = column_map[sort_by]
+        if sort_order == SortOrder.ASC:
+            return col.asc().nullslast()
+        return col.desc().nullslast()
+
+    @staticmethod
+    def _apply_sort_to_query(
+        query: Select[tuple[Assistant]],
+        scope: "AssistantScope",
+        sort_by: AssistantSortBy | None,
+        sort_order: SortOrder,
+        group_by_is_global: bool,
+    ) -> Select[tuple[Assistant]]:
+        """Apply ORDER BY clauses to a select statement based on scope and sort params."""
+        sort_col = AssistantRepository._build_sort_column(sort_by, sort_order)
+        if scope == AssistantScope.MARKETPLACE:
+            if sort_col is not None:
+                return query.order_by(
+                    sort_col,
+                    Assistant.update_date.desc().nullslast(),
+                    Assistant.id.asc(),
+                )
+            return query.order_by(
+                Assistant.unique_users_count.desc().nullslast(),
+                Assistant.update_date.desc().nullslast(),
+                Assistant.id.asc(),
+            )
+        if scope == AssistantScope.PROJECT_WITH_MARKETPLACE:
+            if sort_col is not None and not group_by_is_global:
+                return query.order_by(
+                    sort_col,
+                    Assistant.update_date.desc().nullslast(),
+                    Assistant.id.asc(),
+                )
+            if sort_col is not None and group_by_is_global:
+                return query.order_by(
+                    Assistant.is_global.asc(),
+                    sort_col,
+                    Assistant.update_date.desc().nullslast(),
+                    Assistant.id.asc(),
+                )
+            if sort_col is None and not group_by_is_global:
+                return query.order_by(
+                    Assistant.unique_users_count.desc().nullslast(),
+                    Assistant.update_date.desc().nullslast(),
+                    Assistant.id.asc(),
+                )
+            return query.order_by(
+                Assistant.is_global.asc(),
+                case(
+                    (Assistant.is_global == True, Assistant.unique_users_count),  # noqa: E712
+                    else_=0,
+                )
+                .desc()
+                .nullslast(),
+                Assistant.update_date.desc().nullslast(),
+                Assistant.id.asc(),
+            )
+        return query.order_by(Assistant.update_date.desc().nullslast())
+
     def query(
         self,
         user: User,
@@ -66,6 +139,9 @@ class AssistantRepository:
         per_page: int = DEFAULT_PER_PAGE,
         minimal_response: bool = False,
         apply_scope: bool = True,
+        sort_by: Optional[AssistantSortBy] = None,
+        sort_order: SortOrder = SortOrder.DESC,
+        group_by_is_global: bool = True,
     ) -> Dict[str, Any]:
         """
         Query assistants based on specified criteria.
@@ -102,34 +178,7 @@ class AssistantRepository:
                     )
 
             # Apply sorting
-            if scope == AssistantScope.MARKETPLACE:
-                # For marketplace, sort by unique users count in descending order
-                query = query.order_by(
-                    Assistant.unique_users_count.desc().nullslast(),
-                    Assistant.update_date.desc().nullslast(),  # Secondary sort by name and id for stable pagination
-                    Assistant.id.asc(),
-                )
-            elif scope == AssistantScope.PROJECT_WITH_MARKETPLACE:
-                # Ordering strategy for PROJECT_WITH_MARKETPLACE:
-                # 1. Show non-global assistants first (is_global.asc())
-                # 2. Within global assistants, sort by popularity (unique_users_count)
-                # 3. Within non-global assistants, sort by update_date
-                # 4. Use update_date as secondary sort for both groups
-                # 5. Use id for stable pagination
-                query = query.order_by(
-                    Assistant.is_global.asc(),  # Non-global (False=0) first, then global (True=1)
-                    case(
-                        (Assistant.is_global == True, Assistant.unique_users_count),  # noqa
-                        else_=0,  # Non-global gets 0 to keep them grouped by update_date
-                    )
-                    .desc()
-                    .nullslast(),
-                    Assistant.update_date.desc().nullslast(),  # Secondary sort for both groups
-                    Assistant.id.asc(),  # Stable pagination
-                )
-            else:
-                # For other scopes, maintain the original sorting by update date
-                query = query.order_by(Assistant.update_date.desc().nullslast())
+            query = self._apply_sort_to_query(query, scope, sort_by, sort_order, group_by_is_global)
 
             # Apply pagination
             total = session.exec(select(func.count()).select_from(query.subquery())).one()

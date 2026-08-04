@@ -62,6 +62,7 @@ from codemie.rest_api.models.assistant import (
     AssistantHealthCheckRequest,
     AssistantHealthCheckResponse,
     AssistantOrigin,
+    AssistantSortBy,
     VirtualAssistantChatRequest,
 )
 from codemie.rest_api.models.assistant_generator import (
@@ -78,7 +79,7 @@ from codemie.rest_api.models.base import ConversationStatus
 from codemie.rest_api.models.conversation import (
     ConversationMetrics,
 )
-from codemie.rest_api.models.index import IndexInfo
+from codemie.rest_api.models.index import IndexInfo, SortOrder
 from codemie.rest_api.models.settings import SettingType
 from codemie.rest_api.models.prebuilt_assistants import PrebuiltAssistant
 from codemie.rest_api.routers.utils import raise_access_denied
@@ -204,6 +205,12 @@ def index_assistants(
     filters: str = None,
     page: int = 0,
     per_page: int = 12,
+    sort_by: AssistantSortBy | None = Query(None, description="Sort assistants by field"),
+    sort_order: SortOrder = Query(SortOrder.DESC, description="Sort direction (asc or desc)"),
+    group_by_is_global: bool = Query(
+        True,
+        description="When true, non-global assistants appear first in PROJECT_WITH_MARKETPLACE scope",
+    ),
 ):
     """
     Returns all saved assistants
@@ -237,6 +244,9 @@ def index_assistants(
         page=page,
         per_page=per_page,
         minimal_response=minimal_response,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        group_by_is_global=group_by_is_global,
     )
 
     # Usage stats are added in the repository

@@ -20,11 +20,21 @@ This file is automatically loaded by pytest before running any tests.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 from dotenv import load_dotenv
+
+# Stub optional native packages that may not be available in all environments
+# (e.g. tree_sitter_languages has no Python 3.13 wheel on Windows).
+# This must run before any codemie imports so the stubs are in place at import time.
+for _missing_pkg in ("tree_sitter_languages",):
+    try:
+        __import__(_missing_pkg)
+    except ImportError:
+        sys.modules[_missing_pkg] = MagicMock()
 
 # Load test env vars at module level so they are set before any codemie module
 # is imported and Config() is instantiated (pydantic-settings reads env at init time).
