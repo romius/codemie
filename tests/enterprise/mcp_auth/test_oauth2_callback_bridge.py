@@ -684,7 +684,7 @@ def test_enabled_callback_invalid_resource_url_does_not_render_or_log_tainted_va
     pkce_store, _, exchange, _, reverse_lookup = _set_default_bridge_state(monkeypatch)
     pkce_store.consume.return_value = _build_pkce_state()
     reverse_lookup.return_value = _build_mcp_config(
-        url=("https://user:secret-sentinel@mcp.example.com/api/mcp" "?access_token=token-sentinel#fragment-sentinel"),
+        url=("https://user:secret-sentinel@mcp.example.com/api/mcp?access_token=token-sentinel#fragment-sentinel"),
     )
 
     with caplog.at_level("WARNING"):
@@ -779,13 +779,15 @@ def test_post_verification_error_pages_include_server_name_pre_verification_do_n
     monkeypatch.setattr(
         mcp_auth_dependencies,
         "_decode_and_verify_oauth2_callback_state",
-        lambda state, signing_key: (_ for _ in ()).throw(
-            mcp_auth_dependencies.CallbackPageError(
-                "Authentication session could not be verified. Return to CodeMie and try again."
+        lambda state, signing_key: (
+            (_ for _ in ()).throw(
+                mcp_auth_dependencies.CallbackPageError(
+                    "Authentication session could not be verified. Return to CodeMie and try again."
+                )
             )
-        )
-        if state == "invalid-state"
-        else _build_state_payload(),
+            if state == "invalid-state"
+            else _build_state_payload()
+        ),
     )
 
     post_verification_response = client.get(

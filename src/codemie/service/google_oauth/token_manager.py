@@ -100,8 +100,7 @@ class GoogleOAuthTokenManager:
             expires_at = int(expires_at_raw)
         except (ValueError, TypeError):
             logger.warning(
-                f"Google OAuth: malformed expires_at '{expires_at_raw}' "
-                f"for setting {setting_id}, treating as expired"
+                f"Google OAuth: malformed expires_at '{expires_at_raw}' for setting {setting_id}, treating as expired"
             )
             expires_at = 0
 

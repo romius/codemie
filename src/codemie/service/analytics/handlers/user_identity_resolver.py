@@ -106,7 +106,7 @@ class UserIdentityResolver:
           4. Replace each value with the field specified by that column's target.
         """
         effective: dict[str, ResolutionTarget] = (
-            target_map if target_map is not None else {k: target for k in column_keys}
+            target_map if target_map is not None else dict.fromkeys(column_keys, target)
         )
         if not effective or not rows:
             return

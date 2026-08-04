@@ -95,8 +95,7 @@ def _wrap_enterprise_idp(enterprise_provider_class, provider_name: str):
                 raise ExtendedHTTPException(
                     code=status.HTTP_401_UNAUTHORIZED,
                     message=(
-                        f"Invalid user_type attribute from IDP. "
-                        f"Expected 'regular' or 'external', got: {repr(e.value)}"
+                        f"Invalid user_type attribute from IDP. Expected 'regular' or 'external', got: {repr(e.value)}"
                     ),
                     details=e.detail,
                     help=e.help_text,

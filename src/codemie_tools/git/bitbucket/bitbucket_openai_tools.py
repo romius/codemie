@@ -107,7 +107,7 @@ class ListBranchesTool(CodeMieTool):
         branches = [branch.name for branch in self.repo_wrapper.branches.each()]
         if branches:
             branches_str = "\n".join(branches)
-            return f"Found {len(branches)} branches in the repository:" f"\n{branches_str}"
+            return f"Found {len(branches)} branches in the repository:\n{branches_str}"
         else:
             return "No branches found in the repository"
 

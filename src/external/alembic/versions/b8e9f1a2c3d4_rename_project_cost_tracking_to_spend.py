@@ -35,9 +35,9 @@ def upgrade() -> None:
     op.rename_table("project_cost_tracking", "project_spend_tracking")
 
     # 2. Rename indexes from old table name to new
-    op.execute("ALTER INDEX ix_project_cost_tracking_project_name " "RENAME TO ix_project_spend_tracking_project_name")
-    op.execute("ALTER INDEX ix_project_cost_tracking_key_hash " "RENAME TO ix_project_spend_tracking_key_hash")
-    op.execute("ALTER INDEX ix_project_cost_tracking_spend_date " "RENAME TO ix_project_spend_tracking_spend_date")
+    op.execute("ALTER INDEX ix_project_cost_tracking_project_name RENAME TO ix_project_spend_tracking_project_name")
+    op.execute("ALTER INDEX ix_project_cost_tracking_key_hash RENAME TO ix_project_spend_tracking_key_hash")
+    op.execute("ALTER INDEX ix_project_cost_tracking_spend_date RENAME TO ix_project_spend_tracking_spend_date")
 
     # 3. Drop NOT NULL constraint on key_hash
     op.alter_column(
@@ -136,9 +136,9 @@ def downgrade() -> None:
     )
 
     # Rename indexes back
-    op.execute("ALTER INDEX ix_project_spend_tracking_spend_date " "RENAME TO ix_project_cost_tracking_spend_date")
-    op.execute("ALTER INDEX ix_project_spend_tracking_key_hash " "RENAME TO ix_project_cost_tracking_key_hash")
-    op.execute("ALTER INDEX ix_project_spend_tracking_project_name " "RENAME TO ix_project_cost_tracking_project_name")
+    op.execute("ALTER INDEX ix_project_spend_tracking_spend_date RENAME TO ix_project_cost_tracking_spend_date")
+    op.execute("ALTER INDEX ix_project_spend_tracking_key_hash RENAME TO ix_project_cost_tracking_key_hash")
+    op.execute("ALTER INDEX ix_project_spend_tracking_project_name RENAME TO ix_project_cost_tracking_project_name")
 
     # Rename table back
     op.rename_table("project_spend_tracking", "project_cost_tracking")

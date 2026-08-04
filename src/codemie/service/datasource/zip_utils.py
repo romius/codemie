@@ -56,8 +56,7 @@ def _read_zip_entry(
                     raise ZipExtractionError(
                         message="ZIP archive too large",
                         detail=(
-                            f"Uncompressed content exceeds the "
-                            f"{_ZIP_MAX_UNCOMPRESSED_BYTES // (1024 * 1024)} MB limit."
+                            f"Uncompressed content exceeds the {_ZIP_MAX_UNCOMPRESSED_BYTES // (1024 * 1024)} MB limit."
                         ),
                         help_text="Upload a smaller archive or split the content into multiple files.",
                     )

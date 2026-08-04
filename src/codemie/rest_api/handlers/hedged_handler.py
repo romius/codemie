@@ -694,8 +694,7 @@ class HedgedAssistantHandler(StandardAssistantHandler):
             served_by = "agent"
             logger.info(f"[HEDGED] agent path won, tool={tool_name} assistant_id={self.assistant.id}")
             logger.debug(
-                f"[HEDGE-CANCELLED] Primary (agent) completed first: tool={tool_name} "
-                f"assistant_id={self.assistant.id}"
+                f"[HEDGE-CANCELLED] Primary (agent) completed first: tool={tool_name} assistant_id={self.assistant.id}"
             )
             return super()._handle_sync(request, raw_request, execution_start, include_tool_errors, error_detail_level)
         except Exception:

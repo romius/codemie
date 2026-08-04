@@ -213,9 +213,7 @@ class SessionFactory:
             result = session.run("print('health_check_ok')")
 
             if result.exit_code != 0:
-                raise ToolException(
-                    f"Health check failed with exit code {result.exit_code}. " f"Stderr: {result.stderr}"
-                )
+                raise ToolException(f"Health check failed with exit code {result.exit_code}. Stderr: {result.stderr}")
 
             if "health_check_ok" not in result.stdout:
                 raise ToolException(f"Health check returned unexpected output: {result.stdout}")

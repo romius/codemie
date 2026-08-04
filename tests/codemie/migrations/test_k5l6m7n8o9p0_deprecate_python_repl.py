@@ -206,14 +206,7 @@ def test_workflow_tools_empty_list():
 def test_yaml_config_old_tool_replaced():
     """YAML config with old tool name has it replaced."""
     _, _, _transform_yaml_config = _import_workflow_helpers()
-    yaml = (
-        "tools:\n"
-        "  - id: tool_2\n"
-        f"    tool: {OLD_TOOL}\n"
-        "    tool_args:\n"
-        "      code: |-\n"
-        "        print('hello')\n"
-    )
+    yaml = f"tools:\n  - id: tool_2\n    tool: {OLD_TOOL}\n    tool_args:\n      code: |-\n        print('hello')\n"
     result = _transform_yaml_config(yaml)
     assert f"tool: {NEW_TOOL}" in result
     assert OLD_TOOL not in result
@@ -273,7 +266,7 @@ def test_workflow_assistants_empty_list():
 def test_yaml_config_multiple_occurrences():
     """All occurrences of old tool name in YAML are replaced."""
     _, _, _transform_yaml_config = _import_workflow_helpers()
-    yaml = f"    tool: {OLD_TOOL}\n" "    tool_args: {}\n" f"    tool: {OLD_TOOL}\n"
+    yaml = f"    tool: {OLD_TOOL}\n    tool_args: {{}}\n    tool: {OLD_TOOL}\n"
     result = _transform_yaml_config(yaml)
     assert result.count(f"tool: {NEW_TOOL}") == 2
     assert OLD_TOOL not in result

@@ -210,7 +210,7 @@ class ConversationHistoryProjectionService:
                 continue
 
             logger.info(
-                "Skipping duplicate replay tool record. " f"ToolCallId={record.call_id}, ToolName={record.tool_name}"
+                f"Skipping duplicate replay tool record. ToolCallId={record.call_id}, ToolName={record.tool_name}"
             )
             deduplicated_records[existing_index] = record
 

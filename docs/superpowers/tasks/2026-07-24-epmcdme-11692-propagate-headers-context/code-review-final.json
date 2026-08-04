@@ -1,0 +1,76 @@
+{
+  "verdict": "code-review.final",
+  "decision": "request-changes",
+  "confidence": "medium",
+  "risk_flags": ["security"],
+  "business_review": [
+    {
+      "id": "AC-1",
+      "text": "Non-resume start with non-empty request_headers → inputs[CONTEXT_STORE_VARIABLE]['propagated_headers'] equals that dict.",
+      "status": "pass",
+      "notes": "Implementation correct; test_on_workflow_start_injects_headers_when_present provides direct coverage with {\"X-Tenant\": \"acme\"}."
+    },
+    {
+      "id": "AC-2",
+      "text": "request_headers is None OR empty → 'propagated_headers' key absent from context store.",
+      "status": "partial",
+      "notes": "Implementation is correct: 'if self.request_headers:' is falsy for both None and {}. Only the None case is exercised by a test; the empty-dict ({}) branch has no test coverage, leaving half of the stated criterion unverified."
+    },
+    {
+      "id": "AC-3",
+      "text": "On resume (resume_execution=True), on_workflow_start returns None as before — headers injection is irrelevant.",
+      "status": "pass",
+      "notes": "test_on_workflow_start_resume_returns_none_inputs asserts inputs is None. The existing resume guard is unaffected by this change."
+    },
+    {
+      "id": "AC-4",
+      "text": "make ruff and make test pass with no regressions.",
+      "status": "pass",
+      "notes": "Validated: ruff passed clean; make test: 13195 passed, 56 pre-existing failures unchanged, 129 skipped."
+    }
+  ],
+  "standards_review": [
+    {
+      "standard": "git_workflow",
+      "status": "pass",
+      "notes": "Commit subject 'EPMCDME-11692: Propagate request headers into workflow context store at start' follows the required EPMCDME-####: Description format. Branch name EPMCDME-11692_propagate-headers-context follows ticket-first convention."
+    },
+    {
+      "standard": "code_quality",
+      "status": "pass",
+      "notes": "make ruff passed clean; no lint or format violations in changed files."
+    },
+    {
+      "standard": "security",
+      "status": "fail",
+      "notes": "Project security guide states 'Avoid logging tokens, API keys, or full auth headers'. self.request_headers is stored verbatim in the LangGraph context store without filtering. The context store is checkpointed to the database, so any Authorization, Cookie, or X-Api-Key headers that callers include become credentials at rest. This is raised as CR-001 (major)."
+    }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "major",
+      "triage": "patch",
+      "problem": "self.request_headers is written verbatim to the LangGraph context store without any filtering or sanitization. HTTP request headers routinely carry Authorization, Cookie, and X-Api-Key values. The LangGraph context store is checkpointed to the database, and the project security guide explicitly states 'Avoid logging tokens, API keys, or full auth headers' — persisting them in the checkpoint violates the same principle.",
+      "impact": "Sensitive credentials stored at rest in the checkpoint database; accessible to any workflow node that reads from the context store and potentially visible in audit or checkpoint records.",
+      "recommendation": "Filter the dict to an explicit allowlist of permitted non-sensitive header names before writing, e.g. a configurable PROPAGATED_HEADERS_ALLOWLIST. If an allowlist is not feasible, at minimum redact well-known sensitive header names case-insensitively (Authorization, Cookie, X-Api-Key, etc.) and document that callers are responsible for passing only non-sensitive headers."
+    },
+    {
+      "id": "CR-002",
+      "severity": "major",
+      "triage": "patch",
+      "problem": "Acceptance criterion AC-2 requires the 'propagated_headers' key to be absent when request_headers is None OR empty ({}). The implementation is correct ('if self.request_headers:' is falsy for both). However, only the None case is exercised by a test; the empty-dict ({}) branch has no test coverage.",
+      "impact": "A future refactor that changes the guard (e.g., 'if self.request_headers is not None:') would silently inject an empty dict, violating AC-2 with no regression signal from the test suite.",
+      "recommendation": "Add a parametrized or separate test case that passes request_headers={} and asserts PROPAGATED_HEADERS_CONTEXT_KEY is not in inputs[CONTEXT_STORE_VARIABLE]."
+    },
+    {
+      "id": "CR-003",
+      "severity": "major",
+      "triage": "patch",
+      "problem": "initial_context[PROPAGATED_HEADERS_CONTEXT_KEY] = self.request_headers stores the original dict by reference. Any workflow node that mutates this context-store entry (e.g., pops a key, replaces a value) also mutates self.request_headers on the executor, which may be forwarded to child executors in supervisor or tool-node patterns.",
+      "impact": "Non-deterministic header corruption across nodes that share the executor's request_headers reference; effects depend on node execution order and are difficult to reproduce.",
+      "recommendation": "Store a shallow copy: initial_context[PROPAGATED_HEADERS_CONTEXT_KEY] = dict(self.request_headers). If header values can themselves be mutable containers, use copy.deepcopy."
+    }
+  ],
+  "rationale": "All three review lenses ran successfully. Blind lens raised security and empty-dict concerns. Edge-case lens confirmed the empty-dict guard ambiguity, the by-reference mutation risk, and noted the resume-path write to initial_context (dead code when inputs=None). Acceptance lens confirmed AC-2 is partially unverified due to missing {} test. Standards check: git commit format PASS, code quality PASS, security FAIL (credentials in checkpoint store). Deferred: resume-path dead-code write — the spec explicitly says headers are irrelevant on resume; the write is harmless dead code, not a behavioral defect. Dismissed: resume test not asserting context store state (irrelevant per spec scope). Decision: request-changes on 3 major patch findings (CR-001 security, CR-002 test gap, CR-003 mutation risk)."
+}

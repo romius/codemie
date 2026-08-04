@@ -96,8 +96,7 @@ class SpendTrackingScheduler:
             name="LiteLLM Spend Collector",
         )
         logger.info(
-            f"Registered LiteLLM spend collector job with schedule: "
-            f"{config.LITELLM_SPEND_COLLECTOR_SCHEDULE!r} (UTC)"
+            f"Registered LiteLLM spend collector job with schedule: {config.LITELLM_SPEND_COLLECTOR_SCHEDULE!r} (UTC)"
         )
 
     def _register_budget_reset_tracker_job(self) -> None:

@@ -65,6 +65,7 @@ from codemie.workflows.constants import (
     ITER_SOURCE,
     ITERATION_NODE_NUMBER_KEY,
     PREV_STATE_NAMES_TO_MERGE,
+    PROPAGATED_HEADERS_CONTEXT_KEY,
     MESSAGES_VARIABLE,
     PREVIOUS_EXECUTION_STATE_NAMES,
     RECURSION_LIMIT,
@@ -100,6 +101,17 @@ from codemie.workflows.validation import (
 )
 from codemie.workflows.utils.json_utils import UnwrappingJsonPointerEvaluator
 from codemie.configs.pyroscope_config import pyroscope_profile
+
+_SENSITIVE_HEADER_NAMES: frozenset[str] = frozenset(
+    {
+        "authorization",
+        "cookie",
+        "set-cookie",
+        "proxy-authorization",
+        "x-api-key",
+        "x-auth-token",
+    }
+)
 
 
 class WorkflowExecutor:
@@ -715,6 +727,19 @@ class WorkflowExecutor:
 
         workflow.add_conditional_edges(transition.id, _fan_out)
 
+    def _evaluate_condition(
+        self,
+        state: AgentMessages,
+        transition: WorkflowState,
+        enable_summarization_node: bool | None = None,
+    ) -> str:
+        _enable = (
+            enable_summarization_node
+            if enable_summarization_node is not None
+            else self.workflow_config.enable_summarization_node
+        )
+        return evaluate(state, transition, _enable)
+
     def _handle_condition(self, workflow: StateGraph, transition, enable_summarization_node: bool):
         source = transition.id
         condition = transition.next.condition
@@ -724,11 +749,7 @@ class WorkflowExecutor:
 
         workflow.add_conditional_edges(
             source,
-            lambda _self=self,
-            _transition=transition,
-            _enable_summarization_node=self.workflow_config.enable_summarization_node: (
-                evaluate(_self, _transition, _enable_summarization_node)
-            ),
+            lambda state, _t=transition, _e=enable_summarization_node: self._evaluate_condition(state, _t, _e),
             transition_nodes,
         )
 
@@ -743,11 +764,7 @@ class WorkflowExecutor:
 
         workflow.add_conditional_edges(
             source,
-            lambda _self=self,
-            _transition=transition,
-            _enable_summarization_node=self.workflow_config.enable_summarization_node: (
-                evaluate(_self, _transition, _enable_summarization_node)
-            ),
+            lambda state, _t=transition, _e=enable_summarization_node: self._evaluate_condition(state, _t, _e),
             transition_nodes,
         )
 
@@ -1030,6 +1047,14 @@ class WorkflowExecutor:
             from codemie_tools.base.file_object import FileObject
 
             initial_context["file_names"] = [FileObject.from_encoded_url(fn).name for fn in self.file_names]
+        if self.request_headers:
+            safe_headers = {
+                k: v.replace("\r", "").replace("\n", "")
+                for k, v in self.request_headers.items()
+                if k.lower() not in _SENSITIVE_HEADER_NAMES
+            }
+            if safe_headers:
+                initial_context[PROPAGATED_HEADERS_CONTEXT_KEY] = safe_headers
         if self.resume_execution and self.execution_id:
             inputs = None  # None means langchain will use the last checkpoint
             self.workflow_execution_config = WorkflowService.find_workflow_execution_by_id(self.execution_id)

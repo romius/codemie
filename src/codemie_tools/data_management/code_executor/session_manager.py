@@ -409,7 +409,7 @@ class SandboxSessionManager:
 
             except ToolException as conn_error:
                 logger.warning(
-                    f"Failed to use pod {pod_name}: {conn_error}. " "Will retry with different pod or create new one."
+                    f"Failed to use pod {pod_name}: {conn_error}. Will retry with different pod or create new one."
                 )
                 # Recursive call with fresh selection
                 return self.get_session(

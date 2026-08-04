@@ -140,7 +140,7 @@ class GithubClient:
 
         except ImportError:
             raise ToolException(
-                "PyGithub library is required for GitHub App authentication. " "Please install it: pip install PyGithub"
+                "PyGithub library is required for GitHub App authentication. Please install it: pip install PyGithub"
             )
         except github.GithubException as e:
             raise ToolException(f"Failed to generate GitHub App token: {e.data.get('message', str(e))}")

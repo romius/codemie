@@ -83,7 +83,7 @@ class GithubConfig(CodeMieToolConfig):
         # Check if no auth method is provided
         if not has_pat and not has_github_app:
             raise ValueError(
-                "Authentication required: provide either 'token' (PAT) or " "'app_id' + 'private_key' (GitHub App)"
+                "Authentication required: provide either 'token' (PAT) or 'app_id' + 'private_key' (GitHub App)"
             )
 
         # Check if GitHub App config is incomplete

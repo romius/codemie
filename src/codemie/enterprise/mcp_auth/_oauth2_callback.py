@@ -457,7 +457,7 @@ def _store_callback_token(
         with _deps._tms_audit_context(audit_source, correlation_id=auth_config_id):
             tms.store(user_id, auth_config_id, token_data)
     except Exception as exc:
-        logger.warning("Failed to persist MCP auth callback credentials for " f"auth_config_id={auth_config_id}: {exc}")
+        logger.warning(f"Failed to persist MCP auth callback credentials for auth_config_id={auth_config_id}: {exc}")
         raise _build_trusted_callback_error(
             _CALLBACK_TMS_STORE_ERROR_MESSAGE,
             auth_config_id=auth_config_id,

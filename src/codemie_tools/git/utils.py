@@ -304,8 +304,7 @@ def validate_github_wrapper(api_wrapper: Optional[CustomGitHubAPIWrapper], git_c
             exc_info=True,
         )
         raise InvalidCredentialsError(
-            "GitHub API client initialisation failed: Please check your Git credentials "
-            "are provided in 'User Settings'"
+            "GitHub API client initialisation failed: Please check your Git credentials are provided in 'User Settings'"
         )
 
 

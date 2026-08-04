@@ -700,8 +700,7 @@ class MCPConfigService:
                         "(enterprise package not installed or MCP_AUTH_ENABLED not set)"
                     ),
                     action=(
-                        "Enable MCP_AUTH_ENABLED and install the enterprise package, "
-                        "or remove the unused auth_config"
+                        "Enable MCP_AUTH_ENABLED and install the enterprise package, or remove the unused auth_config"
                     ),
                 )
             )

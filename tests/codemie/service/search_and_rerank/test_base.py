@@ -154,7 +154,7 @@ class TestObserveDecorator:
 
             enterprise_loader.observe = _observe
         else:
-            enterprise_loader.observe = lambda *a, **kw: (lambda fn: fn)
+            enterprise_loader.observe = lambda *a, **kw: lambda fn: fn
 
         original = sys.modules.get('codemie.service.search_and_rerank.base')
 

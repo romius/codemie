@@ -591,8 +591,7 @@ class TestEmitLlmErrorLog:
 def classified_lite_llm_rate_limit_exception() -> Exception:
     """Exception body that LiteLLMErrorClassifier maps to a rate-limit ErrorResponse (see test_errors)."""
     return Exception(
-        '{"error": {"message": "rate limit exceeded for model gpt-4", '
-        '"type": "None", "param": "None", "code": "429"}}'
+        '{"error": {"message": "rate limit exceeded for model gpt-4", "type": "None", "param": "None", "code": "429"}}'
     )
 
 

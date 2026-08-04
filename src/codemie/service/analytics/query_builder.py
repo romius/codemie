@@ -146,9 +146,7 @@ class SecureQueryBuilder:
                 }
             )
             logger.debug(
-                f"Plain user filter: user_id={user_id}, "
-                f"projects_count={len(plain_projects)}, "
-                f"projects={plain_projects}"
+                f"Plain user filter: user_id={user_id}, projects_count={len(plain_projects)}, projects={plain_projects}"
             )
 
         # Admin projects: only project filter (no user_id restriction)

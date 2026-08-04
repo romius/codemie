@@ -352,7 +352,7 @@ class TestPersistentUserProvider:
         jwt_token = "local.jwt.token"
         user_id = "uuid-user-13491"
 
-        mock_request.headers.get.side_effect = lambda key: (f"Bearer {jwt_token}" if key == "Authorization" else None)
+        mock_request.headers.get.side_effect = lambda key: f"Bearer {jwt_token}" if key == "Authorization" else None
         mock_request.cookies.get.return_value = None
 
         mock_validate_jwt.return_value = {"sub": user_id, "iss": "codemie-local"}
@@ -397,7 +397,7 @@ class TestPersistentUserProvider:
         mock_config.IDP_PROVIDER = "local"
         mock_config.AUTH_COOKIE_NAME = "auth_token"
 
-        mock_request.headers.get.side_effect = lambda key: ("bob" if key == "Authorization" else None)
+        mock_request.headers.get.side_effect = lambda key: "bob" if key == "Authorization" else None
         mock_request.cookies.get.return_value = None
 
         mock_auth_service.authenticate_dev_header = AsyncMock()

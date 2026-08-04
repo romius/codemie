@@ -145,7 +145,7 @@ class CreatePageInput(BaseModel):
         "Examples: '/123/Parent-Page' (from URL) or '/Parent Page' (direct path)"
     )
     new_page_name: str = Field(
-        description="Name of the new page to create (without path, just the name). " "Example: 'My New Page'"
+        description="Name of the new page to create (without path, just the name). Example: 'My New Page'"
     )
     page_content: str = Field(description="Markdown content for the new wiki page")
     version_identifier: str = Field(description=VERSION_IDENTIFIER_DESCRIPTION)

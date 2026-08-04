@@ -290,7 +290,7 @@ def get_orientation_hint(orientation: str, target_width: int, target_height: int
 def build_image_prompt(description: str, background: str, target_width: int, target_height: int) -> str:
     orientation = classify_orientation(target_width, target_height)
     orientation_hint = get_orientation_hint(orientation, target_width, target_height)
-    return f"{description}\n\n" "Additional constraints:\n" f"- Composition {orientation}.\n" f"{orientation_hint}"
+    return f"{description}\n\nAdditional constraints:\n- Composition {orientation}.\n{orientation_hint}"
 
 
 def normalize_generated_image_bytes(url: str | None, b64_data: str | None) -> bytes:

@@ -131,7 +131,7 @@ class CustomBranches(Branches):
                 else:
                     # Handle any other exceptions
                     logger.error(f"Failed to create branch. Error: {str(e)}")
-                    raise ValueError("Unable to create branch name from proposed_branch_name: " f"{name}")
+                    raise ValueError(f"Unable to create branch name from proposed_branch_name: {name}")
         raise ValueError(
             "Unable to create branch. "
             "At least 1000 branches exist with named derived from "

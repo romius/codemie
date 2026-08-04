@@ -53,7 +53,7 @@ class CustomGitLabAPIWrapper(GitLabAPIWrapper):
             import gitlab
 
         except ImportError:
-            raise ImportError("python-gitlab is not installed. " "Please install it with `pip install python-gitlab`")
+            raise ImportError("python-gitlab is not installed. Please install it with `pip install python-gitlab`")
 
         g = gitlab.Gitlab(gitlab_base_url, private_token=gitlab_personal_access_token)
 
@@ -90,7 +90,7 @@ class CustomGitLabAPIWrapper(GitLabAPIWrapper):
                 self.gitlab_repo_instance.branches.create({'branch': new_branch_name, 'ref': base_branch})
 
                 self.gitlab_branch = new_branch_name
-                return f"Branch '{new_branch_name}' " "created successfully, and set as current active branch."
+                return f"Branch '{new_branch_name}' created successfully, and set as current active branch."
             except GitlabCreateError as e:
                 if e.response_code == 400 and "Branch already exists" in e.error_message:
                     i += 1
@@ -99,7 +99,7 @@ class CustomGitLabAPIWrapper(GitLabAPIWrapper):
                     # Handle any other exceptions
                     logger.error(f"Failed to create branch. Error: {str(e)}")  # noqa: T201
                     raise GitlabCreateError(
-                        "Unable to create branch name from proposed_branch_name: " f"{proposed_branch_name}"
+                        f"Unable to create branch name from proposed_branch_name: {proposed_branch_name}"
                     )
         return (
             "Unable to create branch. "
@@ -117,7 +117,7 @@ class CustomGitLabAPIWrapper(GitLabAPIWrapper):
             self.gitlab_branch = branch_name
             return f"Switched to branch `{branch_name}`"
         else:
-            return f"Error {branch_name} does not exist," f"in repo with current branches: {str(curr_branches)}"
+            return f"Error {branch_name} does not exist,in repo with current branches: {str(curr_branches)}"
 
     def list_branches_in_repo(self) -> str:
         """
@@ -130,7 +130,7 @@ class CustomGitLabAPIWrapper(GitLabAPIWrapper):
             branches = [branch.name for branch in self.gitlab_repo_instance.branches.list(all=True)]
             if branches:
                 branches_str = "\n".join(branches)
-                return f"Found {len(branches)} branches in the repository:" f"\n{branches_str}"
+                return f"Found {len(branches)} branches in the repository:\n{branches_str}"
             else:
                 return "No branches found in the repository"
         except Exception as e:

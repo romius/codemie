@@ -203,7 +203,7 @@ class BatchJobRunner:
         logger.debug(f"Acquiring Job slot (timeout={timeout}s)")
         if not self.semaphore.acquire(blocking=True, timeout=timeout):
             raise ToolException(
-                f"Code executor is at capacity ({self.max_capacity}/{self.max_capacity} Jobs). " "Please retry."
+                f"Code executor is at capacity ({self.max_capacity}/{self.max_capacity} Jobs). Please retry."
             )
 
     def _build_manifest(self, job_name: str, workdir: str) -> dict:

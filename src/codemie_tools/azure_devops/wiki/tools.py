@@ -250,8 +250,7 @@ class BaseAzureDevOpsWikiTool(CodeMieTool, AzureDevOpsAttachmentMixin):
         page_slug = page_name.replace(" ", "-")
         # Build full URL
         page_url = (
-            f"{self.config.organization_url}/{self.config.project}/"
-            f"_wiki/wikis/{wiki_identified}/{page_id}/{page_slug}"
+            f"{self.config.organization_url}/{self.config.project}/_wiki/wikis/{wiki_identified}/{page_id}/{page_slug}"
         )
         return page_url
 
@@ -627,7 +626,7 @@ class BaseAzureDevOpsWikiTool(CodeMieTool, AzureDevOpsAttachmentMixin):
             has_more = continuation_token is not None and (limit_total is None or len(all_comments) < total_count)
 
             logger.info(
-                f"Retrieved {len(all_comments)} comments " f"(total available: {total_count}, has_more: {has_more})"
+                f"Retrieved {len(all_comments)} comments (total available: {total_count}, has_more: {has_more})"
             )
 
             return {
@@ -925,9 +924,7 @@ class ListPagesTool(BaseAzureDevOpsWikiTool):
                 page_size = 20
             # Construct API URL for Pages - Get endpoint
             # GET https://dev.azure.com/{organization}/{project}/_apis/wiki/wikis/{wikiIdentifier}/pages
-            api_url = (
-                f"{self.config.organization_url}/{self.config.project}" f"/_apis/wiki/wikis/{wiki_identified}/pages"
-            )
+            api_url = f"{self.config.organization_url}/{self.config.project}/_apis/wiki/wikis/{wiki_identified}/pages"
 
             # Build query parameters - always fetch full hierarchy
             # Note: Azure DevOps Wiki API doesn't support $top/$skip for pages endpoint
@@ -2127,9 +2124,7 @@ class GetWikiAttachmentContentTool(BaseAzureDevOpsWikiTool, AttachmentContentMix
                 return filename, url
 
         available = ", ".join(f"'{fn}'" for fn, _ in attachment_urls)
-        raise ToolException(
-            f"Attachment '{attachment_name}' not found on the page. " f"Available attachments: {available}"
-        )
+        raise ToolException(f"Attachment '{attachment_name}' not found on the page. Available attachments: {available}")
 
     def execute(
         self,

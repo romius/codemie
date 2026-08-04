@@ -201,7 +201,7 @@ def _maybe_update_budget_reset(
     if not fresh_reset_at or not budget or budget.budget_reset_at == fresh_reset_at:
         return False
     logger.debug(
-        f"Updating budget_reset_at for budget_id={budget_id!r}: " f"{budget.budget_reset_at!r} → {fresh_reset_at!r}"
+        f"Updating budget_reset_at for budget_id={budget_id!r}: {budget.budget_reset_at!r} → {fresh_reset_at!r}"
     )
     budget.budget_reset_at = fresh_reset_at
     session.add(budget)
@@ -224,8 +224,7 @@ def _compute_spend_delta_safe(
         daily_spend, cumulative_spend = _compute_spend_delta(fresh_spend, prev_row, budget=budget, snapshot_at=now)
     except InvalidSpendSnapshotError as exc:
         logger.warning(
-            f"Skipping invalid budget snapshot for budget_id={assignment.budget_id!r} "
-            f"subject={subject_label}: {exc}"
+            f"Skipping invalid budget snapshot for budget_id={assignment.budget_id!r} subject={subject_label}: {exc}"
         )
         return None
     if daily_spend == Decimal("0") and not allow_zero:

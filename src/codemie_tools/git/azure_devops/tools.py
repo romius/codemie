@@ -100,7 +100,7 @@ class ListBranchesTool(CodeMieTool):
             ]
             if branches:
                 branches_str = "\n".join(branches)
-                return f"Found {len(branches)} branches in the repository:" f"\n{branches_str}"
+                return f"Found {len(branches)} branches in the repository:\n{branches_str}"
             else:
                 return "No branches found in the repository"
         except Exception as e:
@@ -406,7 +406,7 @@ class CreateBranchTool(CodeMieTool):
 
         new_branch_name = branch_name
         if bool(re.search(r"\s", new_branch_name)):
-            return f"Branch '{new_branch_name}' contains spaces." "Please remove them or use special characters"
+            return f"Branch '{new_branch_name}' contains spaces.Please remove them or use special characters"
 
         # Check if the branch already exists
         if self.client.branch_exists(new_branch_name):
@@ -473,7 +473,7 @@ class ReadFileTool(CodeMieTool):
             decoded_content = "".join([chunk.decode("utf-8") for chunk in file_content])
             return decoded_content
         except Exception as e:
-            msg = f"File not found `{file_path}` on branch " f"`{self.client.active_branch}`. Error: {str(e)}"
+            msg = f"File not found `{file_path}` on branch `{self.client.active_branch}`. Error: {str(e)}"
             logger.error(msg)
             return msg
 

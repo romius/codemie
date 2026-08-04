@@ -67,7 +67,7 @@ class GenericAWSTool(CodeMieTool):
             # Validate required field 'service'
             if "service" not in loaded_query:
                 raise ToolException(
-                    "Error: 'service' key is missing in the query. " "Please provide a valid query with 'service'."
+                    "Error: 'service' key is missing in the query. Please provide a valid query with 'service'."
                 )
 
             # Execute the AWS API call

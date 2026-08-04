@@ -194,7 +194,7 @@ class AttachmentContentMixin:
                 metadata_text = self._extract_pdf_metadata(content_bytes)
                 return {
                     "content_type": "text",
-                    "content": (f"PDF text extraction failed: {e}. " f"Structural metadata:\n\n{metadata_text}"),
+                    "content": (f"PDF text extraction failed: {e}. Structural metadata:\n\n{metadata_text}"),
                     "note": f"PDF text extraction failed: {e}.",
                 }
             except Exception:

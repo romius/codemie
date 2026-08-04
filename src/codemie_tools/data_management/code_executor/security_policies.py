@@ -85,7 +85,7 @@ class _SecurityPolicyLoader:
             policy.add_pattern(cls._parse_security_pattern(pattern_config))
 
         logger.debug(
-            f"Loaded policy from YAML: " f"modules={len(policy.restricted_modules)}, patterns={len(policy.patterns)}"
+            f"Loaded policy from YAML: modules={len(policy.restricted_modules)}, patterns={len(policy.patterns)}"
         )
 
         return policy
@@ -132,7 +132,7 @@ class _SecurityPolicyLoader:
             severity_upper = severity.upper()
             if severity_upper not in cls.SEVERITY_MAP:
                 raise ValueError(
-                    f"Invalid severity level: {severity}. " f"Must be one of: {', '.join(cls.SEVERITY_MAP.keys())}"
+                    f"Invalid severity level: {severity}. Must be one of: {', '.join(cls.SEVERITY_MAP.keys())}"
                 )
             return cls.SEVERITY_MAP[severity_upper]
 
@@ -141,7 +141,7 @@ class _SecurityPolicyLoader:
                 return SecurityIssueSeverity(severity)
             except ValueError:
                 raise ValueError(
-                    f"Invalid severity level: {severity}. " f"Must be 0 (SAFE), 1 (LOW), 2 (MEDIUM), or 3 (HIGH)"
+                    f"Invalid severity level: {severity}. Must be 0 (SAFE), 1 (LOW), 2 (MEDIUM), or 3 (HIGH)"
                 )
 
         raise ValueError(f"Invalid severity type: {type(severity)}")

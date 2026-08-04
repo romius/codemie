@@ -32,8 +32,8 @@ def mock_encryption():
     # encrypt() should return bytes
     mock_enc.encrypt.side_effect = lambda x: f"encrypted_{x}".encode() if isinstance(x, str) else b"encrypted_" + x
     # decrypt() should accept bytes and return string
-    mock_enc.decrypt.side_effect = (
-        lambda x: x.decode().replace("encrypted_", "") if isinstance(x, bytes) else str(x).replace("encrypted_", "")
+    mock_enc.decrypt.side_effect = lambda x: (
+        x.decode().replace("encrypted_", "") if isinstance(x, bytes) else str(x).replace("encrypted_", "")
     )
     return mock_enc
 

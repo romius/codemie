@@ -95,7 +95,7 @@ class FileAnalysisToolkit(BaseToolkit):
         dataframes, _ = self._pre_process_csv_files(csv_files)
 
         if dataframes:
-            logger.debug(f"Initializing PythonAstREPLTool. " f"Locals: {dataframes}.")
+            logger.debug(f"Initializing PythonAstREPLTool. Locals: {dataframes}.")
 
             # Create config for CSV tool
             csv_config = FileAnalysisConfig(input_files=csv_files, chat_model=self.chat_model)

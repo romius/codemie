@@ -78,8 +78,7 @@ class BudgetStartupReconciliationService:
             await step()
             duration_seconds = time.perf_counter() - started_at
             logger.info(
-                f"budget_reconciliation_step_succeeded: "
-                f"step_name={step_name}, duration_seconds={duration_seconds:.3f}"
+                f"budget_reconciliation_step_succeeded: step_name={step_name}, duration_seconds={duration_seconds:.3f}"
             )
             results.append(
                 ReconciliationStepResult(

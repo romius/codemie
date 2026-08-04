@@ -103,7 +103,7 @@ def get_csv_delimiter(data: str, length_to_sniff: int) -> str:
 class Input(BaseModel):
     method_name: str = Field(
         description=(
-            "Pandas DataFrame or Series method to call. " "Allowed methods: " + ", ".join(sorted(SAFE_PANDAS_METHODS))
+            "Pandas DataFrame or Series method to call. Allowed methods: " + ", ".join(sorted(SAFE_PANDAS_METHODS))
         )
     )
     method_args: dict = Field(description="Pandas dataframe arguments to be passed to the method", default={})

@@ -2172,7 +2172,7 @@ class TestNormalizePathFilter:
 
     def test_copy_link_url_without_wildcard(self, loader):
         """SharePoint copy-link URL is converted; /* is appended automatically."""
-        url = "https://tenant.sharepoint.com/:f:/r/sites/MySite" "/Shared%20Documents/test%20folder?csf=1&web=1&e=abc"
+        url = "https://tenant.sharepoint.com/:f:/r/sites/MySite/Shared%20Documents/test%20folder?csf=1&web=1&e=abc"
 
         result = loader._normalize_path_filter(url)
 
@@ -2180,7 +2180,7 @@ class TestNormalizePathFilter:
 
     def test_copy_link_url_with_wildcard(self, loader):
         """Existing /* suffix on a copy-link URL is preserved."""
-        url = "https://tenant.sharepoint.com/:f:/r/sites/MySite" "/Shared%20Documents/test%20folder/*"
+        url = "https://tenant.sharepoint.com/:f:/r/sites/MySite/Shared%20Documents/test%20folder/*"
 
         result = loader._normalize_path_filter(url)
 
@@ -2188,7 +2188,7 @@ class TestNormalizePathFilter:
 
     def test_copy_link_url_with_extension_wildcard(self, loader):
         """/*.pdf suffix on a copy-link URL is preserved."""
-        url = "https://tenant.sharepoint.com/:f:/r/sites/MySite" "/Shared%20Documents/test%20folder/*.pdf"
+        url = "https://tenant.sharepoint.com/:f:/r/sites/MySite/Shared%20Documents/test%20folder/*.pdf"
 
         result = loader._normalize_path_filter(url)
 
@@ -2212,7 +2212,7 @@ class TestNormalizePathFilter:
 
     def test_query_params_stripped(self, loader):
         """Query parameters are stripped from the URL."""
-        url = "https://tenant.sharepoint.com/sites/MySite/Shared%20Documents/folder" "?csf=1&web=1&e=XYZ"
+        url = "https://tenant.sharepoint.com/sites/MySite/Shared%20Documents/folder?csf=1&web=1&e=XYZ"
 
         result = loader._normalize_path_filter(url)
 

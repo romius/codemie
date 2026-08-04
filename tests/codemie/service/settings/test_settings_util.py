@@ -26,7 +26,7 @@ def _make_user(user_id="user-1", project_names=None, is_admin=False):
     user = MagicMock()
     user.id = user_id
     user.project_names = project_names if project_names is not None else []
-    user.has_access_to_application.side_effect = lambda project: (is_admin or project in user.project_names)
+    user.has_access_to_application.side_effect = lambda project: is_admin or project in user.project_names
     return user
 
 

@@ -636,7 +636,7 @@ class TestResumeConfluence:
                 return_value=mock_processor,
             ),
             patch(
-                "codemie.triggers.actors.datasource.IndexKnowledgeBaseConfluenceConfig" ".from_confluence_index_info",
+                "codemie.triggers.actors.datasource.IndexKnowledgeBaseConfluenceConfig.from_confluence_index_info",
                 return_value=MagicMock(),
             ),
         ):

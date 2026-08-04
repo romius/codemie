@@ -93,8 +93,7 @@ class CsvImportService:
         row_errors = [{"row": i + 1, "reason": r["error"]} for i, r in enumerate(results) if r["error"]]
         if row_errors:
             logger.warning(
-                f"csv_import_validation_failed: project={project_name}, "
-                f"error_count={len(row_errors)}, by={actor.id}"
+                f"csv_import_validation_failed: project={project_name}, error_count={len(row_errors)}, by={actor.id}"
             )
             raise ExtendedHTTPException(
                 code=422,

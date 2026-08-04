@@ -98,8 +98,6 @@ class GooglePlacesAPIWrapper(BaseModel):
         place_id = result.get("place_id", "Unknown")
 
         formatted_details = (
-            f"{name}\nAddress: {address}\n"
-            f"Google place ID: {place_id}\n"
-            f"Phone: {phone_number}\nWebsite: {website}\n\n"
+            f"{name}\nAddress: {address}\nGoogle place ID: {place_id}\nPhone: {phone_number}\nWebsite: {website}\n\n"
         )
         return formatted_details

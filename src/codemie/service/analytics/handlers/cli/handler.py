@@ -891,8 +891,7 @@ class CLIHandler(CLIBaseHandler):
         # Sorting removed - now handled by pipeline for consistent pagination across pages
 
         logger.debug(
-            f"Parsed cli-repositories result: total_repo_buckets={len(repo_buckets)}, "
-            f"total_rows_flattened={len(rows)}"
+            f"Parsed cli-repositories result: total_repo_buckets={len(repo_buckets)}, total_rows_flattened={len(rows)}"
         )
         return rows
 

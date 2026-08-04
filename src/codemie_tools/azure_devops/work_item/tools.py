@@ -613,8 +613,7 @@ class GetWorkItemAttachmentContentTool(BaseAzureDevOpsWorkItemTool, AttachmentCo
 
         available = ", ".join(f"'{d.get('attributes', {}).get('name', '?')}'" for d in attachment_relations)
         raise ToolException(
-            f"Attachment '{attachment_name}' not found on work item {work_item_id}. "
-            f"Available attachments: {available}"
+            f"Attachment '{attachment_name}' not found on work item {work_item_id}. Available attachments: {available}"
         )
 
     def execute(

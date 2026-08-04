@@ -21,7 +21,7 @@ from codemie.configs.mcp_commands_config import MCPCommandsConfig
 class TestMCPCommandsConfig:
     def test_load_valid_yaml(self, tmp_path):
         cfg_file = tmp_path / "mcp-commands-config.yaml"
-        cfg_file.write_text("allowed_commands:\n" "  - npx\n" "  - uvx\n" "  - /some/absolute/path/binary\n")
+        cfg_file.write_text("allowed_commands:\n  - npx\n  - uvx\n  - /some/absolute/path/binary\n")
         cfg = MCPCommandsConfig(config_path=cfg_file)
         assert "npx" in cfg.allowed_commands
         assert "uvx" in cfg.allowed_commands

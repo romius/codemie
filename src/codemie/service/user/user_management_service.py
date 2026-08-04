@@ -408,8 +408,13 @@ class UserManagementService:
         Returns:
             Created UserDB or None if already exists
         """
+        superadmin_name = "System Administrator"
+
         count = user_repository.count_active_admins(session)
         if count > 0:
+            existing = user_repository.get_by_email(session, email)
+            if existing and existing.name != superadmin_name:
+                user_repository.update(session, str(existing.id), name=superadmin_name)
             return None
 
         return UserManagementService.create_local_user(
@@ -417,7 +422,7 @@ class UserManagementService:
             email=email,
             username="admin",
             password=password,
-            name="System Administrator",
+            name=superadmin_name,
             is_admin=True,
             is_maintainer=True,
         )

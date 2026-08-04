@@ -74,7 +74,7 @@ class PodDiscoveryService:
             # Check if this is a connection pool corruption error
             if self._is_connection_error(str(e)):
                 logger.debug(
-                    f"Kubernetes client connection pool corrupted ({type(e).__name__}), " "will retry with fresh client"
+                    f"Kubernetes client connection pool corrupted ({type(e).__name__}), will retry with fresh client"
                 )
                 # Recreate client and retry once
                 self.client_manager.recreate_client()
@@ -116,7 +116,7 @@ class PodDiscoveryService:
             # Check if this is a connection pool corruption error
             if self._is_connection_error(str(e)):
                 logger.debug(
-                    f"Kubernetes client connection pool corrupted ({type(e).__name__}), " "will retry with fresh client"
+                    f"Kubernetes client connection pool corrupted ({type(e).__name__}), will retry with fresh client"
                 )
                 # Recreate client and retry once
                 self.client_manager.recreate_client()
@@ -186,7 +186,7 @@ class PodDiscoveryService:
                 return available_pods
 
             if attempt < max_retries - 1:
-                logger.debug(f"No running pods found on attempt {attempt + 1}, " f"waiting {retry_delay}s before retry")
+                logger.debug(f"No running pods found on attempt {attempt + 1}, waiting {retry_delay}s before retry")
                 time.sleep(retry_delay)
             else:
                 logger.debug(f"No running pods found after {max_retries} attempts")
@@ -265,8 +265,7 @@ class PodDiscoveryService:
         if not all_ready:
             ready_count = sum(1 for c in pod.status.container_statuses if c.ready)
             logger.debug(
-                f"Skipping pod {pod_name}: containers not ready "
-                f"({ready_count}/{len(pod.status.container_statuses)})"
+                f"Skipping pod {pod_name}: containers not ready ({ready_count}/{len(pod.status.container_statuses)})"
             )
             return False
 

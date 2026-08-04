@@ -210,8 +210,7 @@ def _fetch_url_content(url: str) -> bytes:
                 total += len(chunk)
                 if total > _MAX_REMOTE_SIZE_BYTES:
                     raise ValueError(
-                        f"Remote file exceeds the maximum allowed size of "
-                        f"{_MAX_REMOTE_SIZE_BYTES // (1024 * 1024)} MB."
+                        f"Remote file exceeds the maximum allowed size of {_MAX_REMOTE_SIZE_BYTES // (1024 * 1024)} MB."
                     )
                 chunks.append(chunk)
             return b"".join(chunks)

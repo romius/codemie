@@ -38,8 +38,8 @@ def mock_encryption():
     """Mock encryption service."""
     mock_enc = MagicMock()
     mock_enc.encrypt.side_effect = lambda x: f"encrypted_{x}".encode() if isinstance(x, str) else b"encrypted_" + x
-    mock_enc.decrypt.side_effect = (
-        lambda x: x.decode().replace("encrypted_", "") if isinstance(x, bytes) else str(x).replace("encrypted_", "")
+    mock_enc.decrypt.side_effect = lambda x: (
+        x.decode().replace("encrypted_", "") if isinstance(x, bytes) else str(x).replace("encrypted_", "")
     )
     return mock_enc
 

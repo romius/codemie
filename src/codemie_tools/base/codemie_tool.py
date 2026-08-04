@@ -110,7 +110,7 @@ class CodeMieTool(BaseTool):
 
         if missing_fields:
             raise ValueError(
-                f"Tool config is not set. " f"Please provide {', '.join(missing_fields)} before using the tool."
+                f"Tool config is not set. Please provide {', '.join(missing_fields)} before using the tool."
             )
 
     def _get_missing_required_fields(self):
@@ -170,7 +170,7 @@ class CodeMieTool(BaseTool):
         truncate_ratio = self.tokens_size_limit / token_count
         truncated_data = encoding.decode(tokens[: self.tokens_size_limit])
         truncated_output = (
-            f"{self.truncate_message} " f"Ratio limit/used_tokens: {truncate_ratio}. Tool output: {truncated_data}"
+            f"{self.truncate_message} Ratio limit/used_tokens: {truncate_ratio}. Tool output: {truncated_data}"
         )
         error_message = (
             f"{self.name} output is too long: {token_count} tokens. "

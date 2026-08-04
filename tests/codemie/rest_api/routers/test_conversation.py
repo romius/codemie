@@ -568,9 +568,9 @@ class TestCascadeDeleteWorkflowExecutionOnConversationDelete:
         compiled = self._compile_stmt(first_call_stmt)
 
         # SELECT must reference conversation_id in its WHERE clause.
-        assert "conversation_id" in compiled, (
-            f"SELECT statement WHERE clause does not scope to conversation_id.\n" f"Compiled SQL: {compiled}"
-        )
+        assert (
+            "conversation_id" in compiled
+        ), f"SELECT statement WHERE clause does not scope to conversation_id.\nCompiled SQL: {compiled}"
         # The target conversation_id value must appear in the compiled SQL.
         assert target_conv_id in compiled, (
             f"SELECT statement does not filter on the specific conversation_id '{target_conv_id}'.\n"
@@ -634,9 +634,9 @@ class TestCascadeDeleteWorkflowExecutionOnConversationDelete:
 
         # The WHERE clause must scope to the pre-collected execution PKs.
         # An unconditional DELETE (no WHERE) would not contain 'execution_id'.
-        assert "workflow_executions" in compiled, (
-            f"DELETE statement does not target workflow_executions table.\n" f"Compiled SQL: {compiled}"
-        )
+        assert (
+            "workflow_executions" in compiled
+        ), f"DELETE statement does not target workflow_executions table.\nCompiled SQL: {compiled}"
         assert "execution_id" in compiled, (
             f"DELETE(WorkflowExecution) has no WHERE on execution_id "
             f"— delete is not PK-scoped; the over-delete race is not prevented.\n"

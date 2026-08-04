@@ -521,7 +521,7 @@ class WorkflowExecutionService:
                     predecessor_output = predecessor_state.output
             except Exception as e:
                 logger.warning(
-                    f"Failed to fetch predecessor state output for execution_state_id " f"{execution_state_id}: {e}"
+                    f"Failed to fetch predecessor state output for execution_state_id {execution_state_id}: {e}"
                 )
 
         state_config = next((s for s in self.workflow_config.states if s.id == interrupted_state_id), None)

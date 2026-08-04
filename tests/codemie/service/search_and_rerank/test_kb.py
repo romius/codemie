@@ -706,9 +706,11 @@ class TestSearchAndRerankKB:
         mocker.patch.object(
             kb_instance,
             '_format_hit',
-            side_effect=lambda hit, field: f"formatted_{hit['_source']['metadata']['source']}"
-            if 'metadata' in hit.get('_source', {}) and 'source' in hit['_source']['metadata']
-            else "",
+            side_effect=lambda hit, field: (
+                f"formatted_{hit['_source']['metadata']['source']}"
+                if 'metadata' in hit.get('_source', {}) and 'source' in hit['_source']['metadata']
+                else ""
+            ),
         )
 
         # Call the method under test

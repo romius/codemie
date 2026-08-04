@@ -54,7 +54,7 @@ class DatasourceConcurrencyManager:
             return True
         except Exception:
             logger.warning(
-                f"DatasourceConcurrencyManager. Failed to set queued state for " f"datasource id={index_info.id}",
+                f"DatasourceConcurrencyManager. Failed to set queued state for datasource id={index_info.id}",
                 exc_info=True,
             )
             return False
@@ -67,7 +67,7 @@ class DatasourceConcurrencyManager:
             index_info.clear_queued()
         except Exception:
             logger.warning(
-                f"DatasourceConcurrencyManager. Failed to clear queued state for " f"datasource id={index_info.id}",
+                f"DatasourceConcurrencyManager. Failed to clear queued state for datasource id={index_info.id}",
                 exc_info=True,
             )
 
@@ -79,7 +79,7 @@ class DatasourceConcurrencyManager:
             index_info.set_error(message)
         except Exception:
             logger.warning(
-                f"DatasourceConcurrencyManager. Failed to set error state for " f"datasource id={index_info.id}",
+                f"DatasourceConcurrencyManager. Failed to set error state for datasource id={index_info.id}",
                 exc_info=True,
             )
 

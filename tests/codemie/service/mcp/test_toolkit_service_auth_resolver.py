@@ -1834,12 +1834,14 @@ def test_prepare_server_config_falls_back_to_legacy_when_discovered_token_missin
 
     canonical_resource = "https://mcp.example.com/api/mcp"
     discovery_cache = SimpleNamespace(
-        get=lambda resource: DiscoveryMetadataCacheEntry(
-            protected_resource_metadata={},
-            authorization_server_metadata={"issuer": "https://auth.example.com"},
+        get=lambda resource: (
+            DiscoveryMetadataCacheEntry(
+                protected_resource_metadata={},
+                authorization_server_metadata={"issuer": "https://auth.example.com"},
+            )
+            if resource == canonical_resource
+            else None
         )
-        if resource == canonical_resource
-        else None
     )
     resolver = MCPAuthResolver(
         MockTokenManagementSystem(),

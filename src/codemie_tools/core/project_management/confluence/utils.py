@@ -89,5 +89,5 @@ def parse_payload_params(params: Union[str, Dict[str, Any], None]) -> Dict[str, 
             )
 
     raise ToolException(
-        f"Invalid params type: {type(params).__name__}. " f"Expected dict (recommended), str (legacy), or None."
+        f"Invalid params type: {type(params).__name__}. Expected dict (recommended), str (legacy), or None."
     )

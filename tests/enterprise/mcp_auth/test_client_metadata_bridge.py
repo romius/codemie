@@ -30,8 +30,7 @@ CALLBACK_BASE_URL = "https://codemie.example.com"
 EXPECTED_CLIENT_ID = f"{CALLBACK_BASE_URL}{CLIENT_METADATA_PATH}"
 EXPECTED_REDIRECT_URI = f"{CALLBACK_BASE_URL}/v1/mcp-auth/oauth2/callback"
 RAW_QUERY = (
-    "client_secret=secret-sentinel&scope=scope-sentinel&resource=https://resource.example.com/"
-    "&user_id=user-id-sentinel"
+    "client_secret=secret-sentinel&scope=scope-sentinel&resource=https://resource.example.com/&user_id=user-id-sentinel"
 )
 RAW_QUERY_URL = f"http://testserver{CLIENT_METADATA_PATH}?{RAW_QUERY}"
 TAINTED_HEADERS = {

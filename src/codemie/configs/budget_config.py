@@ -42,6 +42,5 @@ class BudgetConfig(BudgetYamlSettings):
 budget_config = BudgetConfig(yaml_file=config.BUDGETS_CONFIG_DIR / "budgets-config.yaml")
 
 logger.info(
-    f"BudgetConfig initiated. Config={budget_config.yaml_file}. "
-    f"PredefinedBudgets={budget_config.predefined_budgets}"
+    f"BudgetConfig initiated. Config={budget_config.yaml_file}. PredefinedBudgets={budget_config.predefined_budgets}"
 )
