@@ -237,11 +237,17 @@ The tool implements a production-grade security policy that blocks:
 
 Executor pods are configured with:
 - Non-root user execution
-- Read-only root filesystem where supported by the pod image/runtime constraints
+- Read-only root filesystem, with explicit `emptyDir` mounts for the
+  workdir/tmp/cache paths the sandboxed code and its dependencies need
 - No privilege escalation
 - All capabilities dropped
-- Seccomp profile for system call restriction
+- Seccomp profile (`RuntimeDefault`) for system call restriction
 - No host namespace access
+
+The in-process `FilesystemAccessDenied` guard (`filesystem_policy.py`) is
+defense-in-depth only — it does not intercept syscalls made directly by
+native/C-extension code. The kernel-level controls above, and gVisor in
+JOBS mode, are the actual security boundary against native code.
 
 ### User Isolation
 

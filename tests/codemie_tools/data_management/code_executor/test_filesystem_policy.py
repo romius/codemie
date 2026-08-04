@@ -534,6 +534,138 @@ def test_guard_allows_sqlite_memory_and_relative_workspace_database(tmp_path: Pa
     assert not (workspace_root / "nested" / "data.db").exists()
 
 
+def test_guard_forces_safe_lxml_parser_defaults_blocking_xxe(tmp_path: Path) -> None:
+    result = _run_guarded(
+        tmp_path,
+        "from lxml import etree\n"
+        "xml = b'<?xml version=\"1.0\"?>"
+        "<!DOCTYPE r [<!ENTITY x SYSTEM \"file:///etc/passwd\">]>"
+        "<r>&x;</r>'\n"
+        "root = etree.fromstring(xml)\n"
+        "print('root:', root.text)\n",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "root: None" in result.stdout
+
+
+def test_guard_forces_safe_lxml_parser_defaults_ignores_caller_unsafe_kwargs(tmp_path: Path) -> None:
+    result = _run_guarded(
+        tmp_path,
+        "from lxml import etree\n"
+        "xml = b'<?xml version=\"1.0\"?>"
+        "<!DOCTYPE r [<!ENTITY x SYSTEM \"file:///etc/passwd\">]>"
+        "<r>&x;</r>'\n"
+        "parser = etree.XMLParser(resolve_entities=True, load_dtd=True, no_network=False)\n"
+        "root = etree.fromstring(xml, parser=parser)\n"
+        "print('root:', root.text)\n",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "root: None" in result.stdout
+
+
+def test_guard_forces_safe_lxml_parser_defaults_accepts_positional_parser(tmp_path: Path) -> None:
+    result = _run_guarded(
+        tmp_path,
+        "import io\n"
+        "from lxml import etree\n"
+        "xml = b'<?xml version=\"1.0\"?>"
+        "<!DOCTYPE r [<!ENTITY x SYSTEM \"file:///etc/passwd\">]>"
+        "<r>&x;</r>'\n"
+        "parser = etree.XMLParser(resolve_entities=True, load_dtd=True, no_network=False)\n"
+        "root = etree.fromstring(xml, parser)\n"
+        "tree = etree.parse(io.BytesIO(xml), parser)\n"
+        "print('root:', root.text)\n"
+        "print('tree:', tree.getroot().text)\n",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "root: None" in result.stdout
+    assert "tree: None" in result.stdout
+
+
+def test_guard_forces_safe_lxml_parser_defaults_blocks_type_bypass(tmp_path: Path) -> None:
+    result = _run_guarded(
+        tmp_path,
+        "from lxml import etree\n"
+        "xml = b'<?xml version=\"1.0\"?>"
+        "<!DOCTYPE r [<!ENTITY x SYSTEM \"file:///etc/passwd\">]>"
+        "<r>&x;</r>'\n"
+        "real_cls = type(etree.XMLParser())\n"
+        "unsafe = real_cls(resolve_entities=True, load_dtd=True, no_network=False, huge_tree=True)\n"
+        "root = etree.fromstring(xml, unsafe)\n"
+        "print('root:', root.text)\n",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "root: None" in result.stdout
+
+
+def test_guard_forces_safe_lxml_parser_defaults_handles_unhashable_parser_arg(tmp_path: Path) -> None:
+    result = _run_guarded(
+        tmp_path,
+        "from lxml import etree\n"
+        "xml = b'<?xml version=\"1.0\"?>"
+        "<!DOCTYPE r [<!ENTITY x SYSTEM \"file:///etc/passwd\">]>"
+        "<r>&x;</r>'\n"
+        "class Unhashable(dict):\n"
+        "    pass\n"
+        "root = etree.fromstring(xml, parser=Unhashable())\n"
+        "print('root:', root.text)\n",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "root: None" in result.stdout
+
+
+def test_guard_forces_safe_lxml_iterparse_defaults_blocking_xxe(tmp_path: Path) -> None:
+    result = _run_guarded(
+        tmp_path,
+        "import io\n"
+        "from lxml import etree\n"
+        "xml = b'<?xml version=\"1.0\"?>"
+        "<!DOCTYPE r [<!ENTITY x SYSTEM \"file:///etc/passwd\">]>"
+        "<r>&x;</r>'\n"
+        "texts = []\n"
+        "for _, elem in etree.iterparse(io.BytesIO(xml), load_dtd=True, resolve_entities=True):\n"
+        "    texts.append(elem.text)\n"
+        "print('texts:', texts)\n",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "texts: [None]" in result.stdout
+
+
+def test_guard_neutralizes_billion_laughs_entity_expansion(tmp_path: Path) -> None:
+    payload = (
+        "from lxml import etree\n"
+        "xml = b'''<?xml version=\"1.0\"?>\n"
+        "<!DOCTYPE lolz [\n"
+        " <!ENTITY a \"lol\">\n"
+        " <!ENTITY b \"&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;\">\n"
+        " <!ENTITY c \"&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;\">\n"
+        " <!ENTITY d \"&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;\">\n"
+        "]>\n"
+        "<lolz>&d;</lolz>'''\n"
+        "try:\n"
+        "    root = etree.fromstring(xml)\n"
+        "    print('expansion_len', len(root.text or ''))\n"
+        "except etree.XMLSyntaxError as exc:\n"
+        "    print('blocked', exc)\n"
+    )
+    result = _run_guarded(tmp_path, payload)
+
+    assert result.returncode == 0, result.stderr
+    # Either libxml2 raises (huge_tree=False triggers its entity-expansion
+    # limit) or the entity is left unexpanded -- both are safe outcomes.
+    # A fully-expanded payload of this shape would be tens of thousands of
+    # characters; assert it never reaches anywhere close to that.
+    if "expansion_len" in result.stdout:
+        length = int(result.stdout.strip().split()[-1])
+        assert length < 1000
+
+
 def test_caught_denial_still_emits_single_marker(tmp_path: Path) -> None:
     result = _run_guarded(
         tmp_path,

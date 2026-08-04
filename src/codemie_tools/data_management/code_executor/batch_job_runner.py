@@ -254,9 +254,13 @@ class BatchJobRunner:
                                     "allowPrivilegeEscalation": False,
                                     "capabilities": {"drop": ["ALL"]},
                                     "privileged": False,
-                                    "readOnlyRootFilesystem": False,
+                                    "readOnlyRootFilesystem": True,
                                     "seccompProfile": {"type": "RuntimeDefault"},
                                 },
+                                "volumeMounts": [
+                                    {"name": "workdir", "mountPath": workdir},
+                                    {"name": "tmp", "mountPath": "/tmp/runtime"},
+                                ],
                                 "resources": {
                                     "requests": {
                                         "cpu": cfg.cpu_request,
@@ -270,6 +274,10 @@ class BatchJobRunner:
                                     },
                                 },
                             }
+                        ],
+                        "volumes": [
+                            {"name": "workdir", "emptyDir": {}},
+                            {"name": "tmp", "emptyDir": {}},
                         ],
                     },
                 },

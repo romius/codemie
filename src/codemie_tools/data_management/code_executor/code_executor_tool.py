@@ -348,11 +348,11 @@ class CodeExecutorTool(CodeMieTool):
                             "allowPrivilegeEscalation": False,
                             "capabilities": {"drop": ["ALL"]},
                             "privileged": False,
-                            "readOnlyRootFilesystem": False,
+                            "readOnlyRootFilesystem": True,
                             "seccompProfile": {"type": "RuntimeDefault"},
                         },
                         "volumeMounts": [
-                            {"name": "tmp", "mountPath": "/tmp/runtime"},  # NOSONAR
+                            {"name": "tmp", "mountPath": "/tmp/runtime"},
                             {"name": "workdir", "mountPath": "/home/codemie"},
                         ],
                         "resources": {

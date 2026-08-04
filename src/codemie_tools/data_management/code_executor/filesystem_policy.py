@@ -12,6 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Runtime filesystem/process guard for sandboxed customer code.
+
+SECURITY BOUNDARY CLASSIFICATION: this module is DEFENSE-IN-DEPTH ONLY.
+It intercepts Python-level filesystem, process-creation, and native-library
+-load operations via `builtins`/`os`/`shutil`/`sqlite3` monkeypatching and a
+`sys.addaudithook` callback. It does NOT intercept syscalls made directly by
+C-extension/native code (e.g. libxml2 via lxml, raw ctypes calls) that
+bypass CPython's audit-hook and monkeypatch mechanisms entirely. The actual
+security boundary against native code is the kernel-level combination of a
+non-root user, dropped capabilities, a read-only root filesystem, and
+(in JOBS mode) gVisor. Do not present this module, on its own, as
+sufficient isolation for untrusted code.
+The lxml/etree hardening installed here forces safe parser defaults (no
+entity resolution, no DTD loading, no network access) but does not restrict
+which paths `parse()`/`fromstring()`/`XML()` can read when given a direct
+path or file-like `source` argument — restricting *what* gets parsed is not
+this wrapper's job.
+"""
+
 from __future__ import annotations
 
 import json
@@ -748,6 +767,94 @@ def render_runtime_prelude(workspace_root: str) -> str:
 
             _ORIGINALS["sqlite3.connect"] = sqlite3.connect
             sqlite3.connect = _sqlite_connect_wrapper(sqlite3.connect)
+
+            try:
+                import lxml.etree as _lxml_etree
+            except ImportError:
+                _lxml_etree = None
+
+            if _lxml_etree is not None:
+                _ORIGINALS["lxml.etree.XMLParser"] = _lxml_etree.XMLParser
+                _original_xmlparser_cls = _lxml_etree.XMLParser
+                # XMLParser instances are not weak-referenceable (Cython
+                # extension type with no __weakref__ slot), so this set holds
+                # strong references. Parsers created for the lifetime of a
+                # sandboxed script are few and short-lived, so the retained
+                # memory is bounded; the alternative (tracking by id()) risks
+                # a false "trusted" match if a hardened parser is collected
+                # and its id is reused by an unrelated, unsafe instance.
+                # A script that constructs XMLParser() in an unbounded loop
+                # grows this set for the process lifetime; the resulting
+                # memory pressure is contained by the sandbox pod/job's own
+                # memory limit, same as any other in-process allocation.
+                _hardened_parsers: set = set()
+
+                def _hardened_xmlparser_cls(*args, **kwargs):
+                    kwargs["resolve_entities"] = False
+                    kwargs["load_dtd"] = False
+                    kwargs["no_network"] = True
+                    kwargs["huge_tree"] = False
+                    instance = _original_xmlparser_cls(*args, **kwargs)
+                    _hardened_parsers.add(instance)
+                    return instance
+
+                _lxml_etree.XMLParser = _hardened_xmlparser_cls
+
+                def _hardened_default_parser():
+                    return _hardened_xmlparser_cls()
+
+                def _force_hardened_parser(parser):
+                    # A caller can still reach the real, un-patched XMLParser
+                    # type via `type(some_parser_instance)` and construct a
+                    # parser with unsafe settings directly, bypassing the
+                    # `_lxml_etree.XMLParser` reassignment above entirely.
+                    # lxml parser settings are write-only at construction and
+                    # cannot be introspected or mutated after the fact, so any
+                    # parser instance not known to have been produced through
+                    # `_hardened_xmlparser_cls` is replaced outright rather
+                    # than trusted.
+                    try:
+                        if parser is not None and parser in _hardened_parsers:
+                            return parser
+                    except TypeError:
+                        # Unhashable `parser` argument -- fall through to the
+                        # safe default instead of letting the membership test
+                        # crash the call.
+                        pass
+                    return _hardened_default_parser()
+
+                for _name in ("fromstring", "XML", "parse"):
+                    _original_fn = getattr(_lxml_etree, _name, None)
+                    if _original_fn is None:
+                        continue
+                    _ORIGINALS["lxml.etree." + _name] = _original_fn
+
+                    def _make_hardened_fn(original_fn=_original_fn):
+                        def _hardened_fn(*args, parser=None, **kwargs):
+                            # source, parser=None, *, base_url=None: a caller may pass
+                            # `parser` positionally as the second argument, so it must be
+                            # pulled out of args before being re-injected as a kwarg below.
+                            if len(args) > 1:
+                                args, parser = args[:1] + args[2:], args[1]
+                            parser = _force_hardened_parser(parser)
+                            return original_fn(*args, parser=parser, **kwargs)
+
+                        return _hardened_fn
+
+                    setattr(_lxml_etree, _name, _make_hardened_fn())
+
+                _original_iterparse = getattr(_lxml_etree, "iterparse", None)
+                if _original_iterparse is not None:
+                    _ORIGINALS["lxml.etree.iterparse"] = _original_iterparse
+
+                    def _hardened_iterparse(*args, **kwargs):
+                        kwargs["resolve_entities"] = False
+                        kwargs["load_dtd"] = False
+                        kwargs["no_network"] = True
+                        kwargs["huge_tree"] = False
+                        return _original_iterparse(*args, **kwargs)
+
+                    _lxml_etree.iterparse = _hardened_iterparse
 
             audit_authorized_depth = _authorized_depth
             audit_allow_import_access = _allow_import_access

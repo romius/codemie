@@ -152,6 +152,42 @@ class TestBatchJobRunnerHappyPath(unittest.TestCase):
         assert del_kwargs["body"].grace_period_seconds == 0
         assert del_kwargs["body"].propagation_policy == "Foreground"
 
+    def test_run_creates_job_with_readonly_root_and_workdir_and_tmp_volumes(self):
+        config = _make_config()
+        batch = MagicMock(name="batch")
+        core = MagicMock(name="core")
+        batch.read_namespaced_job_status.return_value = _terminal_status(succeeded=1)
+        core.list_namespaced_pod.return_value = MagicMock(items=[_pod(phase="Running", exit_code=0, name="the-pod")])
+        core.read_namespaced_pod_log.return_value = "hello\n"
+
+        with patch("codemie_tools.data_management.code_executor.batch_job_runner.KubernetesClientManager") as mgr_cls:
+            mgr = mgr_cls.return_value
+            mgr.get_batch_client.return_value = batch
+            mgr.get_client.return_value = core
+            runner = BatchJobRunner(config)
+            _patch_runner_internals(runner, pod_name="the-pod")
+            with (
+                patch.object(runner, "_upload_payload"),
+                patch.object(runner, "_download_exports", return_value={}),
+            ):
+                runner.run("print('hello')", workdir="/workspace")
+
+        manifest = batch.create_namespaced_job.call_args.kwargs["body"]
+        pod_spec = manifest["spec"]["template"]["spec"]
+        container = pod_spec["containers"][0]
+
+        assert pod_spec["securityContext"]["seccompProfile"] == {"type": "RuntimeDefault"}
+        container_sec = container["securityContext"]
+        assert container_sec["readOnlyRootFilesystem"] is True
+        assert container_sec["seccompProfile"] == {"type": "RuntimeDefault"}
+
+        volumes = pod_spec["volumes"]
+        assert any(v["name"] == "workdir" and "emptyDir" in v for v in volumes)
+        assert any(v["name"] == "tmp" and "emptyDir" in v for v in volumes)
+        mounts = container["volumeMounts"]
+        assert any(m["name"] == "workdir" and m["mountPath"] == "/workspace" for m in mounts)
+        assert any(m["name"] == "tmp" and m["mountPath"] == "/tmp/runtime" for m in mounts)
+
     def test_run_extracts_non_zero_exit_code(self):
         config = _make_config()
         batch = MagicMock()

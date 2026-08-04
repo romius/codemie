@@ -262,5 +262,42 @@ class TestCodeExecutorToolIntegration(unittest.TestCase):
             assert "Success" in result
 
 
+class TestCodeExecutorToolPodManifest(unittest.TestCase):
+    """Tests for _create_default_pod_manifest security hardening."""
+
+    def setUp(self) -> None:
+        self.mock_file_repo = MagicMock()
+
+    def _build_tool(self) -> CodeExecutorTool:
+        from codemie_tools.data_management.code_executor.models import ExecutionMode
+
+        return CodeExecutorTool(
+            file_repository=self.mock_file_repo,
+            user_id="user",
+            execution_mode=ExecutionMode.SANDBOX,
+        )
+
+    def test_pod_manifest_sets_readonly_root_filesystem_and_default_seccomp(self) -> None:
+        tool = self._build_tool()
+        manifest = tool._create_default_pod_manifest("test-pod")
+
+        container = manifest["spec"]["containers"][0]
+        container_sec = container["securityContext"]
+        assert container_sec["readOnlyRootFilesystem"] is True
+        assert container_sec["seccompProfile"] == {"type": "RuntimeDefault"}
+
+        pod_sec = manifest["spec"]["securityContext"]
+        assert pod_sec["seccompProfile"] == {"type": "RuntimeDefault"}
+
+    def test_pod_manifest_keeps_existing_writable_mounts(self) -> None:
+        tool = self._build_tool()
+        manifest = tool._create_default_pod_manifest("test-pod")
+
+        mounts = manifest["spec"]["containers"][0]["volumeMounts"]
+        mount_paths = {m["mountPath"] for m in mounts}
+        assert "/tmp/runtime" in mount_paths
+        assert "/home/codemie" in mount_paths
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
