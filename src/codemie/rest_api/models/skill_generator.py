@@ -16,7 +16,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
-from codemie.rest_api.models.skill import MAX_CONTENT_LENGTH
+from codemie.rest_api.models.skill import DEFAULT_CONTENT_LENGTH
 from codemie.service.assistant_generator_service import AssistantToolkit
 from codemie.service.llm_service.llm_service import llm_service
 
@@ -57,7 +57,7 @@ class SkillGeneratorResponse(BaseModel):
         ..., max_length=1000, description="Generated skill description using best-practices phrasing"
     )
     instructions: str = Field(
-        ..., max_length=MAX_CONTENT_LENGTH, description="Generated skill instructions in Markdown format"
+        ..., max_length=DEFAULT_CONTENT_LENGTH, description="Generated skill instructions in Markdown format"
     )
     categories: List[str] = Field(
         default_factory=list, description="A list of the skill's primary areas or domain use cases (max 3)"

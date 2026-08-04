@@ -36,6 +36,7 @@ from codemie.core.constants import DEMO_PROJECT
 from codemie.core.models import CreatedByUser
 from codemie.rest_api.models.base import BaseModelWithSQLSupport, CommonBaseModel, PydanticType, PydanticListType
 from codemie.rest_api.security.user import User
+from codemie.service.dynamic_config_service import DynamicConfigService
 
 # ToolKitDetails and MCPServerDetails are imported here to avoid duplication; assistant.py does not
 # import skill.py so there is no circular dependency.
@@ -135,7 +136,50 @@ class SkillCategory(str, Enum):
 # Validation constants
 MAX_CATEGORIES_PER_SKILL = 3
 MAX_CATEGORIES_ERROR_MSG = "Maximum 3 categories allowed per skill"
-MAX_CONTENT_LENGTH = 30000
+# Default maximum skill content length used when the DynamicConfig key is unset
+# or misconfigured. Not an absolute ceiling: the effective limit is resolved at
+# runtime via get_skill_max_content_length() and the DynamicConfig key
+# SKILL_MAX_CONTENT_LENGTH; write validators call the accessor, not this constant.
+DEFAULT_CONTENT_LENGTH = 30000
+# Minimum allowed content length — mirrored in Field(min_length=...) on write models
+# and in the /skills/config response so clients see a consistent range.
+MIN_CONTENT_LENGTH = 100
+SKILL_MAX_CONTENT_LENGTH_CONFIG_KEY = "SKILL_MAX_CONTENT_LENGTH"
+
+
+def get_skill_max_content_length() -> int:
+    """Return the effective maximum allowed skill content length.
+
+    Configurable per deployment/environment via the DynamicConfig key
+    ``SKILL_MAX_CONTENT_LENGTH``. Falls back to ``DEFAULT_CONTENT_LENGTH`` (30000)
+    when the key is unset or the lookup fails, so validation never breaks on a
+    configuration/DB error.
+
+    The returned value is always >= MIN_CONTENT_LENGTH so misconfiguration can
+    never produce an impossible constraint (max < min) or DoS all writes.
+    """
+    result = DynamicConfigService.get_typed_value_safe(
+        SKILL_MAX_CONTENT_LENGTH_CONFIG_KEY, int, default=DEFAULT_CONTENT_LENGTH
+    )
+    # bool is a subclass of int; a bool-valued config entry (True=1, False=0) is
+    # always a type misconfiguration and must not silently become the effective limit.
+    if isinstance(result, bool) or result < MIN_CONTENT_LENGTH:
+        return DEFAULT_CONTENT_LENGTH
+    return result
+
+
+def _enforce_content_length(value: str | None) -> str | None:
+    """Validate content against the effective (configurable) maximum length.
+
+    Only enforced when a value is provided, so partial updates that omit
+    ``content`` are never blocked and pre-existing oversized skills stay usable.
+    """
+    if value is None:
+        return value
+    limit = get_skill_max_content_length()
+    if len(value) > limit:
+        raise ValueError(f"Skill content must not exceed {limit} characters (was {len(value)}).")
+    return value
 
 
 class SkillCompanionFileMetadata(BaseModel):
@@ -177,8 +221,7 @@ class SkillCreateRequest(BaseModel):
     )
     content: str = Field(
         description="Markdown content (skill instructions)",
-        min_length=100,
-        max_length=MAX_CONTENT_LENGTH,
+        min_length=MIN_CONTENT_LENGTH,
     )
     project: str = Field(description="Project this skill belongs to")
     visibility: SkillVisibility = Field(
@@ -223,6 +266,16 @@ class SkillCreateRequest(BaseModel):
             )
         return v
 
+    @field_validator("content")
+    @classmethod
+    def validate_content_length(cls, v: str) -> str:
+        """Validate content against the configurable maximum length."""
+        # content is a required str on SkillCreateRequest (no default), so v is never None here
+        # and the helper's None branch is unreachable. Narrow the return so mypy --strict is happy.
+        result = _enforce_content_length(v)
+        assert result is not None
+        return result
+
     @field_validator("categories")
     @classmethod
     def validate_categories_count(cls, v: list[SkillCategory]) -> list[SkillCategory]:
@@ -242,7 +295,7 @@ class SkillUpdateRequest(BaseModel):
 
     name: str | None = Field(default=None, min_length=3, max_length=64)
     description: str | None = Field(default=None, min_length=10, max_length=1000)
-    content: str | None = Field(default=None, min_length=100, max_length=MAX_CONTENT_LENGTH)
+    content: str | None = Field(default=None, min_length=MIN_CONTENT_LENGTH)
     project: str | None = Field(default=None, description="Project this skill belongs to")
     visibility: SkillVisibility | None = None
     categories: list[SkillCategory] | None = None
@@ -281,6 +334,12 @@ class SkillUpdateRequest(BaseModel):
                 "Must start and end with a letter or number."
             )
         return v
+
+    @field_validator("content")
+    @classmethod
+    def validate_content_length(cls, v: str | None) -> str | None:
+        """Validate content against the configurable maximum length (only when provided)."""
+        return _enforce_content_length(v)
 
     @field_validator("enabled_builtin_subagents")
     @classmethod
@@ -360,7 +419,6 @@ class SkillInstructionsGenerateRequest(BaseModel):
     existing_instructions: str | None = Field(
         default=None,
         description="Existing instructions to refine/improve (if provided, triggers refine mode)",
-        max_length=MAX_CONTENT_LENGTH,
     )
 
     skill_name: str | None = Field(
@@ -382,6 +440,13 @@ class SkillInstructionsGenerateRequest(BaseModel):
             raise ValueError("Prompt must not exceed 10000 characters")
         return v
 
+    # CR-002: no field_validator on existing_instructions.
+    # The generate/refine endpoint reads existing skill content back from storage; enforcing the
+    # current effective limit here strands users whose skills exceed a newly-lowered limit — the
+    # exact case where AI-assisted trimming is most useful. Length gating is a write-path concern
+    # and lives on SkillCreateRequest.content / SkillUpdateRequest.content; the service layer may
+    # add generate-time budgeting separately. Mirrors CR-005 (no validator on the response model).
+
 
 class SkillInstructionsGenerateResponse(BaseModel):
     """Response model for generated skill instructions"""
@@ -389,7 +454,6 @@ class SkillInstructionsGenerateResponse(BaseModel):
     instructions: str = Field(
         ...,
         description="Generated skill instructions in Anthropic Claude-compatible format",
-        max_length=MAX_CONTENT_LENGTH,
     )
 
     metadata: dict = Field(
@@ -408,6 +472,13 @@ class SkillCategoryResponse(BaseModel):
 
     value: str
     label: str
+
+
+class SkillConfigResponse(BaseModel):
+    """Response model exposing the effective skill content-length limits."""
+
+    max_content_length: int
+    min_content_length: int
 
 
 class SkillBasicInfo(BaseModel):

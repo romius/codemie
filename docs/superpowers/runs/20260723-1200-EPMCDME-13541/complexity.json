@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "source": "heuristic",
+  "run_id": "20260723-1200-EPMCDME-13541",
+  "size": "M",
+  "total": 16,
+  "routing": "brainstorming",
+  "dimensions": {
+    "scope": 3,
+    "unknowns": 3,
+    "risk": 2,
+    "coordination": 3,
+    "testing": 3,
+    "data_model": 2
+  },
+  "red_flags": [],
+  "rationale": "Backend-scoped change but non-trivial: replace static Pydantic Field(max_length=MAX_CONTENT_LENGTH) with runtime validators reading a configurable value across 4 request/response models (create, update, ai-generate input, ai-generate response); wire in DynamicConfig-backed setting with 30000 default; expose the effective limit to the UI via an endpoint; and cover behavioral nuances (reads of pre-existing oversized skills must not fail; oversized content updates must be blocked with a message stating the effective max). Multiple integration points + behavioral edge cases + test matrix (default/increased/exceeded/decreased) place this at M with brainstorming routing. Cross-repo Story overall; this run is the backend half.",
+  "affected_file_estimate": 5,
+  "keyword_signals": {"security": false, "auth": false, "migration": false, "breaking": false, "provider": false, "integration": true, "refactor": false}
+}

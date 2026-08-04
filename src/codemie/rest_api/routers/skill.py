@@ -31,6 +31,8 @@ from codemie.rest_api.models.skill import (
     SkillCategory,
     SkillCompanionFileMetadata,
     SkillCompanionFileResponse,
+    MIN_CONTENT_LENGTH,
+    SkillConfigResponse,
     SkillCreateRequest,
     SkillDetailResponse,
     SkillImportRequest,
@@ -42,6 +44,7 @@ from codemie.rest_api.models.skill import (
     SkillSortBy,
     SkillUpdateRequest,
     SkillVisibility,
+    get_skill_max_content_length,
 )
 from codemie.rest_api.models.assistant import AssistantListResponse
 from codemie.rest_api.models.assistant_generator import RefineGeneratorResponse
@@ -346,6 +349,21 @@ def get_skill_users(
     - Public skills
     """
     return SkillService.get_skill_users(user)
+
+
+@router.get(
+    "/skills/config",
+    status_code=status.HTTP_200_OK,
+    response_model=SkillConfigResponse,
+)
+def get_skill_config(
+    user: User = Depends(authenticate),
+) -> SkillConfigResponse:
+    """Return the effective skill content-length limits for the current deployment."""
+    return SkillConfigResponse(
+        max_content_length=get_skill_max_content_length(),
+        min_content_length=MIN_CONTENT_LENGTH,
+    )
 
 
 @router.get(

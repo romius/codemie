@@ -1,0 +1,181 @@
+{
+  "decision": "approve",
+  "rationale": "Final effective verdict after check round: all 5 blocking findings (CR-001..CR-005) from the initial review were resolved and independently verified in code-review-check.json. Business review (15/15 ACs) and standards review (5/5 clean) carried forward unchanged. See code-review-check.json for per-finding evidence.",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    {
+      "criterion": "Limit configurable per deployment/environment",
+      "status": "pass",
+      "notes": "SKILL_MAX_CONTENT_LENGTH_CONFIG_KEY drives get_skill_max_content_length() via DynamicConfigService.get_typed_value_safe."
+    },
+    {
+      "criterion": "Default limit backward-compatible at 30000",
+      "status": "pass",
+      "notes": "get_typed_value_safe called with default=MAX_CONTENT_LENGTH (30000)."
+    },
+    {
+      "criterion": "Backend validation uses configured value, not hardcoded 30000",
+      "status": "pass",
+      "notes": "_enforce_content_length calls get_skill_max_content_length() at validation time."
+    },
+    {
+      "criterion": "Validation errors state effective maximum length",
+      "status": "pass",
+      "notes": "Error message f\"Skill content must not exceed {limit} characters (was {len(value)}).\" matches design spec exactly."
+    },
+    {
+      "criterion": "Decreasing limit does not truncate/corrupt existing skills",
+      "status": "pass",
+      "notes": "Read/response models carry no length constraint; _enforce_content_length is only wired to write paths."
+    },
+    {
+      "criterion": "Reads/list/get of oversized stored skills not rejected",
+      "status": "pass",
+      "notes": "No max_length on SkillDetailResponse or SkillListResponse; SkillDetailResponse test accepts 40000-char content."
+    },
+    {
+      "criterion": "Editing oversized skill blocked when submitted content still exceeds limit",
+      "status": "pass",
+      "notes": "SkillUpdateRequest.content field_validator enforces the limit; test confirms rejection with correct error."
+    },
+    {
+      "criterion": "Partial update omitting content never blocked",
+      "status": "pass",
+      "notes": "_enforce_content_length returns early on None; test covers this path explicitly."
+    },
+    {
+      "criterion": "Config key is SKILL_MAX_CONTENT_LENGTH via DynamicConfigService.get_typed_value_safe",
+      "status": "pass",
+      "notes": "Both the key constant and call site match the design spec exactly."
+    },
+    {
+      "criterion": "Four model fields use field_validators",
+      "status": "pass",
+      "notes": "All four fields covered: SkillCreateRequest.content, SkillUpdateRequest.content, SkillInstructionsGenerateRequest.existing_instructions, SkillInstructionsGenerateResponse.instructions."
+    },
+    {
+      "criterion": "Error message format matches design spec",
+      "status": "pass",
+      "notes": "f\"Skill content must not exceed {limit} characters (was {len(value)}).\" is an exact match."
+    },
+    {
+      "criterion": "No max_length on read/response models",
+      "status": "pass",
+      "notes": "SkillDetailResponse test with 40000-char content confirms no constraint fires."
+    },
+    {
+      "criterion": "New non-admin GET /v1/skills/config returning {max_content_length, min_content_length}",
+      "status": "pass",
+      "notes": "Endpoint added with Depends(authenticate), SkillConfigResponse carries both fields; tests verify default and configured values plus route registration."
+    },
+    {
+      "criterion": "Tests cover default, increased, exceeded, and decreased-limit behaviors",
+      "status": "pass",
+      "notes": "18 tests across two files cover all required scenarios."
+    },
+    {
+      "criterion": "Effective limit exposed to clients",
+      "status": "pass",
+      "notes": "GET /v1/skills/config returns live max_content_length so clients never hardcode the value."
+    }
+  ],
+  "standards_review": [
+    {
+      "standard": "git-workflow: commit format",
+      "status": "pass",
+      "notes": "Both commits use EPMCDME-13541: prefix as required."
+    },
+    {
+      "standard": "git-workflow: branch naming",
+      "status": "pass",
+      "notes": "EPMCDME-13541_configurable-skill-content-limit follows <TICKET-ID>_short-description convention."
+    },
+    {
+      "standard": "code-quality: type annotations",
+      "status": "pass",
+      "notes": "All new public/private functions carry explicit parameter and return types."
+    },
+    {
+      "standard": "code-quality: license headers",
+      "status": "pass",
+      "notes": "Both new test files include the Apache 2.0 header block."
+    },
+    {
+      "standard": "security: endpoint authentication",
+      "status": "pass",
+      "notes": "GET /skills/config uses Depends(authenticate); no sensitive data exposed; no injection vectors."
+    }
+  ],
+  "findings": [],
+  "superseded_findings": [
+    {
+      "id": "CR-001",
+      "severity": "critical",
+      "triage": "patch",
+      "problem": "get_skill_max_content_length() has no lower-bound guard: an admin setting SKILL_MAX_CONTENT_LENGTH to 0 or a negative integer causes _enforce_content_length to reject any non-empty content (len(value) > 0 is always true), making all skill write endpoints return 422 with 'must not exceed 0 characters'.",
+      "impact": "Complete DoS of all skill create and update endpoints; error message gives users no remediation path.",
+      "recommendation": "In get_skill_max_content_length(), clamp the returned value: result = DynamicConfigService.get_typed_value_safe(...); return max(result, MAX_CONTENT_LENGTH) (or at minimum max(result, 100)), so misconfiguration can never permanently block valid content."
+    },
+    {
+      "id": "CR-002",
+      "severity": "critical",
+      "triage": "patch",
+      "problem": "A configured limit in the range 1–99 creates an impossible constraint: Field(min_length=100) requires content >= 100 chars, but _enforce_content_length then rejects any content > configured limit < 100. GET /skills/config simultaneously returns {min_content_length:100, max_content_length:N} where N < 100 — an incoherent range no payload can satisfy.",
+      "impact": "All skill creation and update permanently blocked; clients consuming the config endpoint receive a range where no valid payload exists.",
+      "recommendation": "Same fix as CR-001 — clamping to max(limit, 100) ensures the returned limit can never undercut the Field's own min_length floor, keeping min and max consistent."
+    },
+    {
+      "id": "CR-003",
+      "severity": "major",
+      "triage": "patch",
+      "problem": "min_content_length=100 in get_skill_config() is a disconnected integer literal with no tie to Field(min_length=100) in SkillCreateRequest and SkillUpdateRequest. If the Field constraint changes, the endpoint silently advertises a stale minimum.",
+      "impact": "Silent client-server contract drift: clients pre-validating against /skills/config accept content the server rejects, causing unexpected 422 errors.",
+      "recommendation": "Extract MIN_CONTENT_LENGTH = 100 as a module-level constant in skill.py, reference it in both Field(min_length=MIN_CONTENT_LENGTH) definitions and SkillConfigResponse(min_content_length=MIN_CONTENT_LENGTH) in the router."
+    },
+    {
+      "id": "CR-004",
+      "severity": "major",
+      "triage": "patch",
+      "problem": "Python's bool is a subclass of int, so isinstance(True, int) is True. SKILL_MAX_CONTENT_LENGTH stored with ConfigValueType.BOOL passes the get_typed_value type-check and get_skill_max_content_length() returns True (== 1) or False (== 0) as the effective limit.",
+      "impact": "Type-misconfiguration silently sets the limit to 1 or 0, identical operational impact to CR-001 but triggered via a type-safety bypass users may not expect.",
+      "recommendation": "Add an explicit bool guard in get_skill_max_content_length(): after retrieving the value, check isinstance(result, bool) and return MAX_CONTENT_LENGTH (fallback) if true, since a bool-valued limit is always a misconfiguration."
+    },
+    {
+      "id": "CR-005",
+      "severity": "major",
+      "triage": "patch",
+      "problem": "SkillInstructionsGenerateResponse.instructions has a field_validator that raises ValueError when the LLM returns over-limit content. FastAPI converts the resulting ResponseValidationError to an HTTP 500, not a 422, giving callers no actionable error and hiding the root cause.",
+      "impact": "When the AI-generate endpoint returns instructions exceeding the configured limit, users receive a 500 with no indication of why or how to recover.",
+      "recommendation": "Move the limit check to the service layer: validate the LLM output length before constructing SkillInstructionsGenerateResponse and raise a meaningful 422 (or truncate with a warning in the metadata field) rather than relying on a response-model validator that produces 500 on failure."
+    }
+  ],
+  "finding_status": [
+    {
+      "id": "CR-001",
+      "status": "resolved",
+      "evidence": "get_skill_max_content_length() now contains `if isinstance(result, bool) or result < MIN_CONTENT_LENGTH: return MAX_CONTENT_LENGTH`. Tests test_accessor_clamps_zero_to_default and test_accessor_clamps_negative_to_default pass."
+    },
+    {
+      "id": "CR-002",
+      "status": "resolved",
+      "evidence": "Same guard: `result < MIN_CONTENT_LENGTH` (100) catches the 1-99 range. test_accessor_clamps_below_min_to_default passes. GET /skills/config always returns max >= min since get_skill_max_content_length() now returns at least MIN_CONTENT_LENGTH."
+    },
+    {
+      "id": "CR-003",
+      "status": "resolved",
+      "evidence": "MIN_CONTENT_LENGTH = 100 constant added to models/skill.py. Field(min_length=MIN_CONTENT_LENGTH) on SkillCreateRequest.content and SkillUpdateRequest.content. Router imports MIN_CONTENT_LENGTH and uses it in SkillConfigResponse(min_content_length=MIN_CONTENT_LENGTH). test_returns_default_limit asserts against MIN_CONTENT_LENGTH constant."
+    },
+    {
+      "id": "CR-004",
+      "status": "resolved",
+      "evidence": "isinstance(result, bool) guard added before the arithmetic comparison in get_skill_max_content_length(). Tests test_accessor_guards_bool_true (True -> MAX_CONTENT_LENGTH) and test_accessor_guards_bool_false (False -> MAX_CONTENT_LENGTH) pass."
+    },
+    {
+      "id": "CR-005",
+      "status": "resolved",
+      "evidence": "validate_instructions_length field_validator removed from SkillInstructionsGenerateResponse. test_generate_response_no_length_constraint constructs a 50000-char response without error. test_generate_response_instructions_over_limit_rejected and test_generate_response_respects_increased_limit removed as the behavior they tested no longer exists."
+    }
+  ],
+  "superseded_by": "code-review-check.json"
+}

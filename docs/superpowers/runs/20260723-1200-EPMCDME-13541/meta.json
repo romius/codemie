@@ -1,0 +1,45 @@
+{
+  "run_id": "20260723-1200-EPMCDME-13541",
+  "mode": "hitl",
+  "started_at": "2026-07-23T12:00:00Z",
+  "task_input": "https://jiraeu.epam.com/browse/EPMCDME-13541 — Make AI Assistant Skill content length limit configurable",
+  "branch": "EPMCDME-13541_configurable-skill-content-limit",
+  "work_item": {
+    "canonical_path": "docs/superpowers/work-items/epmcdme-13541.md",
+    "run_mirror": "docs/superpowers/runs/20260723-1200-EPMCDME-13541/work-item.md",
+    "event_ledger": "docs/superpowers/runs/20260723-1200-EPMCDME-13541/work-item-events.jsonl"
+  },
+  "current_phase": 10,
+  "status": "completed",
+  "escalate_on": ["security", "breaking-change"],
+  "repo_scope_note": "Cross-repo Story. This run covers the BACKEND (codemie) only. A separate sdlc-pipeline run covers codemie-ui.",
+  "branch_guard": {
+    "current_branch": "main",
+    "base_branch": "main",
+    "target_branch": "EPMCDME-13541_configurable-skill-content-limit",
+    "working_tree": "dirty",
+    "upstream": "ahead",
+    "target_branch_exists": true,
+    "base_refreshed": false,
+    "decision": "stash",
+    "note": "User consented. Stashed unrelated OAuth WIP (stash@{0}). git fetch timed out (offline: gitbud SSH unreachable); branched off locally-cached origin/main@6ac0126fe, which is 31 commits fresher than local main. Best base available offline."
+  },
+  "decisions_resolved": {
+    "config_mechanism": "DynamicConfig via get_typed_value_safe('SKILL_MAX_CONTENT_LENGTH', int, default=30000)",
+    "ui_exposure": "add effective max to a non-admin skills endpoint",
+    "validation": "runtime field_validators reading the accessor"
+  },
+  "phases": {
+    "0":  {"status": "completed"},
+    "1":  {"status": "completed"},
+    "2":  {"status": "completed"},
+    "3":  {"status": "completed"},
+    "4":  {"status": "completed"},
+    "5":  {"status": "completed"},
+    "6":  {"status": "completed"},
+    "7":  {"status": "completed"},
+    "8":  {"status": "completed"},
+    "9":  {"status": "completed"},
+    "10": {"status": "completed"}
+  }
+}
