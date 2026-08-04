@@ -1,0 +1,70 @@
+{
+  "task": "Add feature-flagged LLM-based contextual chat naming that renames a new conversation asynchronously after the first assistant response.",
+  "generated": "2026-07-24T00:00:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 4,
+      "label": "L",
+      "affected": "ChatNamingService (new), ConversationService.upsert_chat_history, assistant_handlers background-task wiring, DynamicConfigService feature flag lookup, chat_naming_prompt template, config.CHAT_CONTEXTUAL_NAMING_ENABLED/LLM_MODEL settings",
+      "layers": "Service, API"
+    },
+    "requirements_clarity": {
+      "score": 2,
+      "label": "S",
+      "status": "Clear",
+      "gaps": null
+    },
+    "technical_risk": {
+      "score": 3,
+      "label": "M",
+      "risk_factors": "New LLM invocation path for naming, background-task fire-and-forget execution, feature-flagged rollout via DynamicConfigService",
+      "mitigation": "Guarded by CHAT_CONTEXTUAL_NAMING_ENABLED_KEY flag; wrapped in try/except with fallback to legacy truncated-name behavior; runs as non-blocking BackgroundTasks so it cannot fail the chat request"
+    },
+    "file_change_estimate": {
+      "score": 5,
+      "label": "XL",
+      "modified_files": 7,
+      "modified_file_list": [
+        ".ai-run/guides/development/configuration-patterns.md",
+        "src/codemie/configs/config.py",
+        "src/codemie/rest_api/handlers/assistant_handlers.py",
+        "src/codemie/service/constants.py",
+        "src/codemie/service/conversation_service.py",
+        "tests/codemie/rest_api/handlers/test_assistant_handlers.py",
+        "tests/codemie/service/test_conversation_service.py"
+      ],
+      "new_files": 3,
+      "new_file_list": [
+        "src/codemie/service/chat_naming_service.py",
+        "src/codemie/templates/chat_naming_prompt.py",
+        "tests/codemie/service/test_chat_naming_service.py"
+      ],
+      "affected_dirs": [".ai-run", "src", "tests", "docs"]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 5,
+      "label": "XL",
+      "layers_changed": ["API", "Service", "Configuration", "External"],
+      "schema_migration": false,
+      "cross_system": true
+    }
+  },
+  "total": 20,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 15,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "affected_layers", "reason": "Touches API (background task scheduling), Service (ChatNamingService + ConversationService integration), Configuration (feature flag + LLM model setting), and External (LLM invocation) — four distinct layers" },
+    { "dimension": "component_scope", "reason": "New ChatNamingService coordinates with ConversationService, assistant_handlers, config, and a new prompt template — 4+ components across Service and API layers" },
+    { "dimension": "file_change_estimate", "reason": "Diffstat reports 15 files changed (7 modified, 3 new source files, plus planning/state artifacts and a guide update), mapping to the 11-15 XL band" }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

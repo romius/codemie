@@ -530,6 +530,27 @@ class TestSaveChatHistory:
             call_args = mock_logger.debug.call_args[0][0]
             assert "save_history=False" in call_args
 
+    def test_save_chat_history_passes_background_tasks_through(self, handler, chat_history_data_save_true):
+        """save_chat_history forwards self.background_tasks to upsert_chat_history"""
+        sentinel_background_tasks = Mock()
+        handler.background_tasks = sentinel_background_tasks
+
+        with (
+            patch("codemie.service.llm_service.utils.set_llm_context"),
+            patch("codemie.rest_api.handlers.assistant_handlers.ConversationService") as mock_service,
+            patch("codemie.rest_api.handlers.assistant_handlers.request_summary_manager") as mock_manager,
+        ):
+            mock_manager.get_summary.return_value = Mock(tokens_usage=Mock())
+
+            handler.save_chat_history(chat_history_data_save_true)
+
+            _, call_kwargs = mock_service.upsert_chat_history.call_args
+            assert call_kwargs["background_tasks"] is sentinel_background_tasks
+
+    def test_background_tasks_defaults_to_none_before_process_request(self, handler):
+        """Handler instances start with no background_tasks until process_request sets it"""
+        assert handler.background_tasks is None
+
 
 def test_populate_conversation_history_uses_legacy_chat_history_when_feature_flag_disabled():
     user = Mock(spec=User)

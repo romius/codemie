@@ -721,6 +721,10 @@ class Config(BaseSettings):
     WORKFLOW_GENERATOR_LLM_MODEL: str = ""  # Workflow generator model; falls back to global default when empty
     CONVERSATION_ANALYSIS_PROJECTS_FILTER: list[str] = ["demo", "codemie", "epm-cdme"]  # Project filter
 
+    # Chat Contextual Naming Configuration
+    CHAT_CONTEXTUAL_NAMING_ENABLED: bool = False
+    CHAT_CONTEXTUAL_NAMING_LLM_MODEL: str = "gpt-5-nano-2025-08-07"
+
     # Leaderboard Configuration
     LEADERBOARD_ENABLED: bool = False  # Enables the leaderboard nightly computation job
     LEADERBOARD_SCHEDULE: str = "0 2 * * *"  # Cron schedule (UTC) — 2 AM daily

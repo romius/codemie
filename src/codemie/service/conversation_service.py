@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import copy
 import html
 import uuid
@@ -21,6 +22,7 @@ from datetime import datetime
 from typing import Any, List, TYPE_CHECKING, Optional
 
 from codemie_tools.base.utils import get_encoding
+from fastapi import BackgroundTasks
 from pydantic import BaseModel
 from sqlmodel import select, and_, func, or_, text, Session
 
@@ -51,6 +53,7 @@ from codemie.rest_api.models.share.shared_conversation import SharedConversation
 from codemie.rest_api.models.standard import AuthorEnum
 from codemie.rest_api.security.user import User
 from codemie.service.agent_workspace_service import AgentWorkspaceService
+from codemie.service.chat_naming_service import ChatNamingService
 from codemie.service.conversation.history_materializer import materialize_workflow_conversation
 from codemie.service.llm_service.llm_service import LLMService
 from codemie.service.monitoring.conversation_monitoring_service import ConversationMonitoringService
@@ -127,24 +130,9 @@ class ConversationService:
         }
 
     @classmethod
-    def upsert_chat_history(
-        cls,
-        assistant_response: str,
-        time_elapsed: float,
-        tokens_usage: TokensUsage,
-        request: AssistantChatRequest,
-        assistant: Assistant,
-        user: User,
-        thoughts: List[Thought],
-        status: ConversationStatus = ConversationStatus.SUCCESS,
-        user_message_received_at: datetime | None = None,
-        interactive_request: InteractiveRequest | None = None,
-        request_id: Optional[str] = None,
-    ):
-        should_create_conversation = False
-        llm_model = request.llm_model if request.llm_model else assistant.llm_model_type
-
-        # Find or create conversation
+    def _find_or_create_conversation(
+        cls, request: AssistantChatRequest, assistant: Assistant, user: User
+    ) -> tuple[Conversation, bool, bool]:
         conversation = Conversation.find_by_id(request.conversation_id)
         if not conversation:
             initial_image_settings = cls._get_initial_image_generation_settings(assistant)
@@ -161,20 +149,85 @@ class ConversationService:
                 enable_image_generation=initial_image_settings["enable_image_generation"],
                 image_generation_model=initial_image_settings["image_generation_model"],
             )
-            should_create_conversation = True
-        elif not conversation.conversation_name and not conversation.history:
-            # Conversation was pre-created without a name; set it from the first message.
-            conversation.conversation_name = cls._truncate_name(request.text)
+            return conversation, True, True
 
-        # Determine history_index if it's not provided in the request
+        if not conversation.history and conversation.conversation_name in (
+            None,
+            "",
+            cls._truncate_name(request.text),
+        ):
+            # Conversation was pre-created without a real name — either genuinely
+            # unnamed, or only carrying the UI's optimistic client-side truncated
+            # name (codemie-ui sets this via PUT /v1/conversations/{id} before the
+            # streaming response completes, see _updateChatNameIfNeeded). Either
+            # way it's still eligible for LLM naming; only a real user-chosen name
+            # should block it.
+            conversation.conversation_name = cls._truncate_name(request.text)
+            return conversation, False, True
+
+        return conversation, False, False
+
+    @staticmethod
+    def _resolve_history_index(request: AssistantChatRequest, conversation: Conversation) -> int:
+        if request.history_index is not None:
+            return request.history_index
+
+        max_index = -1
+        for message in conversation.history:
+            if message.history_index is not None and message.history_index > max_index:
+                max_index = message.history_index
+        return max_index + 1
+
+    @staticmethod
+    def _schedule_naming_background_task(
+        background_tasks: BackgroundTasks | None,
+        request: AssistantChatRequest,
+        assistant_response: str,
+        request_id: str | None,
+    ) -> None:
+        if background_tasks is None:
+            return
+
+        # Starlette runs scheduled background tasks in the outer request task,
+        # not the copy_context() snapshot active here (see save_chat_history's
+        # set_llm_context re-set for why this context is special: it holds the
+        # correct litellm_context/dial_credentials/current_user_email). Snapshot
+        # it now and run the naming task inside it, or get_llm_by_credentials
+        # sees an empty/stale context and every rename silently no-ops.
+        naming_context = contextvars.copy_context()
+        background_tasks.add_task(
+            naming_context.run,
+            ChatNamingService.rename_conversation,
+            conversation_id=request.conversation_id,
+            first_message=request.text,
+            assistant_response=assistant_response,
+            request_id=request_id,
+        )
+
+    @classmethod
+    def upsert_chat_history(
+        cls,
+        assistant_response: str,
+        time_elapsed: float,
+        tokens_usage: TokensUsage,
+        request: AssistantChatRequest,
+        assistant: Assistant,
+        user: User,
+        thoughts: List[Thought],
+        status: ConversationStatus = ConversationStatus.SUCCESS,
+        user_message_received_at: datetime | None = None,
+        interactive_request: InteractiveRequest | None = None,
+        request_id: Optional[str] = None,
+        background_tasks: BackgroundTasks | None = None,
+    ):
+        llm_model = request.llm_model if request.llm_model else assistant.llm_model_type
+
+        conversation, should_create_conversation, schedule_naming = cls._find_or_create_conversation(
+            request, assistant, user
+        )
+
+        request.history_index = cls._resolve_history_index(request, conversation)
         history_index = request.history_index
-        if history_index is None:
-            max_index = -1
-            for message in conversation.history:
-                if message.history_index is not None and message.history_index > max_index:
-                    max_index = message.history_index
-            history_index = max_index + 1
-            request.history_index = history_index
 
         replace_latest_variant = request.has_persisted_history_variant()
 
@@ -226,6 +279,10 @@ class ConversationService:
 
         # Save or update conversation
         conversation.save() if should_create_conversation else conversation.update()
+
+        if schedule_naming:
+            cls._schedule_naming_background_task(background_tasks, request, assistant_response, request_id)
+
         request.mark_history_variant_persisted()
 
     @classmethod

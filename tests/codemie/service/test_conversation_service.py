@@ -12,11 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextvars
+
 import pytest
 from unittest.mock import MagicMock, patch
 
+from fastapi import BackgroundTasks
+
 from codemie.core.models import AssistantChatRequest, UpdateConversationRequest, UpdateAiMessageRequest, TokensUsage
 from codemie.rest_api.models.assistant import Assistant
+from codemie.service.chat_naming_service import ChatNamingService
 from codemie.service.conversation_service import ConversationService
 from codemie.service.llm_service.llm_service import LLMService
 from codemie.rest_api.models.conversation import Conversation, ConversationMetrics, GeneratedMessage
@@ -677,3 +682,198 @@ def test_upsert_chat_history_content_raw_fallback(
     mock_update_chat_history.assert_called_once()
     turn = mock_update_chat_history.call_args.args[0]
     assert turn.user_query_raw == expected_raw
+
+
+@patch(
+    "codemie.service.monitoring.conversation_monitoring_service.ConversationMonitoringService.send_conversation_metric"
+)
+@patch("codemie.rest_api.models.conversation.ConversationMetrics.calculate_metrics")
+@patch("codemie.rest_api.models.conversation.ConversationMetrics.save")
+@patch("codemie.rest_api.models.conversation.Conversation.save")
+@patch("codemie.rest_api.models.conversation.Conversation.find_by_id")
+@patch("codemie.rest_api.models.conversation.ConversationMetrics.get_by_conversation_id")
+@patch("codemie.service.conversation_service.AgentWorkspaceService.sync_uploaded_files")
+def test_upsert_chat_history_schedules_naming_task_for_new_conversation(
+    mock_sync_uploaded_files,
+    mock_metrics_get,
+    mock_conv_find,
+    mock_conv_save,
+    mock_metrics_save,
+    mock_calculate_metrics,
+    _mock_send_metric,
+    mock_request,
+    mock_assistant,
+    mock_admin_user,
+    mock_conversation_metrics,
+):
+    mock_conv_find.return_value = None  # No existing conversation -> new-conversation branch
+    mock_metrics_get.side_effect = KeyError("not found")
+    mock_conv_save.return_value = True
+
+    background_tasks = MagicMock(spec=BackgroundTasks)
+
+    ConversationService.upsert_chat_history(
+        assistant_response="Hi there!",
+        user=mock_admin_user,
+        thoughts=[],
+        time_elapsed=0,
+        tokens_usage=TokensUsage(output_tokens=0, input_tokens=0, money_spent=0.0),
+        assistant=mock_assistant,
+        request=mock_request,
+        background_tasks=background_tasks,
+    )
+
+    background_tasks.add_task.assert_called_once()
+    call_args, call_kwargs = background_tasks.add_task.call_args
+    # Scheduled via a captured contextvars.Context.run so the naming task inherits
+    # the LLM-credential context resolved at schedule time (see conversation_service.py).
+    assert isinstance(call_args[0].__self__, contextvars.Context)
+    assert call_args[0].__name__ == "run"
+    assert call_args[1] == ChatNamingService.rename_conversation
+    assert call_kwargs == {
+        "conversation_id": mock_request.conversation_id,
+        "first_message": mock_request.text,
+        "assistant_response": "Hi there!",
+        "request_id": None,
+    }
+
+
+@patch(
+    "codemie.service.monitoring.conversation_monitoring_service.ConversationMonitoringService.send_conversation_metric"
+)
+@patch("codemie.rest_api.models.conversation.ConversationMetrics.calculate_metrics")
+@patch("codemie.rest_api.models.conversation.ConversationMetrics.update")
+@patch("codemie.rest_api.models.conversation.ConversationMetrics.save")
+@patch("codemie.rest_api.models.conversation.Conversation.update")
+@patch("codemie.rest_api.models.conversation.ConversationMetrics.get_by_conversation_id")
+@patch("codemie.service.conversation_service.AgentWorkspaceService.sync_uploaded_files")
+def test_upsert_chat_history_schedules_naming_when_only_optimistic_client_name_set(
+    mock_sync_uploaded_files,
+    mock_metrics_get,
+    mock_conv_update,
+    mock_metrics_save,
+    mock_metrics_update,
+    mock_calculate_metrics,
+    _mock_send_metric,
+    mock_request,
+    mock_assistant,
+    mock_admin_user,
+    mock_conversation_metrics,
+):
+    # codemie-ui optimistically PUTs a client-truncated name (matching the same
+    # 50-char + "..." fallback shape) right after the first message is sent, before
+    # the streaming response completes. That must not block LLM naming eligibility —
+    # only a real user-chosen name should.
+    pre_named_conversation = Conversation(
+        id="789",
+        conversation_id="789",
+        conversation_name="Hello",  # == ConversationService._truncate_name(mock_request.text)
+        assistant_ids=["123"],
+        history=[],
+    )
+    mock_metrics_get.return_value = mock_conversation_metrics
+    mock_conv_update.return_value = True
+    mock_metrics_save.return_value = True
+    mock_metrics_update.return_value = True
+
+    background_tasks = MagicMock(spec=BackgroundTasks)
+
+    with patch("codemie.rest_api.models.conversation.Conversation.find_by_id", return_value=pre_named_conversation):
+        ConversationService.upsert_chat_history(
+            assistant_response="Hi there!",
+            user=mock_admin_user,
+            thoughts=[],
+            time_elapsed=0,
+            tokens_usage=TokensUsage(output_tokens=0, input_tokens=0, money_spent=0.0),
+            assistant=mock_assistant,
+            request=mock_request,
+            background_tasks=background_tasks,
+        )
+
+    background_tasks.add_task.assert_called_once()
+
+
+@patch(
+    "codemie.service.monitoring.conversation_monitoring_service.ConversationMonitoringService.send_conversation_metric"
+)
+@patch("codemie.rest_api.models.conversation.ConversationMetrics.calculate_metrics")
+@patch("codemie.rest_api.models.conversation.ConversationMetrics.update")
+@patch("codemie.rest_api.models.conversation.ConversationMetrics.save")
+@patch("codemie.rest_api.models.conversation.Conversation.update")
+@patch("codemie.rest_api.models.conversation.ConversationMetrics.get_by_conversation_id")
+@patch("codemie.service.conversation_service.AgentWorkspaceService.sync_uploaded_files")
+def test_upsert_chat_history_does_not_schedule_naming_for_existing_named_conversation(
+    mock_sync_uploaded_files,
+    mock_metrics_get,
+    mock_conv_update,
+    mock_metrics_save,
+    mock_metrics_update,
+    mock_calculate_metrics,
+    _mock_send_metric,
+    mock_request,
+    mock_assistant,
+    mock_admin_user,
+    mock_conversation,
+    mock_conversation_metrics,
+):
+    mock_conversation.conversation_name = "Already named"
+    mock_metrics_get.return_value = mock_conversation_metrics
+    mock_conv_update.return_value = True
+    mock_metrics_save.return_value = True
+    mock_metrics_update.return_value = True
+
+    background_tasks = MagicMock(spec=BackgroundTasks)
+
+    with patch("codemie.rest_api.models.conversation.Conversation.find_by_id", return_value=mock_conversation):
+        ConversationService.upsert_chat_history(
+            assistant_response="Hi there!",
+            user=mock_admin_user,
+            thoughts=[],
+            time_elapsed=0,
+            tokens_usage=TokensUsage(output_tokens=0, input_tokens=0, money_spent=0.0),
+            assistant=mock_assistant,
+            request=mock_request,
+            background_tasks=background_tasks,
+        )
+
+    background_tasks.add_task.assert_not_called()
+
+
+@patch(
+    "codemie.service.monitoring.conversation_monitoring_service.ConversationMonitoringService.send_conversation_metric"
+)
+@patch("codemie.rest_api.models.conversation.ConversationMetrics.calculate_metrics")
+@patch("codemie.rest_api.models.conversation.ConversationMetrics.save")
+@patch("codemie.rest_api.models.conversation.Conversation.save")
+@patch("codemie.rest_api.models.conversation.Conversation.find_by_id")
+@patch("codemie.rest_api.models.conversation.ConversationMetrics.get_by_conversation_id")
+@patch("codemie.service.conversation_service.AgentWorkspaceService.sync_uploaded_files")
+def test_upsert_chat_history_without_background_tasks_still_sets_legacy_name(
+    mock_sync_uploaded_files,
+    mock_metrics_get,
+    mock_conv_find,
+    mock_conv_save,
+    mock_metrics_save,
+    mock_calculate_metrics,
+    _mock_send_metric,
+    mock_request,
+    mock_assistant,
+    mock_admin_user,
+):
+    """Legacy non-regression: omitting background_tasks (as all pre-existing callers do) must not raise,
+    and the synchronous legacy name assignment must be unaffected."""
+    mock_conv_find.return_value = None
+    mock_metrics_get.side_effect = KeyError("not found")
+    mock_conv_save.return_value = True
+
+    ConversationService.upsert_chat_history(
+        assistant_response="Hi there!",
+        user=mock_admin_user,
+        thoughts=[],
+        time_elapsed=0,
+        tokens_usage=TokensUsage(output_tokens=0, input_tokens=0, money_spent=0.0),
+        assistant=mock_assistant,
+        request=mock_request,
+    )
+
+    mock_conv_save.assert_called_once()

@@ -95,6 +95,7 @@ class AssistantRequestHandler(ABC):
         self.assistant = assistant
         self.user = user
         self.request_uuid = request_uuid
+        self.background_tasks: BackgroundTasks | None = None
 
     @abstractmethod
     def process_request(
@@ -401,6 +402,7 @@ class AssistantRequestHandler(ABC):
             user_message_received_at=data.user_message_received_at,
             interactive_request=data.interactive_request,
             request_id=self.request_uuid,
+            background_tasks=self.background_tasks,
         )
         request_summary_manager.clear_summary(self.request_uuid)
 
@@ -472,6 +474,7 @@ class StandardAssistantHandler(AssistantRequestHandler):
         """
         Process assistant request with error handling options.
         """
+        self.background_tasks = background_tasks
         self._sync_uploaded_files_to_workspace(request)
 
         # Validate structured interactive responses against the stored conversation
@@ -978,6 +981,7 @@ class A2AAssistantHandler(AssistantRequestHandler):
 
         Note: Error handling parameters not yet implemented for A2A.
         """
+        self.background_tasks = background_tasks
         self._sync_uploaded_files_to_workspace(request)
 
         # Validate structured interactive responses against the stored conversation
