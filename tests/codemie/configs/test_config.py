@@ -64,3 +64,19 @@ def test_authorized_apps_allowed_key_domains_env_override(monkeypatch):
     monkeypatch.setenv("AUTHORIZED_APPS_ALLOWED_KEY_DOMAINS", '["trusted.example", "keys.trusted.example"]')
     config = Config()
     assert config.AUTHORIZED_APPS_ALLOWED_KEY_DOMAINS == ["trusted.example", "keys.trusted.example"]
+
+
+def test_config_model_config_includes_env_local():
+    env_files = Config.model_config.get("env_file", ())
+    assert any(
+        str(f).endswith(".env.local") for f in env_files
+    ), "Config.model_config must include '.env.local' so personal overrides take precedence over .env"
+
+
+def test_env_local_overrides_env(tmp_path):
+    env_file = tmp_path / ".env"
+    env_local_file = tmp_path / ".env.local"
+    env_file.write_text("LOG_LEVEL=WARNING\n")
+    env_local_file.write_text("LOG_LEVEL=DEBUG\n")
+    config = Config(_env_file=(str(env_file), str(env_local_file)))
+    assert config.LOG_LEVEL == "DEBUG", ".env.local values must override .env values"

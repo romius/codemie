@@ -50,6 +50,21 @@ docs(readme): update quick start instructions
 
 ## Development Setup
 
+### Environment Setup
+
+Before starting, create your local `.env` from the template:
+
+```bash
+cp -n .env.example .env   # safe to run repeatedly; no-op if .env already exists
+```
+
+Then open `.env` and fill in the required values (DIAL/Azure API keys, etc.).
+
+For personal overrides that should never be shared (machine-specific paths,
+local feature flag toggles), create `.env.local` — it is gitignored and loaded
+**after** `.env`, so its values take precedence. Neither `.env` nor `.env.local`
+should ever be committed.
+
 ```bash
 # Install dependencies
 poetry install --sync

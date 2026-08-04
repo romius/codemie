@@ -1,0 +1,84 @@
+{
+  "task": "Replace git-tracked .env workflow with .env.example template and gitignored .env/.env.local; wire pydantic-settings env_file tuple; add make setup-env target; warn on missing .env in export service; update docs.",
+  "generated": "2026-07-10T00:00:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 4,
+      "label": "L",
+      "affected": "Config (config.py), CodemieExportService, Makefile, .gitignore, .env.example, documentation (.ai-run setup-guide, README, CONTRIBUTING)",
+      "layers": "Service, Config/Infra"
+    },
+    "requirements_clarity": {
+      "score": 2,
+      "label": "S",
+      "status": "Clear",
+      "gaps": null
+    },
+    "technical_risk": {
+      "score": 2,
+      "label": "S",
+      "risk_factors": "Swap from find_dotenv (parent-dir search semantics) to static relative tuple (\".env\", \".env.local\") changes path-resolution behaviour; module-level load_dotenv call removed",
+      "mitigation": "pydantic-settings v2 tuple env_file is a well-documented pattern; relative paths resolve from process CWD which is stable at repo root; tests added to verify .env.local precedence over .env"
+    },
+    "file_change_estimate": {
+      "score": 4,
+      "label": "L",
+      "modified_files": 10,
+      "modified_file_list": [
+        ".ai-run/guides/development/setup-guide.md",
+        ".env",
+        ".gitignore",
+        "CONTRIBUTING.md",
+        "Makefile",
+        "README.md",
+        "src/codemie/configs/config.py",
+        "src/codemie/service/codemie_export_service.py",
+        "tests/codemie/configs/test_config.py",
+        "tests/codemie/service/test_codemie_export_service.py"
+      ],
+      "new_files": 2,
+      "new_file_list": [
+        ".env.example",
+        "tests/codemie/configs/test_env_example.py"
+      ],
+      "affected_dirs": [
+        ".",
+        ".ai-run",
+        "src",
+        "tests"
+      ]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 3,
+      "label": "M",
+      "layers_changed": ["Service", "Config/Infra"],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 16,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 12,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "config.py is the project-wide shared settings singleton — all components depend on it, giving this 3-line change a wide blast radius. CodemieExportService, Makefile, .gitignore, .env.example, and three documentation files are also touched, spanning multiple subsystems."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "10 files modified (including .env deleted) and 2 new files (.env.example and test_env_example.py) across 4 top-level directories: repo root, .ai-run, src, and tests — placing this in the L band (8-10 modified, 2-4 new, 3+ dirs)."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from M (3) to L (4): config.py is a core shared utility — every component in the codebase imports it, elevating blast radius even for a minimal 3-line change"
+  ],
+  "split_recommendation": null
+}

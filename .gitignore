@@ -7,6 +7,7 @@ src/codemie-repos
 
 google_credentials.json
 
+.env
 .env.local
 .env_local
 
@@ -21,6 +22,7 @@ venv
 
 .coverage
 coverage.xml
+dist/
 .codebox/
 .scannerwork/
 node_modules/

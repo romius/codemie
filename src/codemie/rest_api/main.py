@@ -525,7 +525,6 @@ def _bootstrap_superadmin():
         and config.SUPERADMIN_EMAIL
         and config.SUPERADMIN_PASSWORD
         and config.IDP_PROVIDER == "local"
-        and config.ENV != ENV_LOCAL
     ):
         return
 

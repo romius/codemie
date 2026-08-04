@@ -14,10 +14,10 @@
 
 import logging
 from pathlib import Path
-from typing import Literal, Self
+from typing import ClassVar, Literal, Self
 
 from apscheduler.triggers.cron import CronTrigger
-from dotenv import find_dotenv, load_dotenv
+from dotenv import load_dotenv
 from pydantic import BaseModel, Field, computed_field, model_validator
 from pydantic_settings import SettingsConfigDict, BaseSettings
 
@@ -753,7 +753,16 @@ class Config(BaseSettings):
     STALE_DATASOURCE_GRACE_DAYS: int = 7  # Grace period: newly created datasources are never marked stale
     STALE_DATASOURCE_BATCH_SIZE: int = 100  # Elasticsearch query batch size for metrics aggregation
 
-    model_config = SettingsConfigDict(env_file=find_dotenv(".env", raise_error_if_not_found=False), extra="ignore")
+    # Derived from PROJECT_ROOT (src/codemie) rather than a fresh parents[N]
+    # literal, so there's a single named anchor instead of a second magic index.
+    _REPO_ROOT_FOR_ENV_FILES: ClassVar[Path] = PROJECT_ROOT.parent.parent
+    model_config = SettingsConfigDict(
+        env_file=(
+            str(_REPO_ROOT_FOR_ENV_FILES / ".env"),
+            str(_REPO_ROOT_FOR_ENV_FILES / ".env.local"),
+        ),
+        extra="ignore",
+    )
 
     GLOBAL_FALLBACK_MSG: str = "External Service Exception"
     # ===========================================
@@ -922,6 +931,10 @@ class HealthCheckFilter(logging.Filter):
         return not record.args[2].endswith("healthcheck")
 
 
-load_dotenv(find_dotenv(".env", raise_error_if_not_found=False))
+# Populate os.environ too, for the modules that read env vars directly (e.g. OTEL_*, LANGFUSE_*)
+# instead of through the Config object — pydantic-settings' env_file only feeds Config's fields.
+load_dotenv(Config._REPO_ROOT_FOR_ENV_FILES / ".env", override=False)
+load_dotenv(Config._REPO_ROOT_FOR_ENV_FILES / ".env.local", override=True)
+
 config = Config()  # type: ignore
 logging.getLogger("uvicorn.access").addFilter(HealthCheckFilter())

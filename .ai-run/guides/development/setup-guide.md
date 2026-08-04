@@ -1,5 +1,27 @@
 # Setup Guide
 
+## Environment File Setup
+
+`.env` is gitignored. Copy the template before running anything:
+
+```bash
+cp -n .env.example .env   # safe to run repeatedly; no-op if .env already exists
+```
+
+Then fill in required values (API keys, database URL, etc.).
+
+Use `.env.local` for personal overrides (machine-specific paths, local flag
+toggles). It is gitignored and loaded **after** `.env`, so its values take
+precedence. Neither file should ever be committed.
+
+| Avoid | Prefer |
+|---|---|
+| Editing `.env.example` directly | Copy to `.env`, edit that copy |
+| Committing `.env` or `.env.local` | Both are gitignored by design |
+| Putting real credentials in any tracked file | Use `.env` / `.env.local` on disk only |
+
+Evidence: `.env.example` at repo root.
+
 ## Local Dependencies
 
 Install with Poetry and use Docker Compose for dependent services.
@@ -8,8 +30,6 @@ Install with Poetry and use Docker Compose for dependent services.
 |---|---|
 | Running Python commands before dependencies are installed | `poetry install` or `poetry install --sync` |
 | Starting the API without PostgreSQL/Elasticsearch when needed | Start required services with Docker Compose |
-
-Evidence: README setup steps are documented at `README.md:83`; Makefile install targets are at `Makefile:15`.
 
 ## Running The API
 

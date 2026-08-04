@@ -187,9 +187,14 @@ class CodemieExportService(BaseModelWithElasticSupport):
             tar.add(cls.tmp_state_dir, arcname=target_base + "/state_import") if os.path.exists(
                 cls.tmp_state_dir
             ) else None
-            shutil.copyfile(source_base + "/" + env_file, cls.tmp_state_dir + "/" + env_file) if os.path.exists(
-                source_base + "/" + env_file
-            ) else None
+            if os.path.exists(source_base + "/" + env_file):
+                shutil.copyfile(source_base + "/" + env_file, cls.tmp_state_dir + "/" + env_file)
+            else:
+                logger.warning(
+                    ".env not found at %s — copy .env.example to .env before exporting. "
+                    "The export archive will not include an env file.",
+                    source_base,
+                )
             env_string = ""
             for key in env:
                 env_string += f"{key}={env[key]}\n"

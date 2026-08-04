@@ -1,0 +1,97 @@
+diff --git a/src/codemie/configs/config.py b/src/codemie/configs/config.py
+index 54f5329fe..c9188c251 100644
+--- a/src/codemie/configs/config.py
++++ b/src/codemie/configs/config.py
+@@ -747,7 +747,13 @@ class Config(BaseSettings):
+     STALE_DATASOURCE_GRACE_DAYS: int = 7  # Grace period: newly created datasources are never marked stale
+     STALE_DATASOURCE_BATCH_SIZE: int = 100  # Elasticsearch query batch size for metrics aggregation
+ 
+-    model_config = SettingsConfigDict(env_file=(".env", ".env.local"), extra="ignore")
++    model_config = SettingsConfigDict(
++        env_file=(
++            str(Path(__file__).absolute().parents[3] / ".env"),
++            str(Path(__file__).absolute().parents[3] / ".env.local"),
++        ),
++        extra="ignore",
++    )
+ 
+     GLOBAL_FALLBACK_MSG: str = "External Service Exception"
+     # ===========================================
+diff --git a/tests/codemie/configs/test_config.py b/tests/codemie/configs/test_config.py
+index a91a7dcbe..71a166319 100644
+--- a/tests/codemie/configs/test_config.py
++++ b/tests/codemie/configs/test_config.py
+@@ -68,9 +68,9 @@ def test_authorized_apps_allowed_key_domains_env_override(monkeypatch):
+ 
+ def test_config_model_config_includes_env_local():
+     env_files = Config.model_config.get("env_file", ())
+-    assert ".env.local" in env_files, (
+-        "Config.model_config must include '.env.local' so personal overrides take precedence over .env"
+-    )
++    assert (
++        ".env.local" in env_files
++    ), "Config.model_config must include '.env.local' so personal overrides take precedence over .env"
+ 
+ 
+ def test_env_local_overrides_env(tmp_path):
+diff --git a/tests/codemie/configs/test_env_example.py b/tests/codemie/configs/test_env_example.py
+index 97ce325d7..f3c5137ff 100644
+--- a/tests/codemie/configs/test_env_example.py
++++ b/tests/codemie/configs/test_env_example.py
+@@ -14,7 +14,6 @@
+ 
+ from pathlib import Path
+ 
+-import pytest
+ from dotenv import dotenv_values
+ 
+ 
+@@ -72,6 +71,6 @@ def test_env_example_contains_required_keys():
+ def test_env_example_superadmin_password_is_not_plaintext():
+     values = dotenv_values(ENV_EXAMPLE)
+     password = values.get("SUPERADMIN_PASSWORD", "")
+-    assert password != "password", (
+-        "SUPERADMIN_PASSWORD in .env.example must not be 'password' — use a placeholder like 'changeme'"
+-    )
++    assert (
++        password != "password"
++    ), "SUPERADMIN_PASSWORD in .env.example must not be 'password' — use a placeholder like 'changeme'"
+diff --git a/tests/codemie/service/test_codemie_export_service.py b/tests/codemie/service/test_codemie_export_service.py
+index fb24026bf..bf912c2b2 100644
+--- a/tests/codemie/service/test_codemie_export_service.py
++++ b/tests/codemie/service/test_codemie_export_service.py
+@@ -12,8 +12,7 @@
+ # See the License for the specific language governing permissions and
+ # limitations under the License.
+ 
+-import tarfile
+-import os
++import contextlib
+ import pytest
+ from codemie.service.codemie_export_service import CodemieExportService
+ from unittest.mock import patch, MagicMock
+@@ -56,19 +55,17 @@ class TestCodemieExportService:
+     @patch('codemie.service.codemie_export_service.logger')
+     def test_tar_logs_warning_when_env_absent(self, mock_logger, mock_dump, tmpdir):
+         source_base = str(tmpdir.mkdir("source"))
+-        # No .env file in source_base — simulates gitignored .env not yet created
+-
+-        tar_path = os.path.join(str(tmpdir), "test.tar")
+         with (
+             patch('codemie.service.codemie_export_service.config.CODEMIE_EXPORT_ROOT', source_base),
+             patch('codemie.service.codemie_export_service.config.ASSISTANTS_INDEX', 'assistants'),
+-            patch('tarfile.open', return_value=MagicMock(__enter__=lambda s: s, __exit__=MagicMock(return_value=False))),
++            patch('codemie.service.codemie_export_service.os.makedirs'),
++            patch(
++                'tarfile.open', return_value=MagicMock(__enter__=lambda s: s, __exit__=MagicMock(return_value=False))
++            ),
+             patch('threading.Thread'),
+         ):
+-            try:
++            with contextlib.suppress(Exception):
+                 CodemieExportService.tar(assistant_id='test-id', user='test-user')
+-            except Exception:
+-                pass  # Only care about the warning, not full export completion
+ 
+         mock_logger.warning.assert_called_once()
+         warning_msg = mock_logger.warning.call_args[0][0]

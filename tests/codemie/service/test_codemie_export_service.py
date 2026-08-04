@@ -14,7 +14,7 @@
 
 import pytest
 from codemie.service.codemie_export_service import CodemieExportService
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 
 class TestCodemieExportService:
@@ -49,3 +49,23 @@ class TestCodemieExportService:
         }
         CodemieExportService.dump_repositories(context_name='TestRepository', project_name='TestProject')
         mock_client().search.assert_called_once()
+
+    @patch('codemie.service.codemie_export_service.CodemieExportService.dump')
+    @patch('codemie.service.codemie_export_service.logger')
+    def test_tar_logs_warning_when_env_absent(self, mock_logger, mock_dump, tmpdir):
+        source_base = str(tmpdir.mkdir("source"))
+        with (
+            patch('codemie.service.codemie_export_service.config.CODEMIE_EXPORT_ROOT', source_base),
+            patch('codemie.service.codemie_export_service.config.ASSISTANTS_INDEX', 'assistants'),
+            patch('codemie.service.codemie_export_service.os.makedirs'),
+            patch('codemie.service.codemie_export_service.shutil.rmtree'),
+            patch(
+                'tarfile.open', return_value=MagicMock(__enter__=lambda s: s, __exit__=MagicMock(return_value=False))
+            ),
+            patch('threading.Thread'),
+        ):
+            CodemieExportService.tar(assistant_id='test-id', user='test-user')
+
+        mock_logger.warning.assert_called_once()
+        warning_msg = mock_logger.warning.call_args[0][0]
+        assert ".env not found" in warning_msg

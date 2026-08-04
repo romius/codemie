@@ -25,7 +25,7 @@ Key capabilities: multi-agent orchestration, rich data indexing (Git, Jira, Conf
 ## Quick Start
 
 1. **Setup credentials** (see [Prerequisites & Setup](#prerequisites--setup))
-2. **Configure `.env`** with local database, search, and model provider settings
+2. **Configure local environment**: `cp -n .env.example .env`, then edit `.env` with your credentials
 3. **Run with Docker**:
    ```bash
    docker compose up --build codemie postgres elasticsearch
@@ -46,15 +46,22 @@ Key capabilities: multi-agent orchestration, rich data indexing (Git, Jira, Conf
 
 ### Local Environment Variables
 
-```env
-# App mode
-ENV=local
-MODELS_ENV=azure
+Copy the template and fill in your values — never commit `.env` to git:
 
+```bash
+cp -n .env.example .env   # no-op if .env already exists
+```
+
+Then open `.env` and set at minimum:
+
+```env
 # Azure OpenAI (required unless you switch to AWS or GCP model config)
 AZURE_OPENAI_API_KEY="<your_api_key>"
 AZURE_OPENAI_URL="https://your-azure-openai-endpoint.example.com"
 ```
+
+Use `.env.local` for personal overrides that should never be shared with the team.
+It is gitignored and loaded after `.env`, so its values take precedence.
 
 For local startup, CodeMie needs:
 
@@ -168,7 +175,7 @@ Hook toggle:
 - `pre-push` is opt-in (disabled by default to avoid blocking pushes while pre-existing test failures exist on main):
   - `CODEMIE_PREPUSH_ENABLED=false` (default) — pre-push hook is skipped
   - `CODEMIE_PREPUSH_ENABLED=true` — enables full pytest + sonar before every push
-  - Add to `.env` or export in shell: `export CODEMIE_PREPUSH_ENABLED=true`
+  - Add to `.env` (or `.env.local` for personal preference) or export in shell: `export CODEMIE_PREPUSH_ENABLED=true`
 
 Commit flow (fast):
 - `ruff format` + `ruff check --fix` on staged Python
