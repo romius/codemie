@@ -1084,8 +1084,7 @@ class ToolkitService:
         for context in assistant.context:
             if context.context_type == ContextType.KNOWLEDGE_BASE:
                 cls._add_kb_tools(tools, context, assistant, llm_model)
-
-            if context.context_type == ContextType.PROVIDER:
+            elif context.context_type == ContextType.PROVIDER:
                 cls._add_provider_context_tools(
                     tools,
                     assistant,
@@ -1097,8 +1096,7 @@ class ToolkitService:
                     llm_model=llm_model,
                     history_index=request.history_index if request else None,
                 )
-
-            if context.context_type == ContextType.CODE:
+            elif context.context_type == ContextType.CODE:
                 cls._add_code_tools(tools, context, assistant, request, is_react, exclude_extra_context_tools)
 
                 cls._add_git_related_tools(

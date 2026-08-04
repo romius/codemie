@@ -14,7 +14,9 @@
 
 import json
 import logging
+import os
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 from github.GithubObject import NotSet
 from langchain_community.utilities.github import GitHubAPIWrapper
@@ -23,90 +25,107 @@ from pydantic import model_validator
 
 ISSUE_NUMBER_MUST_BE_SPECIFIED = "issue_number must be specified and must be an integer."
 
+_GITHUB_COM_HOSTS = frozenset({"github.com", "api.github.com"})
+
+
+def _normalize_github_base_url(value: Optional[str]) -> Optional[str]:
+    """Normalize a GHE hostname or URL to the PyGithub-compatible base URL.
+
+    Returns None only for missing/blank input. For github.com hosts returns
+    the canonical 'https://api.github.com'; for any other host returns
+    'https://{host}[:port]/api/v3' (GHE Server requires the /api/v3 suffix,
+    and a trailing slash would break every request path). The contract is
+    self-contained — callers do not need to know PyGithub's internal default.
+    """
+    if value is None:
+        return None
+    trimmed = value.strip()
+    if not trimmed:
+        return None
+    parsed = urlparse(trimmed if "://" in trimmed else f"https://{trimmed}")
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return None
+    if host in _GITHUB_COM_HOSTS:
+        return "https://api.github.com"
+    scheme = parsed.scheme or "https"
+    try:
+        port = parsed.port
+    except ValueError:
+        # Non-numeric port token (e.g. "https://ghe.corp.com:bad/") — drop it.
+        port = None
+    port_suffix = f":{port}" if port else ""
+    return f"{scheme}://{host}{port_suffix}/api/v3"
+
 
 class CustomGitHubAPIWrapper(GitHubAPIWrapper):
     github_access_token: Optional[str] = None
     github_app_id: Optional[int] = None
     github_app_private_key: Optional[str] = None
     github_app_installation_id: Optional[int] = None
+    github_base_url: Optional[str] = None
 
     @staticmethod
-    def _get_installation_id(app_id: int, private_key: str, provided_installation_id: Optional[int]) -> int:
-        """
-        Get installation ID, either from provided value or by auto-detection.
-
-        Args:
-            app_id: GitHub App ID
-            private_key: GitHub App private key
-            provided_installation_id: Optional installation ID provided by user
-
-        Returns:
-            int: Installation ID to use
-
-        Raises:
-            ValueError: If no installations found
-        """
+    def _get_installation_id(
+        app_id: int,
+        private_key: str,
+        provided_installation_id: Optional[int],
+        base_url: Optional[str] = None,
+    ) -> int:
         if provided_installation_id is not None:
             return provided_installation_id
 
-        # Auto-detect first installation using GithubIntegration
         from github import GithubIntegration
 
-        integration = GithubIntegration(integration_id=app_id, private_key=private_key)
+        integration_kwargs = {"integration_id": app_id, "private_key": private_key}
+        if base_url:
+            integration_kwargs["base_url"] = base_url
+        integration = GithubIntegration(**integration_kwargs)
         installations = integration.get_installations()
         try:
             first_installation = next(iter(installations))
-            installation_id = first_installation.id
-            return installation_id
+            return first_installation.id
         except StopIteration:
-            raise ValueError("No GitHub App installations found. Please install the app " "or provide installation_id")
+            raise ValueError("No GitHub App installations found. Please install the app or provide installation_id")
 
     @staticmethod
-    def _create_github_app_auth(app_id: int, private_key: str, installation_id: Optional[int]):
-        """
-        Create GitHub instance with App authentication.
-
-        Args:
-            app_id: GitHub App ID
-            private_key: GitHub App private key in PEM format
-            installation_id: Optional installation ID
-
-        Returns:
-            Github: Authenticated GitHub instance
-        """
+    def _create_github_app_auth(
+        app_id: int,
+        private_key: str,
+        installation_id: Optional[int],
+        base_url: Optional[str] = None,
+    ):
         from github import Auth, Github, GithubIntegration
 
         logging.info("Using GitHub App authentication")
 
-        # Create GithubIntegration instance
-        integration = GithubIntegration(integration_id=app_id, private_key=private_key)
+        integration_kwargs = {"integration_id": app_id, "private_key": private_key}
+        if base_url:
+            integration_kwargs["base_url"] = base_url
+        integration = GithubIntegration(**integration_kwargs)
 
-        # Get installation ID (auto-detect if not provided)
-        resolved_installation_id = CustomGitHubAPIWrapper._get_installation_id(app_id, private_key, installation_id)
-
-        # Get access token for the installation
+        resolved_installation_id = CustomGitHubAPIWrapper._get_installation_id(
+            app_id, private_key, installation_id, base_url
+        )
         access_token = integration.get_access_token(resolved_installation_id)
 
-        # Create GitHub instance with token auth
         auth = Auth.Token(access_token.token)
-        return Github(auth=auth)
+        github_kwargs = {"auth": auth}
+        if base_url:
+            github_kwargs["base_url"] = base_url
+        return Github(**github_kwargs)
 
     @staticmethod
     def _create_pat_auth(values: Dict):
-        """
-        Create GitHub instance with Personal Access Token authentication.
-
-        Args:
-            values: Configuration values dictionary
-
-        Returns:
-            Github: Authenticated GitHub instance
-        """
         from github import Auth, Github
 
         github_access_token = get_from_dict_or_env(values, "github_access_token", "GITHUB_ACCESS_TOKEN")
         auth = Auth.Token(github_access_token)
-        return Github(auth=auth)
+        github_kwargs = {"auth": auth}
+        base_url = values.get("github_base_url")
+        if base_url:
+            github_kwargs["base_url"] = base_url
+        return Github(**github_kwargs)
 
     @classmethod
     def _setup_repository(cls, github_instance, values: Dict) -> Dict:
@@ -148,9 +167,12 @@ class CustomGitHubAPIWrapper(GitHubAPIWrapper):
     @model_validator(mode="before")
     def validate_environment(cls, values: Dict) -> Dict:
         try:
-            from github import Auth, Github
+            from github import Auth, Github  # noqa: F401
         except ImportError:
-            raise ImportError("PyGithub is not installed. " "Please install it with `pip install PyGithub`")
+            raise ImportError("PyGithub is not installed. Please install it with `pip install PyGithub`")
+
+        github_base_url = _normalize_github_base_url(values.get("github_base_url") or os.getenv("GITHUB_BASE_URL"))
+        values["github_base_url"] = github_base_url
 
         # Determine authentication method
         has_app_id = "github_app_id" in values and values["github_app_id"]
@@ -163,6 +185,7 @@ class CustomGitHubAPIWrapper(GitHubAPIWrapper):
                 app_id=values["github_app_id"],
                 private_key=values["github_app_private_key"],
                 installation_id=values.get("github_app_installation_id"),
+                base_url=github_base_url,
             )
         else:
             github_instance = cls._create_pat_auth(values)

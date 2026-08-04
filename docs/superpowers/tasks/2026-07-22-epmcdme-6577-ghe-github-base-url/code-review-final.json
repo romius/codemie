@@ -1,0 +1,40 @@
+{
+  "decision": "request-changes",
+  "rationale": "Acceptance criteria are satisfied and every Github()/GithubIntegration() constructor site now threads base_url; however two edge-case defects survive verification. (1) _normalize_github_base_url uses parsed.hostname, which strips the port — GHE instances on non-standard ports lose it and connect to 443. (2) split_git_url requires a path component; a bare Credentials.url like 'https://ghe.company.com' raises IndexError inside _build_auth_header, the bare except swallows it, and get_github_app_token falls back to api.github.com. 1 finding deferred (GITHUB_BASE_URL is a user opt-in env var, mirrors the existing GITHUB_ACCESS_TOKEN pattern) and 1 dismissed (fixture-vacuous claim, fixture does set url).",
+  "confidence": "medium",
+  "risk_flags": ["backward-compatibility", "external-integration"],
+  "business_review": [
+    {"ac": "AC1", "status": "pass", "notes": "github_base_url field + factories forward hostname from repo_link/GithubConfig.url; GITHUB_BASE_URL env fallback exists."},
+    {"ac": "AC2", "status": "pass", "notes": "All six construction sites thread base_url — wrapper (three methods), github_client, git_auth_utils, both git_loader call sites."},
+    {"ac": "AC3", "status": "pass", "notes": "_normalize_github_base_url returns https://{host}/api/v3 (no trailing slash) — verified by 14-case parametrize including trailing-slash-strip."},
+    {"ac": "AC4", "status": "pass", "notes": "_get_installation_id (the ticket's line-33 method) gains base_url parameter; both GithubIntegration constructions in App-auth flow receive it."},
+    {"ac": "AC5", "status": "pass", "notes": "Backward-compat asserted via 'base_url not in kwargs' for github.com across all five touched modules and both PAT+App auth paths."}
+  ],
+  "standards_review": [
+    {"guide": ".ai-run/guides/standards/git-workflow.md", "status": "pass", "notes": "All 7 commits follow EPMCDME-6577: <Description> format."},
+    {"guide": ".ai-run/guides/standards/code-quality.md", "status": "pass", "notes": "No ruff violations; ruff pre-commit hook passed on final commit."},
+    {"guide": ".ai-run/guides/development/security-patterns.md", "status": "pass", "notes": "No secrets logged; URL parsing uses stdlib urlparse; env-var handling follows existing GITHUB_ACCESS_TOKEN precedent."}
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie_tools/git/github/custom_github_api_wrapper.py",
+      "line": 49,
+      "problem": "_normalize_github_base_url uses parsed.hostname, which strips any port; GHE Server on a non-standard port receives a portless base_url.",
+      "impact": "GHE instances listening on custom ports (e.g. https://ghe.company.com:8443) get normalized to https://ghe.company.com/api/v3 — every PyGithub call connects to port 443 instead of the real port and fails.",
+      "recommendation": "Preserve the port. Change the last line of _normalize_github_base_url to something like:\n    port_suffix = f':{parsed.port}' if parsed.port else ''\n    return f'{scheme}://{host}{port_suffix}/api/v3'\nAdd a parametrize case for ('https://ghe.company.com:8443', 'https://ghe.company.com:8443/api/v3')."
+    },
+    {
+      "id": "CR-002",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/datasource/loader/git_loader.py",
+      "line": 132,
+      "problem": "_build_auth_header calls split_git_url(creds.url); split_git_url requires a path component and raises IndexError when creds.url is a bare server URL like 'https://ghe.company.com'. The `except Exception: pass` swallows the error, leaves token_kwargs empty, and get_github_app_token defaults to api.github.com.",
+      "impact": "GitHub App installation token is requested from api.github.com instead of GHE; the returned token is invalid for the GHE installation and every subsequent header-authenticated git operation fails.",
+      "recommendation": "Extract the hostname directly with urlparse instead of split_git_url — split_git_url is a repo-URL parser, not a base-URL parser:\n    parsed_creds = urlparse(creds_url)\n    hostname = (parsed_creds.hostname or '').lower()\n    if hostname and hostname not in ('github.com', 'api.github.com'):\n        token_kwargs['base_url'] = f'{parsed_creds.scheme}://{parsed_creds.netloc}'\nAdd a test with creds.url='https://ghe.company.com' (no path)."
+    }
+  ]
+}

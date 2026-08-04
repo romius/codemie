@@ -94,3 +94,15 @@ Runs `gitleaks protect --staged` via `scripts/git-hooks/validate_secrets.sh`, wi
 **Fail**: The first failing prerequisite determines the next debugging target.
 
 **Skip if**: The task scope does not call for full verification or environment prerequisites are missing.
+
+### Test Harness (MR compliance gate)
+
+**Run**: `make test-harness`
+
+**Pass**: The end-to-end test harness completes successfully. See `Makefile` `test-harness` target.
+
+**Fail**: One or more scenarios fail; paste the terminal summary into the MR anyway so reviewers see the failure.
+
+**Skip if**: You are not opening a merge request (local iteration only).
+
+> **Required for the MR compliance bot**: paste the copy-pasted terminal summary of `make test-harness` into a `## Test harness` section of the MR description as a code block. Screenshots are not accepted. Without this section the `auto_epm-cdme_vcs` bot fails checks 3.1 and 3.2. Prereqs: docker stack up (`docker compose up -d`), superadmin fixtures, `~/.codemie/test-harness.json`; see the `codemie-test-harness-local-setup` memory / setup guide for the ENV=local Bearer-hijack patch.

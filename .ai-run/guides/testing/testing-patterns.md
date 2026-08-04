@@ -22,3 +22,14 @@ Run the narrowest relevant scope unless the user asks for all tests or full veri
 | Running tests when user policy says not requested | Report tests skipped by policy |
 
 Evidence: Makefile test target runs all tests at `Makefile:27`.
+
+## Seam Tests for Policy Helpers
+
+When a helper encapsulates a decision (default vs custom, normalized vs rejected), unit-testing it in isolation is not enough — each callsite needs a test observing what reaches the outer boundary (SDK call, emitted request, constructed object) for each branch. Otherwise a callsite guard duplicating the same check stays silent.
+
+| Avoid | Prefer |
+|---|---|
+| Only unit-testing the helper in isolation | One callsite test per branch, asserting the boundary value |
+| `if x == default: skip; else: forward(x)` when the callee already handles `x == default` | Forward unconditionally; seam test proves the boundary call stays correct |
+
+Red flag: deleting a callsite guard leaves tests green → the guard was dead code and no seam test existed to catch it.

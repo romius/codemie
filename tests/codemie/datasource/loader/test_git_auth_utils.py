@@ -152,3 +152,35 @@ def test_get_github_app_token_missing_pygithub():
     else:
         # If github is not imported yet, just verify the function handles ImportError
         pytest.skip("Cannot test ImportError without github module loaded")
+
+
+# ===== GHE base_url tests (EPMCDME-6577) =====
+
+
+@patch('github.GithubIntegration')
+def test_get_github_app_token_ghe_passes_base_url(mock_integration_class):
+    mock_access_token = MagicMock()
+    mock_access_token.token = "ghs_token"
+    mock_integration = MagicMock()
+    mock_integration.get_access_token.return_value = mock_access_token
+    mock_integration_class.return_value = mock_integration
+
+    get_github_app_token(
+        app_id=123456,
+        private_key="key",
+        installation_id=12345678,
+        base_url="https://ghe.company.com",
+    )
+    assert mock_integration_class.call_args.kwargs.get("base_url") == "https://ghe.company.com/api/v3"
+
+
+@patch('github.GithubIntegration')
+def test_get_github_app_token_github_com_omits_base_url(mock_integration_class):
+    mock_access_token = MagicMock()
+    mock_access_token.token = "ghs_token"
+    mock_integration = MagicMock()
+    mock_integration.get_access_token.return_value = mock_access_token
+    mock_integration_class.return_value = mock_integration
+
+    get_github_app_token(app_id=123456, private_key="key", installation_id=12345678)
+    assert "base_url" not in mock_integration_class.call_args.kwargs

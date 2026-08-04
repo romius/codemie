@@ -17,6 +17,7 @@
 import pytest
 from unittest.mock import Mock, patch
 
+from codemie_tools.git.github.custom_github_api_wrapper import _normalize_github_base_url
 from codemie_tools.git.utils import GitCredentials, init_github_api_wrapper
 
 
@@ -291,6 +292,61 @@ def test_init_github_api_wrapper_with_no_auth():
         GitCredentials(repo_link="https://github.com/user/repo.git", base_branch="main", repo_type="github")
 
 
+# ===== init_github_api_wrapper GHE base_url tests (EPMCDME-6577) =====
+
+
+@patch('codemie_tools.git.utils.CustomGitHubAPIWrapper')
+def test_init_github_api_wrapper_with_pat_ghe_passes_base_url(mock_wrapper_class):
+    """PAT + GHE repo_link forwards github_base_url to wrapper."""
+    mock_wrapper_class.return_value = Mock()
+    creds = GitCredentials(
+        token="ghp_test",
+        repo_link="https://ghe.company.com/user/repo.git",
+        base_branch="main",
+        repo_type="github",
+    )
+    init_github_api_wrapper(creds)
+    call_kwargs = mock_wrapper_class.call_args[1]
+    assert call_kwargs["github_base_url"] == "https://ghe.company.com"
+
+
+@patch('codemie_tools.git.utils.CustomGitHubAPIWrapper')
+def test_init_github_api_wrapper_with_github_app_ghe_passes_base_url(mock_wrapper_class):
+    """App + GHE repo_link forwards github_base_url to wrapper."""
+    mock_wrapper_class.return_value = Mock()
+    creds = GitCredentials(
+        app_id=123456,
+        private_key="test_private_key",
+        installation_id=12345678,
+        repo_link="https://ghe.company.com/user/repo.git",
+        base_branch="main",
+        repo_type="github",
+    )
+    init_github_api_wrapper(creds)
+    call_kwargs = mock_wrapper_class.call_args[1]
+    assert call_kwargs["github_base_url"] == "https://ghe.company.com"
+
+
+@patch('codemie_tools.git.utils.CustomGitHubAPIWrapper')
+def test_init_github_api_wrapper_github_com_forwards_raw_base_url(mock_wrapper_class):
+    """github.com repos forward the raw base_url; wrapper's normalizer decides the endpoint.
+
+    Callsite must not duplicate the github.com check that _normalize_github_base_url
+    already performs — regression guard for the missed cleanup in EPMCDME-6577
+    (utils.py:174).
+    """
+    mock_wrapper_class.return_value = Mock()
+    creds = GitCredentials(
+        token="ghp_test",
+        repo_link="https://github.com/user/repo.git",
+        base_branch="main",
+        repo_type="github",
+    )
+    init_github_api_wrapper(creds)
+    call_kwargs = mock_wrapper_class.call_args[1]
+    assert call_kwargs["github_base_url"] == "https://github.com"
+
+
 # ===== CustomGitHubAPIWrapper Tests =====
 
 
@@ -340,6 +396,105 @@ def test_custom_github_api_wrapper_github_app_auth(mock_integration_class, mock_
     mock_integration_class.assert_called_once_with(integration_id=123456, private_key="test_private_key")
     mock_integration.get_access_token.assert_called_once_with(12345678)
     mock_auth.Token.assert_called_once_with("ghs_app_token")
+
+
+# ===== GHE base_url threading tests (EPMCDME-6577) =====
+
+
+@patch('github.Auth')
+@patch('github.Github')
+def test_custom_github_api_wrapper_pat_auth_with_ghe_base_url(mock_github, mock_auth):
+    """PAT auth on GHE must pass base_url to Github()."""
+    from codemie_tools.git.github.custom_github_api_wrapper import CustomGitHubAPIWrapper
+
+    mock_github.return_value = Mock()
+
+    CustomGitHubAPIWrapper(
+        github_access_token="ghp_test",
+        github_base_url="https://ghe.company.com",
+        github_base_branch="main",
+        active_branch="main",
+    )
+
+    mock_github.assert_called_once()
+    assert mock_github.call_args.kwargs.get("base_url") == "https://ghe.company.com/api/v3"
+
+
+@patch('github.Auth')
+@patch('github.Github')
+def test_custom_github_api_wrapper_pat_auth_github_com_no_base_url(mock_github, mock_auth):
+    """PAT auth on github.com must NOT pass base_url."""
+    from codemie_tools.git.github.custom_github_api_wrapper import CustomGitHubAPIWrapper
+
+    mock_github.return_value = Mock()
+
+    CustomGitHubAPIWrapper(
+        github_access_token="ghp_test",
+        github_base_branch="main",
+        active_branch="main",
+    )
+
+    mock_github.assert_called_once()
+    assert "base_url" not in mock_github.call_args.kwargs
+
+
+@patch('github.Auth')
+@patch('github.Github')
+@patch('github.GithubIntegration')
+def test_custom_github_api_wrapper_github_app_auth_with_ghe_base_url(mock_integration_class, mock_github, mock_auth):
+    """App auth on GHE must pass base_url to BOTH GithubIntegration() and Github()."""
+    from codemie_tools.git.github.custom_github_api_wrapper import CustomGitHubAPIWrapper
+
+    mock_access_token = Mock()
+    mock_access_token.token = "ghs_app_token"
+    mock_integration = Mock()
+    mock_integration.get_access_token.return_value = mock_access_token
+    mock_integration_class.return_value = mock_integration
+    mock_github.return_value = Mock()
+
+    CustomGitHubAPIWrapper(
+        github_app_id=123456,
+        github_app_private_key="test_private_key",
+        github_app_installation_id=12345678,
+        github_base_url="https://ghe.company.com",
+        github_base_branch="main",
+        active_branch="main",
+    )
+
+    # GithubIntegration is called in _create_github_app_auth; base_url must be set.
+    for call in mock_integration_class.call_args_list:
+        assert call.kwargs.get("base_url") == "https://ghe.company.com/api/v3"
+    mock_github.assert_called_once()
+    assert mock_github.call_args.kwargs.get("base_url") == "https://ghe.company.com/api/v3"
+
+
+@patch('github.Auth')
+@patch('github.Github')
+@patch('github.GithubIntegration')
+def test_custom_github_api_wrapper_github_app_auth_github_com_no_base_url(
+    mock_integration_class, mock_github, mock_auth
+):
+    """App auth on github.com must NOT pass base_url."""
+    from codemie_tools.git.github.custom_github_api_wrapper import CustomGitHubAPIWrapper
+
+    mock_access_token = Mock()
+    mock_access_token.token = "ghs_app_token"
+    mock_integration = Mock()
+    mock_integration.get_access_token.return_value = mock_access_token
+    mock_integration_class.return_value = mock_integration
+    mock_github.return_value = Mock()
+
+    CustomGitHubAPIWrapper(
+        github_app_id=123456,
+        github_app_private_key="test_private_key",
+        github_app_installation_id=12345678,
+        github_base_branch="main",
+        active_branch="main",
+    )
+
+    for call in mock_integration_class.call_args_list:
+        assert "base_url" not in call.kwargs
+    assert "base_url" not in mock_github.call_args.kwargs
 
 
 @patch('github.Auth')
@@ -394,3 +549,44 @@ def test_custom_github_api_wrapper_github_app_no_installations(mock_integration_
         )
 
     assert "No GitHub App installations found" in str(exc_info.value)
+
+
+# ===== Normalization Helper Tests (EPMCDME-6577) =====
+
+
+class TestNormalizeGithubBaseUrl:
+    @pytest.mark.parametrize(
+        "value,expected",
+        [
+            (None, None),
+            ("", None),
+            ("   ", None),
+            # github.com — self-contained contract returns canonical API URL
+            ("github.com", "https://api.github.com"),
+            ("https://github.com", "https://api.github.com"),
+            ("https://api.github.com", "https://api.github.com"),
+            ("api.github.com", "https://api.github.com"),
+            ("GitHub.com", "https://api.github.com"),
+            # GHE — bare hostname
+            ("ghe.company.com", "https://ghe.company.com/api/v3"),
+            # GHE — scheme + hostname
+            ("https://ghe.company.com", "https://ghe.company.com/api/v3"),
+            # GHE — already has /api/v3
+            ("https://ghe.company.com/api/v3", "https://ghe.company.com/api/v3"),
+            # GHE — trailing slash removed
+            ("https://ghe.company.com/api/v3/", "https://ghe.company.com/api/v3"),
+            # Non-standard path is dropped
+            ("https://ghe.company.com/some/path", "https://ghe.company.com/api/v3"),
+            # http scheme preserved
+            ("http://ghe.internal", "http://ghe.internal/api/v3"),
+            # non-standard port preserved (CR-001)
+            ("https://ghe.company.com:8443", "https://ghe.company.com:8443/api/v3"),
+            ("ghe.company.com:8080", "https://ghe.company.com:8080/api/v3"),
+            ("https://ghe.company.com:8443/api/v3", "https://ghe.company.com:8443/api/v3"),
+            # non-numeric port token must not raise ValueError
+            ("https://ghe.company.com:bad", "https://ghe.company.com/api/v3"),
+            ("https://ghe.company.com:bad/api/v3", "https://ghe.company.com/api/v3"),
+        ],
+    )
+    def test_normalize(self, value, expected):
+        assert _normalize_github_base_url(value) == expected

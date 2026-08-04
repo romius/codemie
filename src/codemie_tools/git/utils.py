@@ -167,8 +167,12 @@ def init_github_api_wrapper(git_creds: GitCredentials):
 
         # Add repository if provided
         if git_creds.repo_link is not None:
-            _, repo_name = split_git_url(git_creds.repo_link)
+            base_url, repo_name = split_git_url(git_creds.repo_link)
             wrapper_args["github_repository"] = repo_name.replace(".git", "").replace("/", "", 1)
+            # Forward raw base_url unconditionally; CustomGitHubAPIWrapper's
+            # _normalize_github_base_url is the sole place that decides
+            # github.com → canonical API endpoint.
+            wrapper_args["github_base_url"] = base_url
 
         # Add authentication credentials
         if git_creds.is_github_app:

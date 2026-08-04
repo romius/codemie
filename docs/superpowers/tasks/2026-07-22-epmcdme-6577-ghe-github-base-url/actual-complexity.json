@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "task": "Fix GHE GitHub integrations by propagating base_url=https://{ghe_hostname}/api/v3 through all Github()/GithubIntegration() constructor sites, adding a normalization helper, and preserving backward compat for github.com URLs.",
+  "generated": "2026-07-22T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 1, "label": "XS" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 5, "label": "XL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 18,
+  "size": "M",
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "file_change_estimate",
+      "reason": "11 changed files (5 production: custom_github_api_wrapper.py, github_client.py, git_api_service.py, git_auth_utils.py, git_loader.py + utils.py; 5 test files across matching paths). Guide places 11–15 files at XL (5). The high test count reflects thorough TDD coverage rather than production complexity."
+    },
+    {
+      "dimension": "component_scope",
+      "reason": "Change spans 4 distinct subsystems: codemie_tools/git/github (wrapper + normalization helper), codemie_tools/core/vcs/github (GithubClient), codemie/service/git_api (GitApiService), and codemie/datasource/loader (git_loader + git_auth_utils). Each is a separate package boundary requiring independent changes to propagate the base_url parameter."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "Base score M (3): URL normalization has non-trivial edge cases (CR-001 port preservation, CR-002 bare-URL urlparse) confirmed by two code-review fix-up commits. Red flag applied: affects GitHub App token generation and PAT auth flows throughout, bumping to L (4). Backward compat contract (github.com/api.github.com must NOT pass base_url) adds risk of silent regression."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "Touches Service layer (git_api_service.py, git_auth_utils.py), Agent-Tool layer (custom_github_api_wrapper.py, utils.py/GitCredentials), Datasource/Loader layer (git_loader.py), and External layer (PyGithub/GHE endpoint). Three meaningful architectural layers — no DB schema, no UI, no infra changes — maps to M (3)."
+    }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped M (3) → L (4): change affects GitHub authentication flows (GitHub App token generation and PAT auth) across all constructor call sites"
+  ],
+  "split_recommendation": null
+}

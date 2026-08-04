@@ -20,7 +20,12 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
-def get_github_app_token(app_id: int, private_key: str, installation_id: Optional[int] = None) -> str:
+def get_github_app_token(
+    app_id: int,
+    private_key: str,
+    installation_id: Optional[int] = None,
+    base_url: Optional[str] = None,
+) -> str:
     """
     Generate GitHub App installation access token using PyGithub.
 
@@ -28,6 +33,9 @@ def get_github_app_token(app_id: int, private_key: str, installation_id: Optiona
         app_id: GitHub App ID
         private_key: Private key in PEM format
         installation_id: Installation ID (optional, will auto-detect)
+        base_url: Hostname or full URL of a GHE Server (optional). When
+            omitted or pointing at github.com, PyGithub's default endpoint
+            (https://api.github.com) is used.
 
     Returns:
         str: Installation access token
@@ -40,8 +48,15 @@ def get_github_app_token(app_id: int, private_key: str, installation_id: Optiona
     except ImportError:
         raise ImportError("PyGithub is required for GitHub App authentication")
 
+    # Local import to avoid a hard cross-package dependency at module load.
+    from codemie_tools.git.github.custom_github_api_wrapper import _normalize_github_base_url
+
     try:
-        integration = GithubIntegration(integration_id=app_id, private_key=private_key)
+        integration_kwargs = {"integration_id": app_id, "private_key": private_key}
+        normalized = _normalize_github_base_url(base_url)
+        if normalized:
+            integration_kwargs["base_url"] = normalized
+        integration = GithubIntegration(**integration_kwargs)
 
         # Get or auto-detect installation ID
         if installation_id is None:

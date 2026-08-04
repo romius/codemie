@@ -14,7 +14,7 @@
 
 import re
 import traceback
-from typing import Tuple
+from typing import Optional, Tuple
 
 from codemie_tools.git.github.custom_github_api_wrapper import CustomGitHubAPIWrapper
 from codemie_tools.git.gitlab.custom_gitlab_api_wrapper import CustomGitLabAPIWrapper
@@ -60,15 +60,24 @@ class GitApiService(BaseModel):
             logger.error(f"GitLab API wrapper initialisation failed with error: {stacktrace}", exc_info=True)
 
     @classmethod
-    def init_github_api_wrapper(cls, github_access_token: str, repo_link: str = None, base_branch: str = None):
+    def init_github_api_wrapper(
+        cls,
+        github_access_token: str,
+        repo_link: Optional[str] = None,
+        base_branch: Optional[str] = None,
+    ) -> Optional[CustomGitHubAPIWrapper]:
         try:
             if repo_link is not None:
-                _, repo_name = cls.split_git_url(repo_link)
+                base_url, repo_name = cls.split_git_url(repo_link)
+                # Forward raw base_url unconditionally; CustomGitHubAPIWrapper's
+                # _normalize_github_base_url is the sole place that decides
+                # github.com → default PyGithub endpoint.
                 github = CustomGitHubAPIWrapper(
                     github_repository=repo_name.replace(".git", "").replace('/', '', 1),
                     github_base_branch=base_branch,
                     active_branch=base_branch,
                     github_access_token=github_access_token,
+                    github_base_url=base_url,
                 )
             else:
                 github = CustomGitHubAPIWrapper(github_access_token=github_access_token)

@@ -34,6 +34,7 @@ from codemie.datasource.exceptions import ConnectionException
 from codemie.datasource.loader.base_datasource_loader import BaseDatasourceLoader
 from codemie.datasource.loader.file_extraction_utils import extract_documents_from_bytes, is_binary_extractable
 from codemie.datasource.loader.git_auth_utils import get_github_app_token
+from codemie_tools.git.utils import split_git_url
 from codemie.rest_api.models.settings import Credentials
 
 # List of specific MIME types to exclude
@@ -105,7 +106,15 @@ def _build_clone_url(creds, repo):
 
     # Get token: either PAT or generate GitHub App token
     if hasattr(creds, 'is_github_app') and creds.is_github_app:
-        token = get_github_app_token(creds.app_id, creds.private_key, creds.installation_id)
+        # Forward raw base_url unconditionally; get_github_app_token's normalizer is
+        # the sole place that decides github.com → default PyGithub endpoint.
+        token_kwargs = {}
+        try:
+            base_url, _ = split_git_url(repo.link)
+            token_kwargs["base_url"] = base_url
+        except Exception:  # noqa: BLE001 — bad repo URL should not break auth; fall back to default endpoint
+            pass
+        token = get_github_app_token(creds.app_id, creds.private_key, creds.installation_id, **token_kwargs)
         token_name = "x-access-token"
     elif creds.token:
         token = creds.token
@@ -136,7 +145,17 @@ def _build_auth_header(creds):
 
     # Get token: either PAT or generate GitHub App token
     if hasattr(creds, 'is_github_app') and creds.is_github_app:
-        token = get_github_app_token(creds.app_id, creds.private_key, creds.installation_id)
+        # Forward raw base_url unconditionally; get_github_app_token's normalizer is
+        # the sole place that decides github.com → default PyGithub endpoint.
+        token_kwargs = {}
+        creds_url = getattr(creds, "url", None)
+        if creds_url:
+            # Use urlparse directly rather than split_git_url — the latter expects a repo path
+            # and raises on bare server URLs like 'https://ghe.company.com'.
+            parsed_creds = urlparse(creds_url)
+            if parsed_creds.hostname:
+                token_kwargs["base_url"] = f"{parsed_creds.scheme}://{parsed_creds.netloc}"
+        token = get_github_app_token(creds.app_id, creds.private_key, creds.installation_id, **token_kwargs)
     elif creds.token:
         token = creds.token
     else:

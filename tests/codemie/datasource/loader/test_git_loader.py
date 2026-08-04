@@ -25,7 +25,12 @@ from codemie.core.constants import CodeIndexType
 from codemie.core.models import GitRepo
 from codemie.core.utils import check_file_type
 from codemie.datasource.exceptions import ConnectionException
-from codemie.datasource.loader.git_loader import GitBatchLoader, _build_clone_url, _has_null_bytes
+from codemie.datasource.loader.git_loader import (
+    GitBatchLoader,
+    _build_auth_header,
+    _build_clone_url,
+    _has_null_bytes,
+)
 from codemie.rest_api.models.settings import Credentials, GitAuthType
 
 
@@ -573,7 +578,11 @@ def test_build_clone_url_with_github_app(mock_get_token, github_repo, installati
 
     # Assert
     assert result == f"https://x-access-token:{expected_token}@github.com/org/repo.git"
-    mock_get_token.assert_called_once_with(creds.app_id, creds.private_key, installation_id)
+    # Seam contract: callsite forwards raw base_url; get_github_app_token's normalizer
+    # is the sole place that decides github.com → default endpoint.
+    mock_get_token.assert_called_once_with(
+        creds.app_id, creds.private_key, installation_id, base_url="https://github.com"
+    )
 
 
 @patch('codemie.datasource.loader.git_loader.get_github_app_token')
@@ -657,3 +666,71 @@ def test_build_clone_url_github_app_special_characters_in_token(mock_get_token, 
     # This is correct behavior as / is safe in passwords for HTTP basic auth
     assert "x-access-token:ghs_token/with%2Bspecial%3Dchars@" in result
     assert result.endswith("github.com/org/repo.git")
+
+
+# ===== GHE base_url threading tests (EPMCDME-6577) =====
+
+
+@patch('codemie.datasource.loader.git_loader.get_github_app_token')
+def test_build_clone_url_ghe_passes_base_url(mock_get_token):
+    """GHE repo URL threads base_url into get_github_app_token."""
+    mock_get_token.return_value = "ghs_token"
+    creds = Credentials(
+        url="https://ghe.company.com/org/repo",
+        auth_type=GitAuthType.GITHUB_APP,
+        app_id=1,
+        private_key="k",
+        installation_id=42,
+    )
+    repo = GitRepo(
+        name="repo",
+        branch="main",
+        indexType=CodeIndexType.CODE,
+        appId="app_id",
+        link="https://ghe.company.com/org/repo.git",
+        description="test",
+    )
+    _build_clone_url(creds, repo)
+    assert mock_get_token.call_args.kwargs.get("base_url") == "https://ghe.company.com"
+
+
+@patch('codemie.datasource.loader.git_loader.get_github_app_token')
+def test_build_auth_header_ghe_passes_base_url(mock_get_token):
+    """GHE creds URL threads base_url into get_github_app_token for the header path."""
+    mock_get_token.return_value = "ghs_token"
+    creds = Credentials(
+        url="https://ghe.company.com/org/repo",
+        auth_type=GitAuthType.GITHUB_APP,
+        app_id=1,
+        private_key="k",
+        installation_id=42,
+    )
+    _build_auth_header(creds)
+    assert mock_get_token.call_args.kwargs.get("base_url") == "https://ghe.company.com"
+
+
+@patch('codemie.datasource.loader.git_loader.get_github_app_token')
+def test_build_auth_header_github_com_forwards_raw_base_url(mock_get_token, github_app_credentials):
+    """Seam contract: callsite forwards raw base_url regardless of host; the helper's
+    normalizer (unit-tested separately, see test_git_auth_utils.py) is the sole place
+    that decides github.com → default PyGithub endpoint. See seam-tests section in
+    .ai-run/guides/testing/testing-patterns.md.
+    """
+    mock_get_token.return_value = "ghs_token"
+    _build_auth_header(github_app_credentials)
+    assert mock_get_token.call_args.kwargs.get("base_url") == "https://github.com"
+
+
+@patch('codemie.datasource.loader.git_loader.get_github_app_token')
+def test_build_auth_header_bare_ghe_url_passes_base_url(mock_get_token):
+    """CR-002: creds.url with no path component ('https://ghe.company.com') must still route App-token to GHE."""
+    mock_get_token.return_value = "ghs_token"
+    creds = Credentials(
+        url="https://ghe.company.com",
+        auth_type=GitAuthType.GITHUB_APP,
+        app_id=1,
+        private_key="k",
+        installation_id=42,
+    )
+    _build_auth_header(creds)
+    assert mock_get_token.call_args.kwargs.get("base_url") == "https://ghe.company.com"

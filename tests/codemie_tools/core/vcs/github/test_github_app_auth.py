@@ -106,7 +106,11 @@ def test_github_client_github_app_with_installation_id(mock_integration_class):
 
     # Verify
     assert token == "ghs_installation_token"
-    mock_integration_class.assert_called_once_with(integration_id=123456, private_key="test_private_key")
+    mock_integration_class.assert_called_once_with(
+        integration_id=123456,
+        private_key="test_private_key",
+        base_url="https://api.github.com",
+    )
     mock_integration.get_access_token.assert_called_once_with(12345678)
 
 
@@ -267,3 +271,45 @@ def test_github_client_make_request_with_github_app(mock_requests, mock_integrat
     assert result == {"data": "test"}
     call_args = mock_requests.request.call_args
     assert call_args[1]["headers"]["Authorization"] == "Bearer ghs_app_token"
+
+
+# ===== GHE base_url tests (EPMCDME-6577) =====
+
+
+@patch('github.GithubIntegration')
+def test_github_client_github_app_ghe_passes_base_url(mock_integration_class):
+    """GHE URL in GithubConfig forwards base_url to GithubIntegration."""
+    mock_access_token = Mock()
+    mock_access_token.token = "ghs_token"
+    mock_access_token.expires_at = None
+    mock_integration = Mock()
+    mock_integration.get_access_token.return_value = mock_access_token
+    mock_integration_class.return_value = mock_integration
+
+    config = GithubConfig(
+        app_id=123456,
+        private_key="test_private_key",
+        installation_id=12345678,
+        url="https://ghe.company.com",
+    )
+    GithubClient(config).get_auth_token()
+
+    mock_integration_class.assert_called_once()
+    assert mock_integration_class.call_args.kwargs.get("base_url") == "https://ghe.company.com/api/v3"
+
+
+@patch('github.GithubIntegration')
+def test_github_client_github_app_github_com_uses_canonical_base_url(mock_integration_class):
+    """Default github.com URL is normalized to the canonical https://api.github.com."""
+    mock_access_token = Mock()
+    mock_access_token.token = "ghs_token"
+    mock_access_token.expires_at = None
+    mock_integration = Mock()
+    mock_integration.get_access_token.return_value = mock_access_token
+    mock_integration_class.return_value = mock_integration
+
+    config = GithubConfig(app_id=123456, private_key="test_private_key", installation_id=12345678)
+    GithubClient(config).get_auth_token()
+
+    mock_integration_class.assert_called_once()
+    assert mock_integration_class.call_args.kwargs.get("base_url") == "https://api.github.com"

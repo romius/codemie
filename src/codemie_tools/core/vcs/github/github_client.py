@@ -22,6 +22,8 @@ from typing import Any, Dict, Optional
 import requests
 from langchain_core.tools import ToolException
 
+from codemie_tools.git.github.custom_github_api_wrapper import _normalize_github_base_url
+
 from .models import GithubConfig
 
 logger = logging.getLogger(__name__)
@@ -98,9 +100,14 @@ class GithubClient:
             logger.info("Generating new GitHub App installation token")
 
             # Create GithubIntegration instance
-            integration = github.GithubIntegration(
-                integration_id=self.config.app_id, private_key=self.config.private_key
-            )
+            integration_kwargs = {
+                "integration_id": self.config.app_id,
+                "private_key": self.config.private_key,
+            }
+            base_url = _normalize_github_base_url(self.config.url)
+            if base_url:
+                integration_kwargs["base_url"] = base_url
+            integration = github.GithubIntegration(**integration_kwargs)
 
             # Get installation ID
             installation_id = self.config.installation_id
