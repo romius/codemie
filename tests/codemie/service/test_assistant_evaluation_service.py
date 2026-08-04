@@ -35,6 +35,13 @@ def _make_context(system_prompt):
     dataset = MagicMock()
     dataset.items = [item]
 
+    def _run_experiment(name, task):
+        mock_result = MagicMock()
+        mock_result.item_results = [task(item=item) for item in dataset.items]
+        return mock_result
+
+    dataset.run_experiment = _run_experiment
+
     mock_langfuse = MagicMock()
     mock_langfuse.get_dataset.return_value = dataset
 

@@ -133,23 +133,24 @@ class AssistantEvaluationService:
         dataset_items_count = len(dataset.items)
         logger.info(f"Starting evaluation experiment: {experiment_name} with {dataset_items_count} items")
 
-        for item in dataset.items:
+        # Define the task to run for each dataset item
+        def run_dataset_item(*, item, **kwargs):
             try:
-                with item.run(run_name=experiment_name) as root_span:
-                    query = item.input
-                    root_span.update(input=query)
-                    # Call application logic
-                    extra = {"system_prompt": system_prompt} if system_prompt is not None else {}
-                    chat_request = AssistantChatRequest(text=query, llm_model=llm_model, stream=False, **extra)
-                    response = handler.process_request(chat_request, None, raw_request)
-                    root_span.update(output=response.generated)
-                    root_span.end()
+                query = item.input
+                extra = {"system_prompt": system_prompt} if system_prompt is not None else {}
+                chat_request = AssistantChatRequest(text=query, llm_model=llm_model, stream=False, **extra)
+                response = handler.process_request(chat_request, None, raw_request)
+
+                return response.generated
             except Exception as e:
                 logger.error(f"Error processing evaluation item for dataset {dataset_id}: {str(e)}")
-                # Continue with next item instead of stopping the whole evaluation
-                continue
+                # Re-raise the exception to be handled by the languse experiment context manager
+                raise e
+
+        experiment_result = dataset.run_experiment(name=experiment_name, task=run_dataset_item)
 
         logger.info(f"Completed experiment: {experiment_name} with {dataset_items_count} items")
+        logger.debug(f"Experiment results: {experiment_result.format(include_item_results=True)}")
 
         return EvaluationResponse(
             message=f"Evaluation for dataset {dataset_id} has been completed successfully.",
