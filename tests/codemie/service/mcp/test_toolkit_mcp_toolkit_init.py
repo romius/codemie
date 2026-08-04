@@ -312,6 +312,6 @@ class TestMCPToolkit(unittest.TestCase):
 
             # Verify that an error was logged - check for the tool name and error message
             assert any(
-                "Failed to create tool bad_tool" in str(call) and "Bad tool definition" in str(call)
+                "bad_tool" in str(call) and "Bad tool definition" in str(call)
                 for call in mock_logger.error.call_args_list
             ), f"Expected error log not found. Actual calls: {mock_logger.error.call_args_list}"

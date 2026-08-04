@@ -277,16 +277,13 @@ class TestMCPToolkitValidation(unittest.TestCase):
                 tools_definitions=[self.unsupported_type_def],
             )
 
-            # Check that the error was logged - verify the key parts of the error message
+            # Schema failure is now a warning (not error) — tool is added with fallback schema
             assert any(
-                "Failed to create tool unsupported_type_tool" in str(call)
-                and "Cannot determine Pydantic type for schema fragment" in str(call)
-                and "CustomType" in str(call)
-                for call in mock_logger.error.call_args_list
-            ), f"Expected error log not found. Actual calls: {mock_logger.error.call_args_list}"
+                "unsupported_type_tool" in str(call) for call in mock_logger.warning.call_args_list
+            ), f"Expected warning log not found. Actual calls: {mock_logger.warning.call_args_list}"
 
-        # Verify the toolkit was created, but the tool was not added due to errors
-        self.assertEqual(len(toolkit.tools), 0, "Should have created 0 tools due to schema errors")
+        # Verify the toolkit was created and the tool was added with a fallback schema
+        self.assertEqual(len(toolkit.tools), 1, "Should have created 1 tool with fallback schema")
 
     def test_special_field_names(self):
         """

@@ -34,13 +34,15 @@ non_object_schemas = [
 # Schemas with unsupported keywords (should raise NotImplementedError)
 unsupported_keyword_schemas = [
     (
-        {"type": "object", "properties": {"field": {"patternProperties": {"^s_": {}}}}},
-        "Unsupported JSON Schema features",
-    ),
-    (
         {"type": "object", "properties": {"field": {"if": {}, "then": {}, "else": {}}}},
         "Unsupported JSON Schema features",
     ),
+]
+
+# patternProperties schemas are now supported: converted to dict[str, Any]
+pattern_properties_schemas = [
+    {"type": "object", "properties": {"field": {"patternProperties": {"^s_": {}}}}},
+    {"type": "object", "properties": {"dashboard": {"patternProperties": {"^[a-z]+$": {"type": "string"}}}}},
 ]
 
 # Invalid enum schemas (should raise ValueError)
@@ -80,6 +82,22 @@ def test_unsupported_keyword_schemas(schema, error_message):
         json_schema_to_model(schema)
 
 
+# Test that patternProperties schemas are converted to dict[str, Any] (EPMCDME-11241)
+@pytest.mark.parametrize("schema", pattern_properties_schemas)
+def test_pattern_properties_schema_converts_to_dict_field(schema):
+    from typing import get_args, get_origin
+    import types
+
+    model = json_schema_to_model(schema)
+    assert len(model.model_fields) == 1
+    field = next(iter(model.model_fields.values()))
+    annotation = field.annotation
+    # Unwrap Optional (X | None)
+    if get_origin(annotation) in (types.UnionType,) or str(get_origin(annotation)) in ("<class 'types.UnionType'>",):
+        annotation = next(a for a in get_args(annotation) if a is not type(None))
+    assert get_origin(annotation) is dict, f"Expected dict, got {annotation}"
+
+
 # Test invalid enum schemas
 @pytest.mark.parametrize("schema,error_message", invalid_enum_schemas)
 def test_invalid_enum_schemas(schema, error_message):
@@ -99,6 +117,31 @@ def test_invalid_allof_schemas(schema, error_message):
 def test_malformed_schemas(schema, error_message):
     with pytest.raises((TypeError, ValueError), match=error_message):
         json_schema_to_model(schema)
+
+
+# Top-level anyOf / oneOf schemas — branch properties must be preserved after merge
+@pytest.mark.parametrize(
+    "schema,expected_fields",
+    [
+        (
+            {"anyOf": [{"type": "object", "properties": {"uid": {"type": "string"}}}]},
+            {"uid"},
+        ),
+        (
+            {"oneOf": [{"type": "object", "properties": {"id": {"type": "integer"}}}]},
+            {"id"},
+        ),
+        (
+            {"anyOf": [{"type": "object"}, {"type": "object", "properties": {"name": {"type": "string"}}}]},
+            {"name"},
+        ),
+    ],
+)
+def test_top_level_anyof_oneof_preserves_fields(schema, expected_fields):
+    """Top-level anyOf/oneOf schemas pass the guard and branch properties are merged into the model."""
+    model = json_schema_to_model(schema)
+    assert model is not None
+    assert set(model.model_fields.keys()) == expected_fields
 
 
 # Test empty object schema (should succeed)

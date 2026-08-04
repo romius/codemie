@@ -574,6 +574,63 @@ class TestMCPTool(unittest.TestCase):
             self.assertIn("MCP_CLIENT_TIMEOUT", str(ctx.exception))
 
 
+class TestMCPToolPatternProperties(unittest.TestCase):
+    """Regression tests for EPMCDME-11241: patternProperties schemas must forward args correctly."""
+
+    def setUp(self):
+        self.mock_client = MagicMock(spec=MCPConnectClient)
+        self.mock_server_config = MCPServerConfig(command="npx", args=["mcp-grafana"], env={})
+
+    async def _async_test_update_dashboard_forwards_dashboard_dict(self):
+        """dashboard dict must reach invoke_tool unchanged when schema uses patternProperties."""
+        from codemie.core.json_schema_utils import json_schema_to_model
+
+        args_schema = json_schema_to_model(
+            {
+                "type": "object",
+                "properties": {
+                    "dashboard": {
+                        "patternProperties": {".*": {"type": "object"}},
+                    },
+                    "overwrite": {"type": "boolean"},
+                },
+            }
+        )
+
+        tool = MCPTool(
+            name="update_dashboard",
+            description="Update a Grafana dashboard",
+            mcp_client=self.mock_client,
+            mcp_server_config=self.mock_server_config,
+            args_schema=args_schema,
+        )
+
+        dashboard_payload = {"title": "My Dashboard", "uid": "abc123", "panels": []}
+        mock_response = MCPToolInvocationResponse(
+            isError=False,
+            content=[MCPToolContentItem(type="text", text="Dashboard updated")],
+        )
+        self.mock_client.invoke_tool = AsyncMock(return_value=mock_response)
+
+        result = await tool._aexecute_with_context(
+            execution_context=None,
+            dashboard=dashboard_payload,
+            overwrite=True,
+        )
+
+        self.mock_client.invoke_tool.assert_called_once_with(
+            server_config=self.mock_server_config,
+            tool_name="update_dashboard",
+            tool_args={"dashboard": dashboard_payload, "overwrite": True},
+            execution_context=None,
+        )
+        self.assertEqual(result, mock_response)
+
+    def test_update_dashboard_forwards_dashboard_dict(self):
+        """Full invocation chain: patternProperties schema → dashboard dict reaches MCP server."""
+        asyncio.run(self._async_test_update_dashboard_forwards_dashboard_dict())
+
+
 class TestContextAwareMCPTool(unittest.TestCase):
     """Test suite for ContextAwareMCPTool class."""
 

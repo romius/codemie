@@ -34,6 +34,8 @@ type TypeName = str
 type TypeAnnotation = Any
 type FieldDefinition = tuple[TypeAnnotation, FieldInfo]
 
+_DEFS_KEY = "$defs"
+
 
 class _ExcludeUnsetModel(BaseModel):
     def model_dump(self, **kwargs) -> dict[str, Any]:
@@ -103,7 +105,8 @@ def json_schema_to_model(schema: JsonSchema) -> type[ModelT]:
 
     if not _is_object_schema(schema):
         raise TypeError(
-            "Top-level schema must represent an object (e.g., have 'type': 'object', 'properties', or 'allOf')."
+            "Top-level schema must represent an object "
+            "(e.g., have 'type': 'object', 'properties', 'allOf', 'anyOf', or 'oneOf')."
         )
 
     cache: ModelCache = Cache()
@@ -127,6 +130,23 @@ def _create_model_from_schema(model_name: TypeName, schema: JsonSchema, cache: M
     Handles caching, properties, required fields, 'allOf' inheritance,
     and 'additionalProperties' configuration.
     """
+
+    # Handle top-level anyOf/oneOf: _is_object_schema permits these when all branches
+    # are object schemas, but _process_properties reads only top-level 'properties'.
+    # Merge all branch properties into a flat object schema so fields are preserved.
+    # Fields are made optional (no "required") because any single branch may apply.
+    for keyword in ("anyOf", "oneOf"):
+        branches = schema.get(keyword)
+        if branches:
+            merged_props: dict[str, Any] = {}
+            for branch in branches:
+                merged_props.update(branch.get("properties", {}))
+            effective_schema: JsonSchema = {"type": "object", "properties": merged_props}
+            for defs_key in (_DEFS_KEY, "definitions"):
+                if defs_key in schema:
+                    effective_schema[defs_key] = schema[defs_key]
+            schema = effective_schema
+            break
 
     # 1. Determine Base Model (handles 'allOf')
     base_model = _determine_base_model(model_name, schema.get("allOf"), cache)
@@ -205,9 +225,9 @@ def _process_definitions(schema: JsonSchema, cache: ModelCache):
     if defs := schema.get("definitions"):
         definitions: Mapping[str, JsonSchema] | None = defs
         path = "definitions"
-    elif defs := schema.get("$defs"):
+    elif defs := schema.get(_DEFS_KEY):
         definitions: Mapping[str, JsonSchema] | None = defs
-        path = "$defs"
+        path = _DEFS_KEY
     else:
         return
 
@@ -252,7 +272,13 @@ _PRIMITIVE_MAPPING: dict[str, type[Any]] = {
 
 def _is_object_schema(schema: JsonSchema) -> bool:
     """Check if a schema fragment represents a JSON object."""
-    return schema.get("type") == "object" or "properties" in schema or "allOf" in schema
+    if schema.get("type") == "object" or "properties" in schema or "allOf" in schema or "patternProperties" in schema:
+        return True
+    for keyword in ("anyOf", "oneOf"):
+        branches = schema.get(keyword)
+        if branches is not None:
+            return bool(branches) and all(_is_object_schema(b) for b in branches)
+    return False
 
 
 def _is_pure_map_schema(schema: JsonSchema) -> bool:
@@ -776,7 +802,7 @@ def _handle_array_schema(name: TypeName, schema: JsonSchema, cache: ModelCache) 
 
 def _check_for_unsupported_keywords(name: TypeName, schema: JsonSchema) -> None:
     """Raises NotImplementedError if unsupported keywords are found."""
-    unsupported = {"if", "then", "else", "patternProperties"}
+    unsupported = {"if", "then", "else"}
     found_unsupported = unsupported.intersection(schema)
     if found_unsupported:
         raise NotImplementedError(f"Unsupported JSON Schema features in schema for '{name}': {found_unsupported}")

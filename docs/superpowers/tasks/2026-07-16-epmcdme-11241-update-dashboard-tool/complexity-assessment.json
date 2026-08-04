@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "task": "Fix MCPToolkit._create_tools() to stop silently dropping tools with unprocessable schemas, and relax _is_object_schema() to accept anyOf/oneOf at top level.",
+  "generated": "2026-07-16T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 1, "label": "XS" },
+    "requirements_clarity": { "score": 1, "label": "XS" },
+    "technical_risk":       { "score": 2, "label": "S" },
+    "file_change_estimate": { "score": 2, "label": "S" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 1, "label": "XS" }
+  },
+  "total": 8,
+  "size": "XS",
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Two targeted changes: one exception-handler replacement in _create_tools() and one one-liner guard update in _is_object_schema(). Both inside the generic MCP tool-creation path."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "Two source files: src/codemie/service/mcp/toolkit.py and src/codemie/core/json_schema_utils.py. No test files need changing — existing unit tests remain valid; the change only affects the failure path."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "The fallback schema is identical to the existing no-inputSchema path, so it introduces no new runtime risk. The _is_object_schema change is safe for nested usage because anyOf/oneOf dispatch precedes that check in _schema_to_type_annotation."
+    }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

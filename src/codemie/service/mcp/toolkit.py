@@ -589,8 +589,29 @@ class MCPToolkit(BaseToolkit):
                 )
                 tools.append(tool)
 
-            except Exception as e:
-                logger.error(f"Failed to create tool {tool_def.name}: {str(e)}", exc_info=True)
+            except Exception as outer_e:
+                try:
+                    sanitized_name = sanitize_tool_name(tool_def.name)
+                    fallback_schema = create_model(f"{sanitized_name.capitalize()}ArgsSchema")
+                    tool = MCPTool(
+                        name=sanitized_name,
+                        description=tool_def.description,
+                        mcp_client=self.mcp_client,
+                        mcp_server_config=self.mcp_server_config,
+                        args_schema=fallback_schema,
+                        mcp_tool_name=tool_def.name,
+                    )
+                    tools.append(tool)
+                    logger.warning(
+                        f"Failed to create schema for MCP tool '{tool_def.name}', "
+                        f"using fallback schema: {str(outer_e)}",
+                        exc_info=outer_e,
+                    )
+                except Exception as inner_e:
+                    logger.error(
+                        f"Failed to create MCP tool '{tool_def.name}' even with fallback schema: {str(inner_e)}",
+                        exc_info=True,
+                    )
 
         return tools
 

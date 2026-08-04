@@ -84,21 +84,20 @@ class TestMCPToolkitCreation(unittest.TestCase):
     @patch('codemie.service.mcp.toolkit.logger')
     @patch('codemie.service.mcp.toolkit.MCPTool')
     def test_error_handling_in_tool_creation(self, mock_mcp_tool, mock_logger):
-        """Test that _create_tools properly handles errors in individual tool creation."""
-        # Setup - Mock MCPTool constructor to succeed for first tool and fail for second
+        """Test that _create_tools logs a warning then an error when both normal and fallback paths fail."""
+        # First call succeeds (valid_tool_def normal path), second and third fail (invalid_tool_def normal + fallback)
         mock_mcp_tool.side_effect = [
-            MagicMock(spec=MCPTool),  # First call succeeds
-            Exception("Tool creation error"),  # Second call fails
+            MagicMock(spec=MCPTool),
+            Exception("Tool creation error"),
+            Exception("Fallback also fails"),
         ]
 
-        # Create a second tool definition (will fail)
         invalid_tool_def = MCPToolDefinition(
             name="invalid_tool",
             description="Invalid tool",
             inputSchema={"type": "object", "properties": {}},
         )
 
-        # Use the actual _create_tools method with patched json_schema_to_model
         with patch('codemie.service.mcp.toolkit.json_schema_to_model') as mock_create_schema:
             mock_create_schema.return_value = MagicMock(spec=BaseModel)
 
@@ -110,17 +109,67 @@ class TestMCPToolkitCreation(unittest.TestCase):
                 tools_definitions=[self.valid_tool_def, invalid_tool_def],
             )
 
-            # Should call json_schema_to_model at least once
             mock_create_schema.assert_called()
 
-            # Assert that the error was logged - check that it was called with a message containing the tool name and error
+            # Warning is NOT logged for invalid_tool — it only fires after tools.append(tool)
+            # succeeds, which never happens here because the fallback MCPTool() call also fails.
+            assert not any(
+                "invalid_tool" in str(call) for call in mock_logger.warning.call_args_list
+            ), f"Unexpected warning log. Actual calls: {mock_logger.warning.call_args_list}"
+
+            # Error is logged when the fallback path also fails
             assert any(
-                "Failed to create tool invalid_tool" in str(call) and "Tool creation error" in str(call)
-                for call in mock_logger.error.call_args_list
+                "invalid_tool" in str(call) for call in mock_logger.error.call_args_list
             ), f"Expected error log not found. Actual calls: {mock_logger.error.call_args_list}"
 
-            # Assert that one tool was still created despite the error
+            # Only the valid tool is present; invalid_tool was dropped because both paths failed
             self.assertEqual(len(toolkit.tools), 1)
+
+    @patch('codemie.service.mcp.toolkit.logger')
+    def test_pattern_properties_schema_converted_to_dict_field(self, mock_logger):
+        """A patternProperties property is converted to dict[str, Any] via the normal path.
+
+        Regression test for EPMCDME-11241: tools like mcp-grafana's update_dashboard previously
+        triggered a fallback (empty schema) because patternProperties raised NotImplementedError.
+        With the fix the tool is created normally and its patternProperties field is typed as
+        dict[str, Any] so the LLM can pass the full dashboard payload.
+        """
+        update_dashboard_def = MCPToolDefinition(
+            name="update_dashboard",
+            description="Update a Grafana dashboard",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "dashboard": {
+                        "patternProperties": {"^[a-z]+$": {"type": "string"}},
+                    },
+                    "overwrite": {"type": "boolean"},
+                },
+            },
+        )
+
+        toolkit = MCPToolkit(
+            name="Test Toolkit",
+            description="Test toolkit description",
+            mcp_client=self.mcp_client,
+            mcp_server_config=self.mcp_server_config,
+            tools_definitions=[self.valid_tool_def, update_dashboard_def],
+        )
+
+        # Both tools appear via the NORMAL path — no fallback needed
+        self.assertEqual(len(toolkit.tools), 2)
+        tool_names = [t.name for t in toolkit.tools]
+        self.assertIn("update_dashboard", tool_names)
+
+        # No warning should be logged — the schema converts cleanly
+        assert not any(
+            "update_dashboard" in str(call) for call in mock_logger.warning.call_args_list
+        ), f"Unexpected warning: {mock_logger.warning.call_args_list}"
+
+        # The dashboard field must be present and typed as dict (not an empty fallback schema)
+        update_dash = next(t for t in toolkit.tools if t.name == "update_dashboard")
+        self.assertIn("dashboard", update_dash.args_schema.model_fields)
+        self.assertIn("overwrite", update_dash.args_schema.model_fields)
 
     def test_create_args_schema(self):
         """Test schema creation from tool definition input schema."""
@@ -287,6 +336,35 @@ class TestMCPToolkitCreation(unittest.TestCase):
             self.assertEqual(ui_info[1]["name"], "tool2")
             self.assertEqual(ui_info[1]["description"], "Tool 2 Description")
             self.assertEqual(ui_info[1]["args_schema"], {})
+
+    @patch('codemie.service.mcp.toolkit.logger')
+    def test_scalar_anyof_schema_uses_fallback(self, mock_logger):
+        """A tool whose top-level inputSchema is a scalar anyOf union triggers the fallback path."""
+        scalar_anyof_tool_def = MCPToolDefinition(
+            name="scalar_union_tool",
+            description="Tool with scalar anyOf schema",
+            inputSchema={"anyOf": [{"type": "string"}, {"type": "integer"}]},
+        )
+
+        toolkit = MCPToolkit(
+            name="Test Toolkit",
+            description="Test toolkit description",
+            mcp_client=self.mcp_client,
+            mcp_server_config=self.mcp_server_config,
+            tools_definitions=[scalar_anyof_tool_def],
+        )
+
+        # Tool must still appear, via the fallback schema path
+        self.assertEqual(len(toolkit.tools), 1)
+        self.assertEqual(toolkit.tools[0].name, "scalar_union_tool")
+
+        # Warning must be logged for the failed schema conversion
+        assert any(
+            "scalar_union_tool" in str(call) for call in mock_logger.warning.call_args_list
+        ), f"Expected warning log not found. Actual calls: {mock_logger.warning.call_args_list}"
+
+        # Fallback schema has no fields (not a silent empty model from the guard-pass path)
+        self.assertEqual(len(toolkit.tools[0].args_schema.model_fields), 0)
 
     def test_get_toolkit_class_method(self):
         """Test that the get_toolkit class method raises RuntimeError."""
