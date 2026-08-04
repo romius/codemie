@@ -1,0 +1,53 @@
+{
+  "gate_id": "code-review.final",
+  "schema": 1,
+  "decision": "approve",
+  "confidence": "medium",
+  "rationale": "All four acceptance criteria are met. Both root causes (retry suppression and guaranteed FAILED transition) are addressed following the established MCPAuthenticationRequiredException pattern. The blind lens raised 'BadRequestError too broad' (ContextWindowExceededError/ContentPolicyViolationError are subclasses) — dismissed: those errors were also getting stuck before this fix (they hit default_retry_on and retried indefinitely), so the broader catch is an emergent benefit, not a regression. EC-002 (non-BadRequest exceptions still re-raise without fail()) is pre-existing behavior outside this ticket's scope. EC-003 (no MESSAGES_VARIABLE in return) matches the existing MCPAuthenticationRequiredException pattern verbatim and is correct. Test TC_BNL_BAD_REQUEST_001 asserts error_class but not error_message — minor deferred gap; production code is correct. Commit format, Ruff, and security checks all pass. 3 dismissed, 1 deferred (no patch/decision_needed items).",
+  "risk_flags": [],
+  "business_review": [
+    {
+      "criterion": "AC1: Workflow transitions to FAILED immediately on BadRequestError — no hang",
+      "status": "pass",
+      "evidence": "BaseNode.__call__() detects LiteLLMBadRequestError (bare or wrapped in TaskException), calls workflow_execution_service.fail(), returns {NEXT_KEY: [END_NODE]} without re-raising. LangGraph receives a clean terminal state."
+    },
+    {
+      "criterion": "AC2: No wasteful retries for unrecoverable 400 payload errors",
+      "status": "pass",
+      "evidence": "WorkflowRetryPolicy.custom_retry_on() returns False for LiteLLMBadRequestError both bare (TC_WRP_001) and wrapped in TaskException (TC_WRP_002). TaskException is unwrapped before the check, matching how the existing InvalidCredentialsError guard works."
+    },
+    {
+      "criterion": "AC3: User-visible error message comes from the original exception",
+      "status": "partial",
+      "evidence": "Production code passes str(actual_exc) to fail(error_message=...) where actual_exc is the unwrapped LiteLLMBadRequestError — correct. Test TC_BNL_BAD_REQUEST_001 asserts error_class == 'BadRequestError' but has no assertion on error_message. Minor test coverage gap; production behaviour is correct."
+    },
+    {
+      "criterion": "AC4: No manual cancellation required",
+      "status": "pass",
+      "evidence": "The FAILED terminal state is reached deterministically through the new code path. workflow_execution_service.fail() is called before returning END_NODE, so the overall workflow status is set regardless of LangGraph's internal exception handling."
+    }
+  ],
+  "standards_review": [
+    {
+      "standard": "commit-format",
+      "status": "pass",
+      "notes": "Both commits use 'EPMCDME-11918: <Description>' format per git-workflow.md. Branch name matches ticket ID."
+    },
+    {
+      "standard": "code-quality-ruff",
+      "status": "pass",
+      "notes": "Ruff check confirmed passing. Local import placement is consistent with existing patterns in the same method."
+    },
+    {
+      "standard": "security",
+      "status": "pass",
+      "notes": "No auth, secrets, injection, or unsafe input handling changes in the diff."
+    },
+    {
+      "standard": "license-headers",
+      "status": "pass",
+      "notes": "No new source files created. Modified files retain existing Apache 2.0 headers."
+    }
+  ],
+  "findings": []
+}

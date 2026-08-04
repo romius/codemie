@@ -20,7 +20,7 @@ from typing import Generic, TypeVar, Type, Any, Optional
 from langgraph.types import Command
 
 from codemie.configs import logger
-from codemie.core.exceptions import MCPAuthenticationRequiredException
+from codemie.core.exceptions import MCPAuthenticationRequiredException, TaskException
 from codemie.core.workflow_models import WorkflowExecutionStatusEnum, WorkflowState, WorkflowConfig
 from codemie.core.thought_queue import ThoughtQueue
 from codemie.rest_api.models.assistant import AssistantBase
@@ -198,62 +198,13 @@ class BaseNode(ABC, Generic[StateSchemaType]):
             raw_output = self.execute(state_schema, execution_context)
             processed_output = self.post_process_output(state_schema, task, raw_output)
 
-            if self._is_execution_aborted():
-                status = WorkflowExecutionStatusEnum.ABORTED
-            else:
-                status = WorkflowExecutionStatusEnum.SUCCEEDED
-
-            self.workflow_execution_service.finish_state(
-                execution_state_id=execution_state_id, output=processed_output, status=status
-            )
-
-            # Call the on_complete method of each callback
-            for callback in self.callbacks:
-                callback.on_node_end(
-                    output=processed_output,
-                    execution_state_id=execution_state_id,
-                    execution_context=execution_context,
-                )
-
-            final_state = self.finalize_and_update_state(
+            return self._complete_successful_execution(
+                state_schema=state_schema,
+                execution_context=execution_context,
+                execution_state_id=execution_state_id,
                 raw_output=raw_output,
                 processed_output=processed_output,
-                success=True,  # add logic to make it dynamic
-                state_schema=state_schema,
             )
-
-            # Record transition from previous state to current state
-            # workflow_context captures the state at the transition point (input to this node)
-            previous_state_id = state_schema.get(PREVIOUS_EXECUTION_STATE_ID)
-
-            # Serialize INPUT state (before node execution) with size limits
-            # Exclude internal tracking fields from workflow_context
-            state_for_serialization = {
-                k: v
-                for k, v in state_schema.items()
-                if k not in (PREVIOUS_EXECUTION_STATE_NAMES, PREVIOUS_EXECUTION_STATE_ID)
-            }
-            serialized_state = serialize_state(state_for_serialization)
-            checked_state = check_state_size(serialized_state, self.workflow_execution_service.workflow_execution_id)
-
-            self.workflow_execution_service.record_transition(
-                from_state_id=previous_state_id,
-                to_state_id=execution_state_id,
-                workflow_context=checked_state,
-            )
-
-            prev_state_names = self._get_prev_state_names(state_schema, raw_output)
-
-            if isinstance(final_state, Command):
-                update = dict(final_state.update) if final_state.update else {}
-                update[PREVIOUS_EXECUTION_STATE_NAMES] = prev_state_names
-                update[PREVIOUS_EXECUTION_STATE_ID] = execution_state_id
-                final_state = Command(goto=final_state.goto, update=update)
-            else:
-                final_state[PREVIOUS_EXECUTION_STATE_NAMES] = prev_state_names
-                final_state[PREVIOUS_EXECUTION_STATE_ID] = execution_state_id
-
-            return final_state
         except ExecutionAbortedException:
             self.workflow_execution_service.abort_state(execution_state_id)
             return {MESSAGES_VARIABLE: [ABORTED_MSG], NEXT_KEY: [END_NODE]}
@@ -261,18 +212,97 @@ class BaseNode(ABC, Generic[StateSchemaType]):
             self._handle_mcp_auth_required(e, execution_state_id, current_node_name)
             return {NEXT_KEY: [END_NODE]}
         except Exception as e:
-            self.handle_execution_failure(e)
-            self.workflow_execution_service.finish_state(
-                execution_state_id,
-                output=str(e),
-                status=WorkflowExecutionStatusEnum.FAILED,
-            )
-            # Call the on_complete method of each callback
-            for callback in self.callbacks:
-                callback.on_node_fail(exception=e, execution_state_id=execution_state_id)
-            raise e
+            return self._handle_execution_exception(e, execution_state_id)
         finally:
             self.after_execution(result=raw_output, state_schema=state_schema, args=self.args, kwargs=self.kwargs)
+
+    def _complete_successful_execution(
+        self,
+        state_schema: Type[StateSchemaType],
+        execution_context: dict,
+        execution_state_id: str,
+        raw_output,
+        processed_output,
+    ):
+        """Finish state, notify callbacks, record transition, and return final state."""
+        if self._is_execution_aborted():
+            status = WorkflowExecutionStatusEnum.ABORTED
+        else:
+            status = WorkflowExecutionStatusEnum.SUCCEEDED
+
+        self.workflow_execution_service.finish_state(
+            execution_state_id=execution_state_id, output=processed_output, status=status
+        )
+
+        for callback in self.callbacks:
+            callback.on_node_end(
+                output=processed_output,
+                execution_state_id=execution_state_id,
+                execution_context=execution_context,
+            )
+
+        final_state = self.finalize_and_update_state(
+            raw_output=raw_output,
+            processed_output=processed_output,
+            success=True,  # add logic to make it dynamic
+            state_schema=state_schema,
+        )
+
+        # Record transition from previous state to current state
+        # workflow_context captures the state at the transition point (input to this node)
+        previous_state_id = state_schema.get(PREVIOUS_EXECUTION_STATE_ID)
+
+        # Serialize INPUT state (before node execution) with size limits
+        # Exclude internal tracking fields from workflow_context
+        state_for_serialization = {
+            k: v
+            for k, v in state_schema.items()
+            if k not in (PREVIOUS_EXECUTION_STATE_NAMES, PREVIOUS_EXECUTION_STATE_ID)
+        }
+        serialized_state = serialize_state(state_for_serialization)
+        checked_state = check_state_size(serialized_state, self.workflow_execution_service.workflow_execution_id)
+
+        self.workflow_execution_service.record_transition(
+            from_state_id=previous_state_id,
+            to_state_id=execution_state_id,
+            workflow_context=checked_state,
+        )
+
+        prev_state_names = self._get_prev_state_names(state_schema, raw_output)
+
+        if isinstance(final_state, Command):
+            update = dict(final_state.update) if final_state.update else {}
+            update[PREVIOUS_EXECUTION_STATE_NAMES] = prev_state_names
+            update[PREVIOUS_EXECUTION_STATE_ID] = execution_state_id
+            final_state = Command(goto=final_state.goto, update=update)
+        else:
+            final_state[PREVIOUS_EXECUTION_STATE_NAMES] = prev_state_names
+            final_state[PREVIOUS_EXECUTION_STATE_ID] = execution_state_id
+
+        return final_state
+
+    def _handle_execution_exception(self, e: Exception, execution_state_id: str):
+        """Handle generic execution failure, including LiteLLM BadRequestError."""
+        from litellm.exceptions import BadRequestError as LiteLLMBadRequestError
+
+        self.handle_execution_failure(e)
+        self.workflow_execution_service.finish_state(
+            execution_state_id,
+            output=str(e),
+            status=WorkflowExecutionStatusEnum.FAILED,
+        )
+        for callback in self.callbacks:
+            callback.on_node_fail(exception=e, execution_state_id=execution_state_id)
+
+        actual_exc = e.original_exc if isinstance(e, TaskException) and e.original_exc is not None else e
+        if isinstance(actual_exc, LiteLLMBadRequestError):
+            self.workflow_execution_service.fail(
+                error_class=type(actual_exc).__name__,
+                error_message=str(actual_exc),
+            )
+            return {NEXT_KEY: [END_NODE]}
+
+        raise e
 
     def _handle_mcp_auth_required(
         self,

@@ -183,6 +183,38 @@ def test_custom_retry_on_retry_true_http_exceptions(status_code, exception_insta
     assert result == expected_retry_decision
 
 
+def test_custom_retry_on_retry_false_litellm_bad_request_error(mock_default_retry_on):
+    """TC_WRP_001: litellm BadRequestError must not be retried — unrecoverable payload error."""
+    from litellm.exceptions import BadRequestError
+
+    exception_instance = BadRequestError(
+        message="The image was specified using the image/png media type, but appears to be image/gif",
+        model="anthropic.claude-haiku-3",
+        llm_provider="bedrock",
+    )
+
+    result = WorkflowRetryPolicy.custom_retry_on(exception_instance)
+
+    assert result is False
+
+
+def test_custom_retry_on_retry_false_task_exception_wrapping_bad_request_error(mock_default_retry_on):
+    """TC_WRP_002: TaskException wrapping litellm BadRequestError must not be retried."""
+    from litellm.exceptions import BadRequestError
+    from codemie.core.exceptions import TaskException
+
+    original = BadRequestError(
+        message="The image was specified using the image/png media type, but appears to be image/gif",
+        model="anthropic.claude-haiku-3",
+        llm_provider="bedrock",
+    )
+    exception_instance = TaskException("Graph node execution failed.", original_exc=original)
+
+    result = WorkflowRetryPolicy.custom_retry_on(exception_instance)
+
+    assert result is False
+
+
 class TestWorkflowAssistant:
     """Tests for WorkflowAssistant model skill_ids field."""
 

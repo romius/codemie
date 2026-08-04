@@ -36,6 +36,7 @@ from langchain_core.messages import HumanMessage
 from codemie.workflows.nodes.base_node import BaseNode
 from codemie.workflows.constants import (
     CONTEXT_STORE_VARIABLE,
+    END_NODE,
     MESSAGES_VARIABLE,
     NEXT_KEY,
     ITER_SOURCE,
@@ -816,6 +817,63 @@ def test_guardrails_block_raises_value_error(
     fail_call = mock_workflow_execution_service.fail.call_args[1]
     assert fail_call["error_class"] == "GuardrailBlockedException"
     assert "Node input blocked by guardrails" in fail_call["error_message"]
+
+
+def test_bad_request_error_guarantees_workflow_failed_transition(
+    mock_workflow_execution_service, mock_thought_queue, mock_callbacks
+):
+    """
+    TC_BNL_BAD_REQUEST_001: BadRequestError triggers guaranteed FAILED workflow transition
+
+    When execute() raises a TaskException wrapping a litellm BadRequestError (e.g. image
+    media type mismatch rejected by Bedrock with HTTP 400), BaseNode must:
+    - NOT re-raise the exception (so LangGraph cannot swallow it and leave the workflow stuck)
+    - Call workflow_execution_service.fail() to guarantee the overall workflow transitions to FAILED
+    - Return {NEXT_KEY: [END_NODE]} to cleanly terminate the graph branch
+    """
+    from litellm.exceptions import BadRequestError
+    from codemie.core.exceptions import TaskException
+
+    workflow_state = WorkflowState(
+        id="verify_bug",
+        task="Verify bug with image",
+        assistant_id="assistant_1",
+        next=WorkflowNextState(state_id="next"),
+    )
+    state_schema = {
+        MESSAGES_VARIABLE: [],
+        CONTEXT_STORE_VARIABLE: {},
+    }
+    node = MockNode(
+        callbacks=mock_callbacks,
+        workflow_execution_service=mock_workflow_execution_service,
+        thought_queue=mock_thought_queue,
+        workflow_state=workflow_state,
+    )
+    mock_workflow_execution_service.fail = Mock()
+
+    original_exc = BadRequestError(
+        message="The image was specified using the image/png media type, but the image appears to be a image/gif image",
+        model="anthropic.claude-haiku-3",
+        llm_provider="bedrock",
+    )
+    task_exc = TaskException("Graph node execution failed. Error code: 400", original_exc=original_exc)
+
+    def failing_execute(*args, **kwargs):
+        raise task_exc
+
+    node.execute = failing_execute
+
+    # Act — must NOT raise
+    result = node(state_schema)
+
+    # Assert workflow FAILED transition was guaranteed
+    mock_workflow_execution_service.fail.assert_called_once()
+    fail_kwargs = mock_workflow_execution_service.fail.call_args[1]
+    assert fail_kwargs["error_class"] == "BadRequestError"
+
+    # Assert graph branch terminated cleanly
+    assert result == {NEXT_KEY: [END_NODE]}
 
 
 @patch("codemie.workflows.nodes.base_node.GuardrailService.apply_guardrails_for_entities")

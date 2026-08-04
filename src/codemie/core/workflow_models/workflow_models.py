@@ -21,6 +21,7 @@ from enum import Enum
 from typing import List, Optional, Literal
 
 from langgraph.types import default_retry_on
+from litellm.exceptions import BadRequestError as LiteLLMBadRequestError
 from pydantic import BaseModel, Field
 from pydantic import field_validator, model_validator
 
@@ -344,6 +345,8 @@ class WorkflowRetryPolicy(BaseModel):
         if isinstance(exc, TaskException) and exc.original_exc is not None:
             exc = exc.original_exc
         if isinstance(exc, (InvalidCredentialsError, TruncatedOutputError)):
+            return False
+        if isinstance(exc, LiteLLMBadRequestError):
             return False
         if isinstance(exc, httpx.HTTPStatusError):
             custom_retry_on = exc.response.status_code not in (401, 403, 404)
