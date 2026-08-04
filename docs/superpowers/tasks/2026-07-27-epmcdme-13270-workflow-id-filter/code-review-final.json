@@ -1,0 +1,103 @@
+{
+  "decision": "approve",
+  "rationale": "The change is minimal, correctly scoped, and satisfies the implementation goal: GET /v1/workflows can filter by one or more exact workflow IDs. WorkflowFilter maps the new id filter to id.keyword and reuses the existing parameterized compose_term_filter path, which produces a SQL equality predicate for a scalar and an IN predicate for a list. The router continues to parse and forward filters through the existing service boundary; existing visibility modifiers, authorization behavior, sorting, and pagination remain unchanged. API-level and service-level regression tests cover filter propagation and SQL query composition. The two targeted repository tests pass, the sanity API test harness passes with no final failures, and git diff --check is clean. No blocking correctness, security, performance, or maintainability findings were identified.",
+  "follow_ups": [
+    "Optional: add explicit boundary coverage for an empty ID list and a single scalar ID if the public filter contract is formalized in a future API schema."
+  ],
+  "confidence": "high",
+  "risk_flags": [],
+  "reviewed_head": "a181091fdda2263e66dfe88e05cc81d1940c4ffa",
+  "scope": {
+    "files_reviewed": [
+      "src/codemie/service/filter/filter_services.py",
+      "tests/codemie/rest_api/routers/test_workflow.py",
+      "tests/codemie/service/workflow_config/test_workflow_config_index_service.py"
+    ],
+    "dimensions_checked": [
+      "correctness",
+      "api-contract",
+      "authorization",
+      "security",
+      "performance",
+      "maintainability",
+      "test-coverage"
+    ]
+  },
+  "business_review": [
+    {
+      "criterion": "Workflow list requests can filter by exact workflow ID",
+      "status": "pass",
+      "notes": "WorkflowFilter now accepts id and maps it to the existing id.keyword field."
+    },
+    {
+      "criterion": "Multiple workflow IDs are supported",
+      "status": "pass",
+      "notes": "compose_term_filter handles list values with SQLAlchemy in_(); the service test verifies the generated workflows.id IN predicate."
+    },
+    {
+      "criterion": "The API forwards the ID filter without changing other request parameters",
+      "status": "pass",
+      "notes": "The router test verifies the ID list, pagination, minimal_response, filter_by_user, and scope arguments passed to WorkflowConfigIndexService.run."
+    },
+    {
+      "criterion": "Existing access control and pagination behavior remain intact",
+      "status": "pass",
+      "notes": "The change only extends WorkflowFilter configuration; existing query modifiers are applied before filters and existing pagination remains unchanged."
+    },
+    {
+      "criterion": "The change remains backward-compatible",
+      "status": "pass",
+      "notes": "id is a new optional filter key. Requests without it continue through the existing filter configuration and query path."
+    }
+  ],
+  "standards_review": [
+    {
+      "standard": "layering",
+      "guide": ".ai-run/guides/data/elasticsearch-integration.md",
+      "status": "pass",
+      "notes": "Filter composition remains in the existing service/filter layer; no query construction was added to the router."
+    },
+    {
+      "standard": "database-performance",
+      "guide": ".ai-run/guides/data/database-optimization.md",
+      "status": "pass",
+      "notes": "Filtering is pushed into the database query and preserves existing pagination; no unbounded Python-side filtering was introduced."
+    },
+    {
+      "standard": "code-quality",
+      "guide": ".ai-run/guides/standards/code-quality.md",
+      "status": "pass",
+      "notes": "The implementation reuses existing constants and filter composition functions. git diff --check completed successfully."
+    },
+    {
+      "standard": "security",
+      "guide": ".ai-run/guides/development/security-patterns.md",
+      "status": "pass",
+      "notes": "Values are bound through SQLAlchemy expressions; no raw SQL, secrets, logging changes, or authorization bypasses were introduced."
+    },
+    {
+      "standard": "commit-format",
+      "guide": ".ai-run/guides/standards/git-workflow.md",
+      "status": "pass",
+      "notes": "Reviewed implementation commit a181091fd uses the required EPMCDME-13270: Description format."
+    }
+  ],
+  "validation": [
+    {
+      "command": "poetry run pytest tests/codemie/rest_api/routers/test_workflow.py::test_list_workflows_with_id_filter tests/codemie/service/workflow_config/test_workflow_config_index_service.py::test_workflow_config_index_service_filters_by_ids",
+      "result": "pass",
+      "summary": "2 passed, 5 warnings in 157.42s"
+    },
+    {
+      "command": "uvx codemie-test-harness run sanity-api -n 2 --reruns 2 --timeout 300",
+      "result": "pass",
+      "summary": "168 passed, 4 skipped, 3 rerun in 677.52s (0:11:17)"
+    },
+    {
+      "command": "git diff --check main...HEAD",
+      "result": "pass",
+      "summary": "No whitespace errors"
+    }
+  ],
+  "findings": []
+}

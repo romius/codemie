@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -208,6 +209,41 @@ async def test_list_workflows(mock_index_workflows, projects, request_header):
     async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
         response = await ac.get("/v1/workflows", headers=request_header)
     assert response.status_code == status.HTTP_200_OK
+
+
+@pytest.mark.asyncio
+@patch("codemie.service.workflow_config.workflow_config_index_service.WorkflowConfigIndexService.run")
+async def test_list_workflows_with_id_filter(mock_index_workflows, projects, request_header):
+    workflow_ids = ["workflow-1", "deleted-workflow"]
+    mock_index_workflows.return_value = {
+        "data": [workflow_config_data],
+        "pagination": {"page": 0, "pages": 1, "total": 1, "per_page": 2},
+    }
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+        response = await ac.get(
+            "/v1/workflows",
+            params={
+                "page": 0,
+                "per_page": 2,
+                "filters": json.dumps({"id": workflow_ids}),
+                "minimal_response": True,
+            },
+            headers=request_header,
+        )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert len(response.json()["data"]) == 1
+    mock_index_workflows.assert_called_once_with(
+        user=user,
+        filter_by_user=False,
+        page=0,
+        per_page=2,
+        filters={"id": workflow_ids},
+        minimal_response=True,
+        scope=None,
+    )
 
 
 @pytest.mark.asyncio

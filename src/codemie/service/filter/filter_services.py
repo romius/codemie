@@ -55,6 +55,10 @@ class IndexInfoFilter(BaseFilterData):
 
 class WorkflowFilter(BaseFilterData):
     FILTER_CONFIG = {
+        "id": {
+            "field_name": ID_KEYWORD,
+            "filter_compose_func": fltr_func.compose_term_filter,
+        },
         "name": {
             "field_name": ["name.keyword", "description", ID_KEYWORD],
             "filter_compose_func": fltr_func.compose_multi_field_wildcard_filter,
