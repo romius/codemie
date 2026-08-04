@@ -87,6 +87,7 @@ from codemie.rest_api.security.authentication import project_access_check
 from codemie.rest_api.security.authentication import authenticate
 from codemie.rest_api.security.user import User
 from codemie.rest_api.utils.default_applications import ensure_application_exists
+from codemie.repository.assistants.assistant_clone_event_repository import AssistantCloneEventRepository
 from codemie.service.assistant.assistant_repository import AssistantScope, AssistantRepository
 from codemie.service.assistant.assistant_user_interaction_service import assistant_user_interaction_service
 from codemie.service.assistant.category_service import category_service
@@ -676,6 +677,48 @@ def get_assistants_context(project_name: str, user: User = Depends(authenticate)
     return response
 
 
+def _update_source_clone_count(source_assistant_id: str, user: User) -> None:
+    """Log a clone event for the source assistant and refresh its clone count.
+
+    Best-effort telemetry: failures are logged and swallowed so a clone-count
+    problem never fails the create that triggered it. Skips (no-op) if the
+    source assistant does not exist, so an arbitrary/stale id can't be used
+    to log clone events for nothing.
+    """
+    try:
+        if not Assistant.find_by_id(source_assistant_id):
+            logger.warning(f"Source assistant {source_assistant_id} not found; skipping clone tracking.")
+            return
+        clone_event_repo = AssistantCloneEventRepository()
+        clone_event_repo.log_clone_event(source_assistant_id, user.id)
+        AssistantRepository.update_clone_count(source_assistant_id)
+    except Exception:
+        logger.error(
+            f"Failed to update clone count for source assistant {source_assistant_id}",
+            exc_info=True,
+        )
+
+
+def _validate_integrations_or_response(request: AssistantRequest, user: User) -> AssistantCreateResponse | None:
+    """Run integration validation unless skipped; return an early response on missing integrations, else None."""
+    if request.skip_integration_validation:
+        return None
+
+    logger.info(f"Validating integrations for assistant: {request.name}")
+    validation_result = _validate_assistant_integrations(request, user)
+
+    if not validation_result.has_missing_integrations:
+        return None
+
+    logger.warning(f"Validation failed: {validation_result.message}")
+    return AssistantCreateResponse(
+        message="Assistant validation found missing integrations. "
+        "Please configure them or set skip_integration_validation=True.",
+        assistant_id=None,
+        validation=validation_result,
+    )
+
+
 @router.post(
     "/assistants",
     status_code=status.HTTP_200_OK,
@@ -691,24 +734,15 @@ def create_assistant(request: AssistantRequest, user: User = Depends(authenticat
 
     project_access_check(user, request.project)
 
-    # Validate integrations if not skipped
-    if not request.skip_integration_validation:
-        logger.info(f"Validating integrations for assistant: {request.name}")
-
-        validation_result = _validate_assistant_integrations(request, user)
-
-        if validation_result.has_missing_integrations:
-            logger.warning(f"Validation failed: {validation_result.message}")
-            return AssistantCreateResponse(
-                message="Assistant validation found missing integrations. "
-                "Please configure them or set skip_integration_validation=True.",
-                assistant_id=None,
-                validation=validation_result,
-            )
+    validation_response = _validate_integrations_or_response(request, user)
+    if validation_response:
+        return validation_response
 
     request.mcp_servers = MCPAccessControlService.sanitize_for_save(request.mcp_servers)
 
-    assistant = Assistant(**request.model_dump(exclude={"guardrail_assignments", "skip_integration_validation"}))
+    assistant = Assistant(
+        **request.model_dump(exclude={"guardrail_assignments", "skip_integration_validation", "source_assistant_id"})
+    )
     assistant.created_by = CreatedByUser(
         id=user.id,
         username=user.username,
@@ -758,6 +792,10 @@ def create_assistant(request: AssistantRequest, user: User = Depends(authenticat
         )
 
         _track_mcp_usage_on_create(assistant.mcp_servers)
+
+        if request.source_assistant_id:
+            _update_source_clone_count(request.source_assistant_id, user)
+
         _track_assistant_management_metric("create_assistant", assistant, user, True)
     except IntegrityError as e:
         # Concurrency backstop. _check_slug_uniqueness() (in validate_fields) reads ES in a

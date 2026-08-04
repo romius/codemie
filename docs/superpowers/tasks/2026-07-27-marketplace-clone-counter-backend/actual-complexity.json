@@ -1,0 +1,86 @@
+{
+  "task": "Add clone_count tracking for Marketplace assistants via event-table architecture (assistant_clone_event log table + cached clone_count column on assistants, mirroring likes/dislikes storage pattern)",
+  "generated": "2026-07-27",
+  "dimensions": {
+    "component_scope": {
+      "score": 4,
+      "label": "L",
+      "affected": "Assistant model (clone_count field), AssistantCloneEvent model (new), AssistantCloneEventRepository (new), AssistantRepository.update_clone_count (new method), assistant router create_assistant endpoint (clone event logging wired in)",
+      "layers": "API, Repository, Model/Schema, DB-Persistence"
+    },
+    "requirements_clarity": {
+      "score": 2,
+      "label": "S",
+      "status": "Clear",
+      "gaps": "Spec was revised once pre-implementation (event-table architecture chosen over simple counter) but locked before coding started; no clarification churn during implementation itself"
+    },
+    "technical_risk": {
+      "score": 4,
+      "label": "L",
+      "risk_factors": "New DB table + migration (assistant_clone_event), schema change to assistants table (clone_count column), index-name collision discovered and fixed post-implementation (86997b55c), source_assistant_id leak into update mapping fixed post-implementation (8d2ada320) — indicates real edge cases only surfaced during QA/regression pass despite mirroring an established likes/dislikes pattern",
+      "mitigation": "Followed existing likes/dislikes storage pattern for structure; caught both defects via QA-gate regression pass before merge, with dedicated fix commits and added test coverage"
+    },
+    "file_change_estimate": {
+      "score": 5,
+      "label": "XL",
+      "modified_files": 5,
+      "modified_file_list": [
+        "src/codemie/rest_api/models/assistant.py",
+        "src/codemie/rest_api/routers/assistant.py",
+        "src/codemie/service/assistant/assistant_repository.py",
+        "tests/codemie/rest_api/routers/test_assistant.py",
+        "tests/codemie/service/assistant/test_assistant_repository.py"
+      ],
+      "new_files": 5,
+      "new_file_list": [
+        "src/codemie/repository/assistants/assistant_clone_event_repository.py",
+        "src/codemie/rest_api/models/usage/assistant_clone_event.py",
+        "src/external/alembic/versions/9b9b4c585e54_add_clone_count_and_assistant_clone_.py",
+        "tests/codemie/repository/assistants/test_assistant_clone_event_repository.py",
+        "tests/codemie/rest_api/models/usage/test_assistant_clone_event.py"
+      ],
+      "affected_dirs": [
+        "src/codemie/repository/assistants",
+        "src/codemie/rest_api/models",
+        "src/codemie/rest_api/models/usage",
+        "src/codemie/rest_api/routers",
+        "src/codemie/service/assistant",
+        "src/external/alembic/versions",
+        "tests/codemie/repository/assistants",
+        "tests/codemie/rest_api/models/usage",
+        "tests/codemie/rest_api/routers",
+        "tests/codemie/service/assistant"
+      ]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 5,
+      "label": "XL",
+      "layers_changed": ["API", "Repository", "Model/Schema", "DB-Persistence"],
+      "schema_migration": true,
+      "cross_system": false
+    }
+  },
+  "total": 21,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 10,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "file_change_estimate", "reason": "10 code/test files touched (5 new, 5 modified) across 10 distinct directories mirroring the src/tests split; data-migration red flag bumps this from L to XL" },
+    { "dimension": "affected_layers", "reason": "API + Repository + Model + DB-Persistence, with a real schema migration (new table + new column) — DB schema change red flag bumps L to XL per guide rule" },
+    { "dimension": "technical_risk", "reason": "Established likes/dislikes pattern kept novelty low, but two post-implementation regression fixes (index-name collision, source_assistant_id leaking into update mapping) surfaced during the QA-gate pass, plus the irreversible-migration nature of schema changes; DB-schema-change red flag bumps M to L" },
+    { "dimension": "component_scope", "reason": "5 components (2 models, 2 repository classes, 1 router wiring point) coordinated across 3 layers, consistent with initial estimate" }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from M to L: database schema change (new assistant_clone_event table, new clone_count column) is significant and effectively irreversible once deployed",
+    "Affected Layers bumped from L to XL: database schema change significantly, per guide rule (schema change always bumps Affected Layers)",
+    "File Change Estimate bumped from L to XL: data migration required (alembic migration 9b9b4c585e54), per guide rule (migration bumps both Technical Risk and File Changes)"
+  ],
+  "split_recommendation": null
+}

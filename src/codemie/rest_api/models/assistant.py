@@ -351,6 +351,10 @@ class AssistantRequest(BaseModel):
     )
     custom_metadata: Optional[dict[str, Any]] = None
 
+    # Set when this create request is a clone of an existing assistant; not stored on the
+    # Assistant model itself, only used to trigger clone_count tracking on the source assistant.
+    source_assistant_id: Optional[str] = None
+
     # Add guardrail assignments (NOT stored on Assistant model)
     guardrail_assignments: Optional[List[GuardrailAssignmentItem]] = None
 
@@ -577,6 +581,7 @@ class AssistantListResponse(BaseModel):
     unique_users_count: Optional[int] = None
     unique_likes_count: Optional[int] = None
     unique_dislikes_count: Optional[int] = None
+    clone_count: Optional[int] = None
     categories: Optional[list[str]] = None
     is_global: Optional[bool] = False
     shared: Optional[bool] = False
@@ -686,6 +691,7 @@ class AssistantBase(CommonBaseModel, Owned):
     unique_users_count: Optional[int] = SQLField(default=0, index=False)
     unique_likes_count: Optional[int] = SQLField(default=0, index=False)
     unique_dislikes_count: Optional[int] = SQLField(default=0, index=False)
+    clone_count: Optional[int] = SQLField(default=0, index=False)
     categories: list[str] = SQLField(default_factory=list, sa_column=Column(JSONB))
     custom_metadata: Optional[dict[str, Any]] = SQLField(default=None, sa_column=Column(JSONB))
 
@@ -886,7 +892,14 @@ class AssistantBase(CommonBaseModel, Owned):
         updatable_fields = [
             field
             for field in request_fields
-            if field not in ('name', 'system_prompt', 'guardrail_assignments', 'skip_integration_validation')  # type: ignore[union-attr]
+            if field
+            not in (
+                'name',
+                'system_prompt',
+                'guardrail_assignments',
+                'skip_integration_validation',
+                'source_assistant_id',
+            )  # type: ignore[union-attr]
         ]
 
         # Update fields based on whether they were explicitly set or we're in legacy mode

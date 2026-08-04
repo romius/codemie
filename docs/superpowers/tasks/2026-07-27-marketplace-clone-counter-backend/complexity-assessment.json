@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "task": "Add clone_count tracking for Marketplace assistants (model field, source_assistant_id request field, repository increment method, migration, tests)",
+  "generated": "2026-07-27",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 2, "label": "S" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 17,
+  "size": "M",
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "4 components touched (model, repository, router, alembic migration), each shallow but coordinated across the assistant subsystem" },
+    { "dimension": "affected_layers", "reason": "API + Service/Repository + Model + DB schema (migration) — schema change bumps this to L per calibration rule even though it's a single additive nullable column" },
+    { "dimension": "requirements_clarity", "reason": "Core contract already agreed with frontend and documented in project notes, but 'metric calc' test scope is ambiguous (increment arithmetic vs. deferred ranking-sort) and needs a minor clarification" },
+    { "dimension": "file_change_estimate", "reason": "1 model file, 1 repository file, 1 router file, 1 new migration file, 1-2 test files — 5-7 files across 2-3 directories" }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

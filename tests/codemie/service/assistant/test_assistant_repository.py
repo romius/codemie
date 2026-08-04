@@ -349,6 +349,24 @@ def test_external_user_cannot_see_non_global_assistants(mock_session_class, mock
     assert result["pagination"]["total"] == 0
 
 
+@patch("codemie.service.assistant.assistant_repository.Session")
+def test_update_clone_count_issues_atomic_derive_update(mock_session_class):
+    """CR-001: clone_count must be recomputed via a single UPDATE that derives the
+    count from assistant_clone_event, not a separate fetch-then-overwrite, so
+    concurrent clone requests can't race and drop each other's increments."""
+    mock_session = MagicMock()
+    mock_session_class.return_value.__enter__.return_value = mock_session
+
+    AssistantRepository.update_clone_count("assistant-1")
+
+    mock_session.execute.assert_called_once()
+    mock_session.commit.assert_called_once()
+    executed_statement = mock_session.execute.call_args.args[0]
+    compiled_sql = str(executed_statement)
+    assert "assistants" in compiled_sql.lower()
+    assert "assistant_clone_event" in compiled_sql.lower()
+
+
 class TestEnrichSystemPromptHistory:
     """Tests for the enrich_system_prompt_history method"""
 
@@ -693,3 +711,46 @@ class TestProjectWithMarketplaceQuery:
         assert " or " in whereclause_str
         # Should reference the name field (search filter)
         assert "name" in whereclause_str and "like" in whereclause_str
+
+
+@patch("codemie.service.assistant.assistant_repository.Session")
+def test_query_marketplace_sorts_by_clone_count_after_unique_users_count(mock_session_class, mock_user):
+    """MARKETPLACE scope should sort by unique_users_count first, clone_count second."""
+    mock_session = MagicMock()
+    mock_session_class.return_value.__enter__.return_value = mock_session
+    mock_session.exec.return_value.all.return_value = []
+    mock_session.exec.return_value.one.return_value = 0
+
+    AssistantRepository().query(user=mock_user, scope=AssistantScope.MARKETPLACE, page=0, per_page=10)
+
+    # First exec call builds the count query, second runs the paginated/sorted query
+    executed_query = mock_session.exec.call_args_list[-1][0][0]
+    order_by_str = str(executed_query).lower()
+
+    unique_users_pos = order_by_str.index("unique_users_count")
+    clone_count_pos = order_by_str.index("clone_count")
+    assert unique_users_pos < clone_count_pos, "clone_count must sort after unique_users_count"
+
+
+@patch("codemie.service.assistant.assistant_repository.Session")
+def test_query_project_with_marketplace_sorts_by_clone_count_after_unique_users_count(mock_session_class, mock_user):
+    """PROJECT_WITH_MARKETPLACE scope should sort by unique_users_count first, clone_count second."""
+    mock_session = MagicMock()
+    mock_session_class.return_value.__enter__.return_value = mock_session
+    mock_session.exec.return_value.all.return_value = []
+    mock_session.exec.return_value.one.return_value = 0
+
+    AssistantRepository().query(
+        user=mock_user,
+        scope=AssistantScope.PROJECT_WITH_MARKETPLACE,
+        filters={"project": "DEMO_PROJECT"},
+        page=0,
+        per_page=10,
+    )
+
+    executed_query = mock_session.exec.call_args_list[-1][0][0]
+    order_by_str = str(executed_query).lower()
+
+    unique_users_pos = order_by_str.index("unique_users_count")
+    clone_count_pos = order_by_str.index("clone_count")
+    assert unique_users_pos < clone_count_pos, "clone_count must sort after unique_users_count"

@@ -94,6 +94,7 @@ class AssistantRepository:
                 )
             return query.order_by(
                 Assistant.unique_users_count.desc().nullslast(),
+                Assistant.clone_count.desc().nullslast(),  # Secondary popularity signal
                 Assistant.update_date.desc().nullslast(),
                 Assistant.id.asc(),
             )
@@ -114,6 +115,7 @@ class AssistantRepository:
             if sort_col is None and not group_by_is_global:
                 return query.order_by(
                     Assistant.unique_users_count.desc().nullslast(),
+                    Assistant.clone_count.desc().nullslast(),  # Secondary popularity signal
                     Assistant.update_date.desc().nullslast(),
                     Assistant.id.asc(),
                 )
@@ -121,6 +123,12 @@ class AssistantRepository:
                 Assistant.is_global.asc(),
                 case(
                     (Assistant.is_global == True, Assistant.unique_users_count),  # noqa: E712
+                    else_=0,
+                )
+                .desc()
+                .nullslast(),
+                case(
+                    (Assistant.is_global == True, Assistant.clone_count),  # noqa: E712
                     else_=0,
                 )
                 .desc()
@@ -344,6 +352,32 @@ class AssistantRepository:
 
         fresh_assistant.save()
         return fresh_assistant
+
+    @staticmethod
+    def update_clone_count(assistant_id: str) -> None:
+        """
+        Recompute and persist the clone count for an assistant atomically, deriving it
+        directly from assistant_clone_event in a single UPDATE. Avoids the read-modify-write
+        race a fetch-then-overwrite sequence would have under concurrent clone requests.
+
+        Args:
+            assistant_id: The id of the assistant to update
+        """
+        from sqlalchemy import update
+
+        from codemie.rest_api.models.usage.assistant_clone_event import AssistantCloneEventSQL
+
+        clone_count_subquery = (
+            select(func.count())
+            .select_from(AssistantCloneEventSQL)
+            .where(AssistantCloneEventSQL.assistant_id == assistant_id)
+            .scalar_subquery()
+        )
+        with Session(Assistant.get_engine()) as session:
+            session.execute(
+                update(Assistant).where(Assistant.id == assistant_id).values(clone_count=clone_count_subquery)
+            )
+            session.commit()
 
     def get_users(self, user: User, scope: AssistantScope = AssistantScope.VISIBLE_TO_USER) -> list[CreatedByUser]:
         """

@@ -630,6 +630,140 @@ class TestCreateAssistantSlug:
         assert "Slug conflict" not in (exc_info.value.message or "")
 
 
+class TestCreateAssistantCloneTracking:
+    """Tests for clone_count tracking wired into create_assistant via source_assistant_id."""
+
+    def _build_request(self, source_assistant_id=None, name="Cloned Assistant"):
+        from codemie.rest_api.models.assistant import AssistantRequest
+
+        return AssistantRequest(
+            name=name,
+            description="Test Description",
+            system_prompt="Test Prompt",
+            project="demo",
+            llm_model_type="gpt-4o",
+            skip_integration_validation=True,
+            source_assistant_id=source_assistant_id,
+        )
+
+    def _patches(self):
+        return [
+            patch("codemie.rest_api.routers.assistant.project_access_check"),
+            patch("codemie.rest_api.routers.assistant.ensure_application_exists"),
+            patch(
+                "codemie.service.assistant.assistant_version_service.AssistantVersionService" ".create_initial_version"
+            ),
+            patch("codemie.rest_api.routers.assistant.GuardrailService" ".sync_guardrail_assignments_for_entity"),
+            patch("codemie.rest_api.routers.assistant._track_mcp_usage_on_create"),
+            patch("codemie.rest_api.routers.assistant._track_assistant_management_metric"),
+        ]
+
+    def _run_create(self, request):
+        from codemie.rest_api.routers.assistant import create_assistant
+
+        def fake_save(self, *args, **kwargs):
+            return MagicMock()
+
+        user = MagicMock(spec=User)
+        user.id = "user-123"
+        user.username = "testuser"
+        user.name = "Test User"
+
+        ctx_managers = self._patches()
+        for cm in ctx_managers:
+            cm.start()
+        try:
+            with patch.object(Assistant, "save", new=fake_save):
+                response = create_assistant(request, user=user)
+            return response
+        finally:
+            for cm in ctx_managers:
+                cm.stop()
+
+    @patch("codemie.rest_api.routers.assistant.AssistantRepository")
+    @patch("codemie.rest_api.routers.assistant.Assistant.find_by_id")
+    @patch("codemie.rest_api.routers.assistant.AssistantCloneEventRepository")
+    def test_source_assistant_id_logs_event_and_updates_clone_count(
+        self, mock_clone_event_repo_class, mock_find_by_id, mock_assistant_repo_class
+    ):
+        mock_clone_event_repo = mock_clone_event_repo_class.return_value
+        mock_source_assistant = MagicMock(spec=Assistant)
+        mock_find_by_id.return_value = mock_source_assistant
+
+        request = self._build_request(source_assistant_id="source-id-1")
+        response = self._run_create(request)
+
+        mock_clone_event_repo.log_clone_event.assert_called_once_with("source-id-1", "user-123")
+        mock_assistant_repo_class.update_clone_count.assert_called_once_with("source-id-1")
+        assert response.assistant_id is not None
+
+    @patch("codemie.rest_api.routers.assistant.AssistantRepository")
+    @patch("codemie.rest_api.routers.assistant.Assistant.find_by_id")
+    @patch("codemie.rest_api.routers.assistant.AssistantCloneEventRepository")
+    def test_repeat_clone_from_same_source_increments_each_call(
+        self, mock_clone_event_repo_class, mock_find_by_id, mock_assistant_repo_class
+    ):
+        """CR-004: repeated clones of the same source must each log an event and
+        trigger a recount, not be deduplicated in the router path."""
+        mock_clone_event_repo = mock_clone_event_repo_class.return_value
+        mock_find_by_id.return_value = MagicMock(spec=Assistant)
+
+        request = self._build_request(source_assistant_id="source-id-1")
+        self._run_create(request)
+        self._run_create(request)
+
+        assert mock_clone_event_repo.log_clone_event.call_count == 2
+        mock_clone_event_repo.log_clone_event.assert_called_with("source-id-1", "user-123")
+        assert mock_assistant_repo_class.update_clone_count.call_count == 2
+        mock_assistant_repo_class.update_clone_count.assert_called_with("source-id-1")
+
+    @patch("codemie.rest_api.routers.assistant.AssistantRepository")
+    @patch("codemie.rest_api.routers.assistant.Assistant.find_by_id")
+    @patch("codemie.rest_api.routers.assistant.AssistantCloneEventRepository")
+    def test_nonexistent_source_assistant_id_skips_clone_tracking(
+        self, mock_clone_event_repo_class, mock_find_by_id, mock_assistant_repo_class
+    ):
+        """CR-006: an unresolvable source_assistant_id must not log a clone event."""
+        mock_clone_event_repo = mock_clone_event_repo_class.return_value
+        mock_find_by_id.return_value = None
+
+        request = self._build_request(source_assistant_id="nonexistent-id")
+        response = self._run_create(request)
+
+        mock_clone_event_repo.log_clone_event.assert_not_called()
+        mock_assistant_repo_class.update_clone_count.assert_not_called()
+        assert response.assistant_id is not None
+
+    @patch("codemie.rest_api.routers.assistant.AssistantRepository")
+    @patch("codemie.rest_api.routers.assistant.AssistantCloneEventRepository")
+    def test_no_source_assistant_id_is_noop(self, mock_clone_event_repo_class, mock_assistant_repo_class):
+        mock_clone_event_repo = mock_clone_event_repo_class.return_value
+
+        request = self._build_request(source_assistant_id=None)
+        self._run_create(request)
+
+        mock_clone_event_repo.log_clone_event.assert_not_called()
+        mock_assistant_repo_class.update_clone_count.assert_not_called()
+
+    @patch("codemie.rest_api.routers.assistant.AssistantRepository")
+    @patch("codemie.rest_api.routers.assistant.Assistant.find_by_id")
+    @patch("codemie.rest_api.routers.assistant.AssistantCloneEventRepository")
+    @patch("codemie.rest_api.routers.assistant.logger")
+    def test_clone_tracking_exception_does_not_fail_create(
+        self, mock_logger, mock_clone_event_repo_class, mock_find_by_id, mock_assistant_repo_class
+    ):
+        mock_clone_event_repo = mock_clone_event_repo_class.return_value
+        mock_clone_event_repo.log_clone_event.side_effect = RuntimeError("db exploded")
+        mock_find_by_id.return_value = MagicMock(spec=Assistant)
+
+        request = self._build_request(source_assistant_id="source-id-1")
+        response = self._run_create(request)
+
+        assert response.assistant_id is not None
+        mock_logger.error.assert_called_once()
+        assert "source-id-1" in mock_logger.error.call_args.args[0]
+
+
 class TestAssistantDetailEnrichment:
     """Guards that the by-id and by-slug lookup endpoints enrich the assistant identically.
 

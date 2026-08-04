@@ -1,0 +1,42 @@
+# Copyright 2026 EPAM Systems, Inc. ("EPAM")
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""
+Repository for logging and counting assistant clone events.
+"""
+
+from uuid import uuid4
+
+from sqlmodel import Session, select, func
+
+from codemie.rest_api.models.usage.assistant_clone_event import AssistantCloneEventSQL
+
+
+class AssistantCloneEventRepository:
+    """Repository for the assistant_clone_event table. No dedup — every clone action counts."""
+
+    def log_clone_event(self, assistant_id: str, user_id: str) -> None:
+        """Insert a clone event row. Deliberately no dedup check."""
+        event = AssistantCloneEventSQL(id=str(uuid4()), assistant_id=assistant_id, user_id=user_id)
+        with Session(AssistantCloneEventSQL.get_engine()) as session:
+            session.add(event)
+            session.commit()
+
+    def get_clone_count(self, assistant_id: str) -> int:
+        """Return the total number of clone events for an assistant."""
+        with Session(AssistantCloneEventSQL.get_engine()) as session:
+            query = select(func.count()).select_from(
+                select(AssistantCloneEventSQL).where(AssistantCloneEventSQL.assistant_id == assistant_id).subquery()
+            )
+            return session.exec(query).one()
