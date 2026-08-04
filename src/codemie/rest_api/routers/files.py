@@ -15,6 +15,9 @@
 import contextlib
 import hashlib
 import mimetypes
+import re
+
+from urllib.parse import quote
 
 from fastapi import APIRouter, Response, UploadFile, Depends, Request, File
 from typing import Any, List
@@ -43,11 +46,50 @@ router = APIRouter(
 _OCTET_STREAM = "application/octet-stream"
 
 
-def _safe_disposition(filename: str) -> str:
+def _safe_disposition(filename: str, disposition: str = "attachment") -> str:
+    """
+    Build a Content-Disposition header with both an ASCII `filename` fallback
+    (RFC 6266) and a `filename*` UTF-8 parameter (RFC 5987), since Starlette
+    encodes headers as latin-1 and any non-ASCII filename would otherwise raise
+    UnicodeEncodeError inside Response(). Backslash and forward slash are
+    removed as path separators, quotes are escaped as quoted-pairs, and
+    semicolons are replaced with underscores in the ASCII fallback only — the
+    exact original name is preserved losslessly in filename*.
+
+    `disposition` selects the disposition type ("attachment" by default,
+    "inline" for content that must keep rendering in place).
+    """
     if not filename:
-        return "attachment"
-    safe = filename.replace("\r", "").replace("\n", "").replace('"', '\\"')
-    return f'attachment; filename="{safe}"'
+        return disposition
+
+    cleaned = "".join(ch for ch in filename if ch.isprintable() and ch not in ("/", "\\"))
+    if not cleaned:
+        return disposition
+
+    if "." in cleaned:
+        base, _, ext = cleaned.rpartition(".")
+    else:
+        base, ext = cleaned, ""
+
+    ascii_base = base.encode("ascii", "ignore").decode("ascii").strip(" ")
+    ascii_ext = ext if ext.isascii() else ""
+
+    name_part = ascii_base if any(ch.isalnum() for ch in ascii_base) else "download"
+    ascii_fallback = f"{name_part}.{ascii_ext}" if ascii_ext else name_part
+    ascii_fallback = ascii_fallback.replace('"', '\\"').replace(";", "_")
+
+    encoded = quote(cleaned, safe="")
+    return f'{disposition}; filename="{ascii_fallback}"; filename*=UTF-8\'\'{encoded}'
+
+
+_UUID_PREFIX_RE = re.compile(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}_',
+    re.IGNORECASE,
+)
+
+
+def _strip_uuid_prefix(filename: str) -> str:
+    return _UUID_PREFIX_RE.sub('', filename)
 
 
 def get_attachment_response(content, filename: str = "") -> Response:
@@ -89,7 +131,11 @@ def get_plain_text_response(content, filename: str = "") -> Response:
     if isinstance(content, bytes):
         content = content.decode("utf-8", errors="backslashreplace")
 
-    return Response(content=content, media_type="text/plain")
+    return Response(
+        content=content,
+        media_type="text/plain",
+        headers={"Content-Disposition": _safe_disposition(filename)},
+    )
 
 
 def check_and_sanitize_content(content, filename: str = ""):
@@ -116,16 +162,16 @@ def check_and_sanitize_content(content, filename: str = ""):
         has_html = any(tag in sample for tag in html_indicators)
 
         if has_js and not has_html:
-            return get_plain_text_response(content)
+            return get_plain_text_response(content, filename)
 
         if has_html:
-            return get_sanitized_html_response(content)
+            return get_sanitized_html_response(content, filename)
 
         has_script = any(tag in sample for tag in script_indicators)
         if has_script:
-            return get_plain_text_response(content)
+            return get_plain_text_response(content, filename)
 
-    return Response(content=content, media_type=_OCTET_STREAM)
+    return get_attachment_response(content, filename)
 
 
 INLINE_SAFE_MIME_PREFIXES = ("image/", "application/pdf")
@@ -164,15 +210,20 @@ def read_file(file_name: str) -> Any:
     try:
         file_object = FileService.get_file_object(file_name)
 
+        display_name = _strip_uuid_prefix(file_object.name) or file_object.name
         normalised = normalise_mime(file_object.mime_type)
         handler = READ_FILE_MIME_TYPE_HANDLERS.get(normalised)
 
         if handler:
-            response = handler(file_object.content, file_object.name)
+            response = handler(file_object.content, display_name)
         elif normalised.startswith(INLINE_SAFE_MIME_PREFIXES):
-            response = Response(content=file_object.content, media_type=normalised)
+            response = Response(
+                content=file_object.content,
+                media_type=normalised,
+                headers={"Content-Disposition": _safe_disposition(display_name, "inline")},
+            )
         else:
-            response = get_attachment_response(file_object.content, file_object.name)
+            response = get_attachment_response(file_object.content, display_name)
 
         response.headers["X-Content-Type-Options"] = "nosniff"
         return response

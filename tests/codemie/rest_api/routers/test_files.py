@@ -14,6 +14,9 @@
 
 from codemie.core.constants import MermaidMimeType
 import pytest
+import re
+
+from urllib.parse import unquote
 
 from httpx import AsyncClient, ASGITransport
 from fastapi import FastAPI, Response, status
@@ -62,6 +65,7 @@ async def test_read_file_success(mocker):
     mock_file_object = mocker.Mock()
     mock_file_object.content = mock_file_content
     mock_file_object.mime_type = "text/plain"
+    mock_file_object.name = "test.txt"
 
     mock_fs_repo = mocker.Mock()
     mock_fs_repo.read_file.return_value = mock_file_object
@@ -534,11 +538,117 @@ def test_safe_disposition_strips_crlf():
 
 def test_safe_disposition_escapes_quotes():
     disp = files._safe_disposition('trick"name.svg')
-    assert disp == 'attachment; filename="trick\\"name.svg"'
+    assert disp == ('attachment; filename="trick\\"name.svg"; filename*=UTF-8\'\'trick%22name.svg')
 
 
 def test_safe_disposition_empty_filename():
     assert files._safe_disposition("") == "attachment"
+
+
+def test_safe_disposition_empty_filename_honours_disposition_type():
+    assert files._safe_disposition("", "inline") == "inline"
+
+
+@pytest.mark.parametrize("name", [".env.local", ".eslintrc.json"])
+def test_safe_disposition_dotfile_with_extension_keeps_leading_dot(name):
+    """A dotfile that also carries an extension must keep its leading dot in the
+    ASCII fallback — rpartition leaves the dot inside `base`, so the fallback
+    strips spaces only, never dots.
+    """
+    disp = files._safe_disposition(name)
+
+    assert f'filename="{name}"' in disp
+    encoded_part = disp.split("filename*=UTF-8''", 1)[1]
+    assert unquote(encoded_part) == name
+
+
+def test_safe_disposition_dotfile_without_extension_uses_download_placeholder():
+    """`.bashrc` has no second dot, so rpartition yields base="" / ext="bashrc"
+    and the fallback becomes "download.bashrc". This is intended: the ASCII
+    fallback is a suggestion only, and filename* still carries the exact name.
+    Do not "fix" this by special-casing leading dots.
+    """
+    disp = files._safe_disposition(".bashrc")
+
+    assert 'filename="download.bashrc"' in disp
+    assert "filename*=UTF-8''.bashrc" in disp
+
+
+def test_safe_disposition_strips_surrounding_spaces():
+    disp = files._safe_disposition("  spaced  .txt")
+
+    assert 'filename="spaced.txt"' in disp
+
+
+def test_safe_disposition_unicode_filename_round_trips():
+    """Non-ASCII filenames must not crash header encoding and must round-trip via filename*."""
+    name = "звіт.xlsx"
+    disp = files._safe_disposition(name)
+
+    # Starlette encodes headers as latin-1 (response.py: v.encode("latin-1")) —
+    # the header must survive that regardless of the original filename's script.
+    disp.encode("latin-1")
+
+    assert "filename*=UTF-8''" in disp
+    encoded_part = disp.split("filename*=UTF-8''", 1)[1]
+    assert unquote(encoded_part) == name
+
+    match = re.search(r'filename="([^"]*)"', disp)
+    assert match is not None
+    assert match.group(1)  # non-empty ASCII fallback present
+
+
+def test_safe_disposition_cyrillic_fallback_uses_download_placeholder():
+    """When the name has no ASCII letters/digits, the fallback is 'download' plus
+    the (ASCII) original extension — the full name still round-trips via filename*.
+    """
+    name = "звіт.xlsx"
+    disp = files._safe_disposition(name)
+
+    assert 'filename="download.xlsx"' in disp
+    encoded_part = disp.split("filename*=UTF-8''", 1)[1]
+    assert unquote(encoded_part) == name
+
+
+def test_safe_disposition_non_ascii_no_extension_fallback_is_bare_download():
+    name = "отчет"
+    disp = files._safe_disposition(name)
+
+    assert 'filename="download"' in disp
+    encoded_part = disp.split("filename*=UTF-8''", 1)[1]
+    assert unquote(encoded_part) == name
+
+
+def test_safe_disposition_semicolon_round_trips_and_fallback_is_sanitised():
+    """A `\\;` quoted-pair is not reliably unescaped by every parser, so the ASCII
+    fallback replaces `;` with `_` instead of escaping it. The exact original
+    name (with the real semicolon) is still preserved losslessly in filename*.
+    """
+    name = "weird;name.txt"
+    disp = files._safe_disposition(name)
+
+    encoded_part = disp.split("filename*=UTF-8''", 1)[1]
+    assert unquote(encoded_part) == name
+    assert 'filename="weird_name.txt"' in disp
+
+    match = re.search(r'filename="([^"]*)"', disp)
+    assert match is not None
+    assert "\\" not in match.group(1)
+
+
+def test_safe_disposition_quote_and_backslash_cannot_break_quoted_string():
+    name = 'evil\\".txt'  # literal backslash followed by a quote
+    disp = files._safe_disposition(name)
+
+    # A quoted-string parser must be able to consume the whole fallback value
+    # without hitting an unescaped quote before the real closing quote.
+    match = re.match(r'attachment; filename="((?:[^"\\]|\\.)*)"; filename\*=', disp)
+    assert match is not None, f"quoted-string was broken out of: {disp}"
+
+    # Backslash is stripped as a path separator, so the round trip is against
+    # the name with backslashes removed, not the raw original.
+    encoded_part = disp.split("filename*=UTF-8''", 1)[1]
+    assert unquote(encoded_part) == name.replace("\\", "")
 
 
 def test_get_attachment_response_forces_download():
@@ -566,9 +676,137 @@ def test_get_plain_text_response_accepts_filename_kwarg():
     assert resp.media_type == "text/plain"
 
 
+def test_get_plain_text_response_sets_content_disposition():
+    resp = files.get_plain_text_response("var x = 1;", "script.js")
+    assert resp.headers.get("content-disposition") == ('attachment; filename="script.js"; filename*=UTF-8\'\'script.js')
+
+
+def test_get_plain_text_response_no_filename_returns_bare_attachment():
+    resp = files.get_plain_text_response("data")
+    assert resp.headers.get("content-disposition") == "attachment"
+
+
 def test_check_and_sanitize_content_accepts_filename_kwarg():
     resp = files.check_and_sanitize_content(b"\x89PNG", "img.png")
     assert resp.media_type == "application/octet-stream"
+
+
+def test_check_and_sanitize_content_js_sets_content_disposition():
+    js = b"function test() { alert('XSS'); }"
+    resp = files.check_and_sanitize_content(js, "evil.js")
+    assert resp.media_type == "text/plain"
+    assert resp.headers.get("content-disposition") == ('attachment; filename="evil.js"; filename*=UTF-8\'\'evil.js')
+
+
+def test_check_and_sanitize_content_script_tag_sets_content_disposition():
+    script = b"<script>alert('XSS');</script>"
+    resp = files.check_and_sanitize_content(script, "page.html")
+    assert resp.media_type == "text/plain"
+    assert resp.headers.get("content-disposition") == ('attachment; filename="page.html"; filename*=UTF-8\'\'page.html')
+
+
+def test_check_and_sanitize_content_html_sets_content_disposition():
+    html = b"<html><body><h1>Hi</h1></body></html>"
+    resp = files.check_and_sanitize_content(html, "report.html")
+    assert resp.media_type == "text/html"
+    assert resp.headers.get("content-disposition") == (
+        'attachment; filename="report.html"; filename*=UTF-8\'\'report.html'
+    )
+
+
+def test_check_and_sanitize_content_binary_sets_content_disposition():
+    binary = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00"
+    resp = files.check_and_sanitize_content(binary, "image.png")
+    assert resp.media_type == "application/octet-stream"
+    assert resp.headers.get("content-disposition") == ('attachment; filename="image.png"; filename*=UTF-8\'\'image.png')
+
+
+def test_check_and_sanitize_content_binary_no_filename_bare_attachment():
+    binary = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00"
+    resp = files.check_and_sanitize_content(binary)
+    assert resp.media_type == "application/octet-stream"
+    assert resp.headers.get("content-disposition") == "attachment"
+
+
+def test_strip_uuid_prefix_removes_leading_uuid():
+    name = "a1b2c3d4-e5f6-7890-abcd-ef1234567890_report.xlsx"
+    assert files._strip_uuid_prefix(name) == "report.xlsx"
+
+
+def test_strip_uuid_prefix_no_uuid_unchanged():
+    assert files._strip_uuid_prefix("report.xlsx") == "report.xlsx"
+
+
+def test_strip_uuid_prefix_uuid_in_middle_unchanged():
+    name = "prefix_a1b2c3d4-e5f6-7890-abcd-ef1234567890_suffix.csv"
+    assert files._strip_uuid_prefix(name) == name
+
+
+def test_strip_uuid_prefix_empty_string():
+    assert files._strip_uuid_prefix("") == ""
+
+
+@pytest.mark.anyio
+async def test_read_file_uuid_prefix_stripped_from_content_disposition(mocker):
+    """UUID-prefixed storage name must be stripped before appearing in Content-Disposition."""
+    uuid_name = "a1b2c3d4-e5f6-7890-abcd-ef1234567890_report.xlsx"
+    _setup_read_file_mock(mocker, b"PK fake xlsx bytes", "application/octet-stream", uuid_name)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+        response = await ac.get(f"/v1/files/{uuid_name}")
+
+    assert response.status_code == 200
+    disposition = response.headers.get("content-disposition", "")
+    assert (
+        'filename="report.xlsx"' in disposition
+    ), f"Expected clean filename in Content-Disposition but got: {disposition}"
+    assert "a1b2c3d4" not in disposition, "UUID prefix must not appear in Content-Disposition"
+
+
+@pytest.mark.anyio
+async def test_read_file_plain_text_has_content_disposition(mocker):
+    """text/plain files must set Content-Disposition with the stripped filename."""
+    uuid_name = "b2c3d4e5-f6a7-8901-bcde-f12345678901_notes.txt"
+    _setup_read_file_mock(mocker, b"Hello world", "text/plain", uuid_name)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+        response = await ac.get(f"/v1/files/{uuid_name}")
+
+    assert response.status_code == 200
+    disposition = response.headers.get("content-disposition", "")
+    assert 'filename="notes.txt"' in disposition
+
+
+@pytest.mark.anyio
+async def test_read_file_uuid_only_name_keeps_raw_name(mocker):
+    """When stripping the UUID prefix leaves nothing, fall back to the raw stored name."""
+    uuid_only_name = "a1b2c3d4-e5f6-7890-abcd-ef1234567890_"
+    _setup_read_file_mock(mocker, b"data", "application/octet-stream", uuid_only_name)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+        response = await ac.get(f"/v1/files/{uuid_only_name}")
+
+    assert response.status_code == 200
+    disposition = response.headers.get("content-disposition", "")
+    assert f'filename="{uuid_only_name}"' in disposition
+
+
+@pytest.mark.anyio
+async def test_read_file_cyrillic_filename_does_not_raise(mocker):
+    """Non-ASCII filenames must not raise UnicodeEncodeError inside Response()."""
+    cyrillic_name = "звіт.xlsx"
+    _setup_read_file_mock(mocker, b"xlsx bytes", "application/octet-stream", cyrillic_name)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+        response = await ac.get(f"/v1/files/{cyrillic_name}")
+
+    assert response.status_code == 200
+    disposition = response.headers.get("content-disposition", "")
+    assert "filename*=UTF-8''%D0%B7" in disposition
 
 
 def test_get_sanitized_html_response_forces_download():
@@ -820,7 +1058,11 @@ async def test_read_file_raster_image_serves_inline(mocker):
         response = await ac.get("/v1/files/photo.png")
 
     assert response.status_code == 200
-    assert "attachment" not in response.headers.get("content-disposition", "")
+    disposition = response.headers.get("content-disposition", "")
+    assert "attachment" not in disposition
+    assert disposition.startswith("inline;")
+    assert 'filename="photo.png"' in disposition
+    assert "filename*=UTF-8''photo.png" in disposition
     assert response.headers.get("content-type", "").startswith("image/png")
 
 
@@ -834,7 +1076,31 @@ async def test_read_file_pdf_serves_inline(mocker):
         response = await ac.get("/v1/files/doc.pdf")
 
     assert response.status_code == 200
-    assert "attachment" not in response.headers.get("content-disposition", "")
+    disposition = response.headers.get("content-disposition", "")
+    assert "attachment" not in disposition
+    assert disposition.startswith("inline;")
+    assert 'filename="doc.pdf"' in disposition
+    assert "filename*=UTF-8''doc.pdf" in disposition
+
+
+@pytest.mark.anyio
+async def test_read_file_inline_cyrillic_filename_encodes_cleanly(mocker):
+    """Inline responses go through the same latin-1 header encoding as attachments —
+    a non-ASCII name must not raise and must round-trip via filename*.
+    """
+    cyrillic_name = "світлина.png"
+    _setup_read_file_mock(mocker, b"\x89PNG\r\n\x1a\n", "image/png", cyrillic_name)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+        response = await ac.get(f"/v1/files/{cyrillic_name}")
+
+    assert response.status_code == 200
+    disposition = response.headers.get("content-disposition", "")
+    assert disposition.startswith("inline;")
+    assert 'filename="download.png"' in disposition
+    encoded_part = disposition.split("filename*=UTF-8''", 1)[1]
+    assert unquote(encoded_part) == cyrillic_name
 
 
 @pytest.mark.anyio
