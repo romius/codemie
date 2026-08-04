@@ -1,0 +1,102 @@
+{
+  "gate": "code-review.final",
+  "decision": "approve",
+  "confidence": "high",
+  "rationale": "All three review lenses completed. Acceptance: all 10 criteria pass (4 story ACs + 6 spec requirements). Edge-case: no unhandled paths found. Blind: 7 concerns raised; all dismissed — stated side-effect removal is documented in the spec and mirrors the prior proxy-path fix (c8e6529e7), comment-absence concerns conflict with the project's no-comment convention, test-assertion concerns are superseded by the primary assert_not_called() guard, and config-patch asymmetry is intentional (bypass path exits before LITE_LLM_APP_KEY is needed). Standards: branch naming and commit format conform to git-workflow.md; ruff passed; no new source files (no license header gap); fix reduces privacy exposure rather than introducing any security issue. No blocking findings survive triage.",
+  "risk_flags": [],
+  "business_review": [
+    {
+      "kind": "story-ac",
+      "item": "Requests using a personal LiteLLM key do not send a populated user_id header (model_kwargs[\"user\"])",
+      "status": "pass",
+      "notes": "Bypass branch's call to _resolve_direct_project_budget_runtime and the conditional model_kwargs assignment deleted; branch falls straight through to return."
+    },
+    {
+      "kind": "story-ac",
+      "item": "Budget attribution for personal LiteLLM key requests is correct",
+      "status": "pass",
+      "notes": "LiteLLM never sees a platform user field for personal-key requests; cost tracked via personal key itself, matching the corrected proxy path from c8e6529e7."
+    },
+    {
+      "kind": "story-ac",
+      "item": "Existing flows that rely on user_id for non-personal key scenarios continue to work as expected",
+      "status": "pass",
+      "notes": "Only the if creds: bypass branch is modified; non-bypass budget-check path is untouched. test_sets_user_injection_when_no_personal_credentials confirms model_kwargs[\"user\"] is still set on the non-personal path."
+    },
+    {
+      "kind": "story-ac",
+      "item": "Regression coverage confirms correct behavior for both personal and non-personal LiteLLM key usage",
+      "status": "pass",
+      "notes": "test_skips_user_injection_when_has_personal_credentials and test_sets_user_injection_when_no_personal_credentials both added to TestCreateLiteLLMChatModel."
+    },
+    {
+      "kind": "spec",
+      "item": "Replace if creds: block (L433-451) with pure early-return, deleting resolver call, result destructuring, conditional model_kwargs assignment, and comment",
+      "status": "pass",
+      "notes": "Diff deletes exactly the comment block, _resolve_direct_project_budget_runtime call and destructuring, and conditional model_kwargs assignment; pre-existing return kept."
+    },
+    {
+      "kind": "spec",
+      "item": "No other production files change (proxy_router.py untouched, codemie_enterprise wheel untouched)",
+      "status": "pass",
+      "notes": "Diff touches only src/codemie/enterprise/litellm/llm_factory.py (production) and tests/enterprise/litellm/test_llm_factory.py plus docs artifacts."
+    },
+    {
+      "kind": "spec",
+      "item": "test_skips_budget_check_when_has_credentials left as-is (no change needed)",
+      "status": "pass",
+      "notes": "No modifications to this existing test appear in the diff."
+    },
+    {
+      "kind": "spec",
+      "item": "New test_skips_user_injection_when_has_personal_credentials: user_id set, litellm_context with credentials+current_project, patches resolver at module level, asserts not-called and model_kwargs user absent",
+      "status": "pass",
+      "notes": "Test added with user_id=user-123, credentials+current_project=test-project, patches codemie.enterprise.litellm.llm_factory._resolve_direct_project_budget_runtime, asserts assert_not_called() and model_kwargs.get(user) is None."
+    },
+    {
+      "kind": "spec",
+      "item": "New test_sets_user_injection_when_no_personal_credentials: no creds, project resolves to member-tracking, asserts model_kwargs user is set",
+      "status": "pass",
+      "notes": "Test added with credentials=None, current_project=test-project, mocked resolver returning member-user-123, asserts model_kwargs.get(user) == member-user-123."
+    },
+    {
+      "kind": "spec",
+      "item": "create_litellm_embedding_model fixed automatically via shared _configure_direct_runtime_overrides call path",
+      "status": "pass",
+      "notes": "Fix is in the shared helper function itself; spec explicitly states no separate test is required for the embedding path."
+    }
+  ],
+  "standards_review": [
+    {
+      "standard": "git-workflow: branch naming",
+      "status": "pass",
+      "notes": "Branch EPMCDME-13264_personal-litellm-key-user-id-header matches EPMCDME-####_short-description convention."
+    },
+    {
+      "standard": "git-workflow: commit message format",
+      "status": "pass",
+      "notes": "Commits use EPMCDME-13264: prefix as required by git-workflow.md."
+    },
+    {
+      "standard": "code-quality: ruff",
+      "status": "pass",
+      "notes": "make ruff passed during implementation (recorded in session evidence before commits)."
+    },
+    {
+      "standard": "code-quality: license headers",
+      "status": "pass",
+      "notes": "No new source files added; existing files modified only — no license header obligation triggered."
+    },
+    {
+      "standard": "security: no secrets logged or hardcoded",
+      "status": "pass",
+      "notes": "No real credentials in changed lines; test api_key is a dummy value; logger.info logs user_id/email as structured context, unchanged existing behavior."
+    },
+    {
+      "standard": "security: net exposure change",
+      "status": "pass",
+      "notes": "Removing user injection eliminates incorrect cross-budget attribution — net positive for privacy and budget integrity."
+    }
+  ],
+  "findings": []
+}

@@ -436,21 +436,10 @@ def _configure_direct_runtime_overrides(
             f"user_id={user_id!r} username={user_email!r} "
             f"mode={RuntimeBudgetMode.USER_CREDENTIALS_BYPASS.value!r} reason=own_credentials"
         )
-        # Global integrations manage their own spend in the user's LiteLLM instance —
-        # skip member-budget user injection so our proxy doesn't double-track the spend.
-        if litellm_context is not None and litellm_context.is_global:
-            return
-        # Non-global bypass: resolve project member runtime to inject end_user for
-        # override-customer spending tracking. Only model_kwargs["user"] is taken;
-        # api_key/base_url are intentionally ignored — creds from litellm_context take precedence.
-        (project_runtime_user, _, _, _) = _resolve_direct_project_budget_runtime(
-            llm_model_details=llm_model_details,
-            litellm_context=litellm_context,
-            user_id=user_id,
-            user_email=user_email,
-        )
-        if project_runtime_user:
-            request_params["model_kwargs"] = {"user": project_runtime_user}
+        # Personal-key bypass never injects the member customer: the request is paid by
+        # the user's own key, so member-budget attribution/enforcement must not apply.
+        # Mirrors the proxy path (c8e6529e7, EPMCDME-11961); global and non-global
+        # personal keys behave identically here (EPMCDME-13264).
         return
 
     (

@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "task": "Fix personal LiteLLM key requests so the user identity (model_kwargs['user'] / injected body 'user' field) is not sent, preventing budget usage from being misattributed to the user instead of bypassed correctly.",
+  "generated": "2026-07-20",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 17,
+  "size": "M",
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Fix spans llm_factory.py (_configure_direct_runtime_overrides, _resolve_direct_project_budget_runtime), the shared runtime_budget_selection.py decision function consumed by both the direct-SDK and proxy-forwarding paths, and a likely confirmation/no-op touch in proxy_router.py — reconciling two independently-drifted implementations of the same 'inject user or not' decision, which is a core shared utility." },
+    { "dimension": "requirements_clarity", "reason": "Core acceptance criteria are well-defined, but one specific open question needs confirmation before implementation: whether the project-member override that can still inject 'user' during personal-key bypass mode is intentional (per an existing inline comment) or itself part of the defect — the current code comment appears to conflict with a literal reading of the acceptance criteria." },
+    { "dimension": "technical_risk", "reason": "Low novelty overall — the proxy-router path already implements the correct bypass pattern to mirror — but the change affects budget/cost attribution correctness across two parallel implementations, so getting the reconciliation wrong risks silent financial mis-attribution rather than an obvious functional break." }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from M to L: touches core shared utility — runtime_budget_selection.py's select_runtime_budget_mode decision function is called from both the direct-SDK (llm_factory.py) and HTTP-proxy (proxy_router.py) code paths that this fix must reconcile."
+  ],
+  "split_recommendation": null
+}

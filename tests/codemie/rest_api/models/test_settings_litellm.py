@@ -112,6 +112,5 @@ class TestLiteLLMContext:
         expected = {
             "credentials": {"api_key": "key", "url": "https://test.com"},
             "current_project": "test-project",
-            "is_global": False,
         }
         assert serialized == expected

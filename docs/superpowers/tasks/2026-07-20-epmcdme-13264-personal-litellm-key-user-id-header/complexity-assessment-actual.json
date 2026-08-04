@@ -1,0 +1,63 @@
+{
+  "task": "Remove erroneous model_kwargs['user'] injection from the personal-key bypass branch in _configure_direct_runtime_overrides, with regression test coverage for both the bypass and member-tracking paths",
+  "generated": "2026-07-20T00:00:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 1,
+      "label": "XS",
+      "affected": "_configure_direct_runtime_overrides (llm_factory.py)",
+      "layers": "Service"
+    },
+    "requirements_clarity": {
+      "score": 1,
+      "label": "XS",
+      "status": "Clear",
+      "gaps": null
+    },
+    "technical_risk": {
+      "score": 1,
+      "label": "XS",
+      "risk_factors": "Touches billing/budget user-attribution metadata (model_kwargs['user']) sent to the LiteLLM proxy, but the fix removes code from an early-return branch that already exists elsewhere in the same function",
+      "mitigation": "Two new regression tests lock the boundary behavior (personal-key bypass must NOT inject user; member-tracking path must still inject user); a 12-line revert is trivial to roll back if needed"
+    },
+    "file_change_estimate": {
+      "score": 1,
+      "label": "XS",
+      "modified_files": 2,
+      "modified_file_list": [
+        "src/codemie/enterprise/litellm/llm_factory.py",
+        "tests/enterprise/litellm/test_llm_factory.py"
+      ],
+      "new_files": 0,
+      "new_file_list": [],
+      "affected_dirs": [
+        "src/codemie/enterprise/litellm",
+        "tests/enterprise/litellm"
+      ]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 1,
+      "label": "XS",
+      "layers_changed": ["Service"],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 6,
+  "size": "XS",
+  "band_range": "6-9",
+  "files_changed": 2,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Single function touched (_configure_direct_runtime_overrides); no new abstractions, no layer boundaries crossed" },
+    { "dimension": "file_change_estimate", "reason": "2 files changed total (1 production, 1 test), 0 new files, changes fully localized to the litellm package and its test module" }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

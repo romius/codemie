@@ -171,6 +171,97 @@ class TestCreateLiteLLMChatModel:
                                         # Should NOT have checked budget
                                         mock_check_budget.assert_not_called()
 
+    def test_skips_user_injection_when_has_personal_credentials(self):
+        """Personal-key bypass must not inject model_kwargs['user'] even when user_id and project are present."""
+        from codemie.configs.config import config
+        from codemie.rest_api.models.settings import LiteLLMCredentials, LiteLLMContext
+
+        creds = LiteLLMCredentials(api_key="personal-key", url="http://personal:4000")
+        litellm_context = LiteLLMContext(credentials=creds, current_project="test-project")
+
+        mock_model_details = MagicMock()
+        mock_model_details.base_name = "gpt-4"
+        mock_model_details.configuration = None
+        mock_model_details.features.streaming = True
+        mock_model_details.features.temperature = True
+        mock_model_details.features.parallel_tool_calls = True
+        mock_model_details.features.max_tokens = True
+        mock_model_details.features.top_p = True
+        mock_model_details.api_version = None
+
+        with patch.object(config, "LITE_LLM_URL", "http://test:4000"):
+            with patch.object(config, "OPENAI_API_VERSION", "2025-04-01-preview"):
+                with patch.object(config, "OPENAI_API_TYPE", "azure"):
+                    with patch.object(config, "AZURE_OPENAI_MAX_RETRIES", 3):
+                        with patch.object(config, "LITE_LLM_TAGS_HEADER_VALUE", "default"):
+                            with patch.object(config, "LITE_LLM_PROJECTS_TO_TAGS_LIST", ""):
+                                with patch(
+                                    "codemie.enterprise.litellm.llm_factory._resolve_direct_project_budget_runtime"
+                                ) as mock_resolver:
+                                    # Return a non-None user so the bug would inject it before the fix
+                                    mock_resolver.return_value = ("project-member-123", {}, None, None)
+                                    with patch(
+                                        "codemie.enterprise.litellm.llm_factory.LiteLLMChatOpenAI"
+                                    ) as mock_model_cls:
+                                        from codemie.enterprise.litellm.llm_factory import create_litellm_chat_model
+
+                                        create_litellm_chat_model(
+                                            llm_model_details=mock_model_details,
+                                            litellm_context=litellm_context,
+                                            user_email="test@example.com",
+                                            user_id="user-123",
+                                        )
+
+                                        # Primary: resolver must not be called in personal-key bypass mode
+                                        mock_resolver.assert_not_called()
+                                        # Secondary: model_kwargs must not carry a "user" value
+                                        call_kwargs = mock_model_cls.call_args.kwargs
+                                        assert call_kwargs.get("model_kwargs", {}).get("user") is None
+
+    def test_sets_user_injection_when_no_personal_credentials(self):
+        """Member-tracking path must still inject model_kwargs['user'] = project runtime user."""
+        from codemie.configs.config import config
+        from codemie.rest_api.models.settings import LiteLLMContext
+
+        # No personal key (credentials=None) but project context present so member-tracking runs
+        litellm_context = LiteLLMContext(credentials=None, current_project="test-project")
+
+        mock_model_details = MagicMock()
+        mock_model_details.base_name = "gpt-4"
+        mock_model_details.configuration = None
+        mock_model_details.features.streaming = True
+        mock_model_details.features.temperature = True
+        mock_model_details.features.parallel_tool_calls = True
+        mock_model_details.features.max_tokens = True
+        mock_model_details.features.top_p = True
+        mock_model_details.api_version = None
+
+        with patch.object(config, "LITE_LLM_URL", "http://test:4000"):
+            with patch.object(config, "LITE_LLM_APP_KEY", "test-key"):
+                with patch.object(config, "OPENAI_API_VERSION", "2025-04-01-preview"):
+                    with patch.object(config, "OPENAI_API_TYPE", "azure"):
+                        with patch.object(config, "AZURE_OPENAI_MAX_RETRIES", 3):
+                            with patch.object(config, "LITE_LLM_TAGS_HEADER_VALUE", "default"):
+                                with patch.object(config, "LITE_LLM_PROJECTS_TO_TAGS_LIST", ""):
+                                    with patch(
+                                        "codemie.enterprise.litellm.llm_factory._resolve_direct_project_budget_runtime",
+                                        return_value=("member-user-123", {}, None, None),
+                                    ):
+                                        with patch(
+                                            "codemie.enterprise.litellm.llm_factory.LiteLLMChatOpenAI"
+                                        ) as mock_model_cls:
+                                            from codemie.enterprise.litellm.llm_factory import create_litellm_chat_model
+
+                                            create_litellm_chat_model(
+                                                llm_model_details=mock_model_details,
+                                                litellm_context=litellm_context,
+                                                user_email="test@example.com",
+                                                user_id="user-123",
+                                            )
+
+                                            call_kwargs = mock_model_cls.call_args.kwargs
+                                            assert call_kwargs.get("model_kwargs", {}).get("user") == "member-user-123"
+
 
 class TestGetLiteLLMChatModel:
     """Test get_litellm_chat_model() wrapper function."""
@@ -667,12 +758,12 @@ class TestConfigureDirectRuntimeOverrides:
     """Tests for _configure_direct_runtime_overrides — bypass-mode user injection behaviour."""
 
     def test_global_integration_bypass_does_not_inject_user(self):
-        """Global LiteLLM integration (is_global=True) in bypass mode must NOT set model_kwargs[user]."""
+        """Global LiteLLM integration in bypass mode must NOT set model_kwargs[user]."""
         from codemie.enterprise.litellm.llm_factory import _configure_direct_runtime_overrides
         from codemie.rest_api.models.settings import LiteLLMContext, LiteLLMCredentials
 
         creds = LiteLLMCredentials(api_key="global-key", url="http://litellm:4000")
-        context = LiteLLMContext(credentials=creds, current_project="test-project", is_global=True)
+        context = LiteLLMContext(credentials=creds, current_project="test-project")
         request_params: dict = {}
 
         with patch("codemie.enterprise.litellm.llm_factory._resolve_direct_project_budget_runtime") as mock_resolve:
@@ -690,13 +781,13 @@ class TestConfigureDirectRuntimeOverrides:
 
         assert "model_kwargs" not in request_params
 
-    def test_non_global_bypass_injects_user_for_spend_tracking(self):
-        """Non-global personal key (is_global=False) in bypass mode injects model_kwargs[user]."""
+    def test_non_global_bypass_does_not_inject_user(self):
+        """Non-global personal key in bypass mode must NOT set model_kwargs[user] (EPMCDME-13264)."""
         from codemie.enterprise.litellm.llm_factory import _configure_direct_runtime_overrides
         from codemie.rest_api.models.settings import LiteLLMContext, LiteLLMCredentials
 
         creds = LiteLLMCredentials(api_key="personal-key", url="http://litellm:4000")
-        context = LiteLLMContext(credentials=creds, current_project="test-project", is_global=False)
+        context = LiteLLMContext(credentials=creds, current_project="test-project")
         request_params: dict = {}
 
         with patch("codemie.enterprise.litellm.llm_factory._resolve_direct_project_budget_runtime") as mock_resolve:
@@ -712,5 +803,5 @@ class TestConfigureDirectRuntimeOverrides:
                 request_params=request_params,
             )
 
-        mock_resolve.assert_called_once()
-        assert request_params.get("model_kwargs", {}).get("user") == "member-ref-123"
+        mock_resolve.assert_not_called()
+        assert "model_kwargs" not in request_params

@@ -79,7 +79,6 @@ def set_llm_context(
 
     try:
         litellm_creds = SettingsService.get_litellm_creds(project_name=effective_project, user_id=user.id)
-        is_global_integration = False
         if litellm_creds:
             setting = SettingsService.retrieve_setting(
                 {
@@ -94,12 +93,9 @@ def set_llm_context(
                 litellm_creds = None
             elif _is_shared_asset_creds_override(setting, asset):
                 litellm_creds = None  # shared asset → force project budget when user has non-global personal key
-            if litellm_creds and getattr(setting, 'is_global', False):
-                is_global_integration = True
         litellm_context = LiteLLMContext(
             credentials=litellm_creds,
             current_project=effective_project,
-            is_global=is_global_integration,
         )
         set_litellm_context(litellm_context)
         dial_creds = SettingsService.get_dial_creds(effective_project)

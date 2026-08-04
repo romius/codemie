@@ -188,7 +188,6 @@ class LiteLLMCredentials(BaseModel):
 class LiteLLMContext(BaseModel):
     credentials: Optional[LiteLLMCredentials]
     current_project: str | None
-    is_global: bool = False
 
 
 class AzureDevOpsCredentials(BaseModel):
