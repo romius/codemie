@@ -244,13 +244,14 @@ class TestUpdateBudgetActivityEvent:
 
 class TestAssignBudgetToUserActivityEvent:
     @pytest.mark.asyncio
+    @patch("codemie.service.budget.budget_service.logger")
     @patch("codemie.service.budget.budget_service.activity_event_repository")
     @patch("codemie.service.budget.budget_service.get_active_provider")
     @patch("codemie.service.budget.budget_service.budget_repository")
     async def test_assign_budget_to_user_emits_user_budget_assigned_event(
-        self, mock_budget_repo, mock_get_provider, mock_activity
+        self, mock_budget_repo, mock_get_provider, mock_activity, mock_logger
     ):
-        """assign_budget_to_user must emit USER_BUDGET_ASSIGNED for each non-None assignment."""
+        """assign_budget_to_user must emit USER_BUDGET_ASSIGNED for each non-None assignment and a completion logger.info."""
         mock_activity.async_insert = AsyncMock()
         session = AsyncMock()
 
@@ -295,6 +296,8 @@ class TestAssignBudgetToUserActivityEvent:
         assert event_dto.actor_id == "admin-1"
         assert event_dto.attributes == {"budget_id": "test-budget"}
         assert call_args[1] is session
+        mock_logger.info.assert_called_once()
+        assert "user_budget_assignment_completed" in mock_logger.info.call_args[0][0]
 
     @pytest.mark.asyncio
     @patch("codemie.service.budget.budget_service.activity_event_repository")
@@ -610,3 +613,32 @@ class TestDeleteProjectBudgetActivityEvent:
             await service.delete_project_budget(session, "nonexistent-id", actor_id="admin-1")
 
         mock_activity.async_insert.assert_not_called()
+
+
+class TestBulkSetUserBudgetsLogger:
+    @pytest.mark.asyncio
+    @patch("codemie.service.budget.budget_service.logger")
+    async def test_bulk_set_user_budgets_logs_completion(self, mock_logger):
+        """bulk_set_user_budgets emits a single completion logger.info after all users are processed."""
+        session = AsyncMock()
+        service = _make_service()
+
+        with (
+            patch.object(service, "validate_assignment_budget_categories", AsyncMock()),
+            patch.object(
+                service,
+                "_load_bulk_budget_users",
+                new=AsyncMock(return_value={"user-1": MagicMock(), "user-2": MagicMock()}),
+            ),
+            patch.object(service, "_persist_bulk_budget_assignments", new=AsyncMock()),
+            patch.object(service, "_propagate_bulk_budget_assignments", new=AsyncMock()),
+        ):
+            await service.bulk_set_user_budgets(
+                session,
+                user_ids=["user-1", "user-2"],
+                assignments={BudgetCategory.PLATFORM: "shared-budget"},
+                actor_id="admin-1",
+            )
+
+        mock_logger.info.assert_called_once()
+        assert "bulk_user_budget_assignment_completed" in mock_logger.info.call_args[0][0]

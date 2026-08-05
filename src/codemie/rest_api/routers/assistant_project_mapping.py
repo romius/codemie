@@ -116,6 +116,11 @@ def enable_assistant_for_project(
             feature=request.feature.value,
             user=user,
         )
+        logger.info(
+            f"assistant_project_mapping_enabled: project={request.project_name}, "
+            f"assistant_id={assistant_id}, feature={request.feature.value}, "
+            f"by={user.id}, domain=project_management"
+        )
         return BaseResponse(message="Assistant enabled for project feature successfully")
     except AssistantProjectMappingNotFound as e:
         raise_not_found(e.resource_id, e.resource_type)
@@ -153,6 +158,11 @@ def disable_assistant_for_project(
             project_name=project,
             feature=feature.value,
             user=user,
+        )
+        logger.info(
+            f"assistant_project_mapping_disabled: project={project}, "
+            f"assistant_id={assistant_id}, feature={feature.value}, "
+            f"by={user.id}, domain=project_management"
         )
         return BaseResponse(message="Assistant disabled for project feature successfully")
     except AssistantProjectMappingNotFound as e:

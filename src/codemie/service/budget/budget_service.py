@@ -807,7 +807,10 @@ class BudgetService:
                     created_budgets += budget_created
             except Exception as exc:
                 failed += 1
-                logger.warning(f"Failed to backfill budget assignment for customer {entry.user_identifier!r}: {exc}")
+                logger.warning(
+                    f"Failed to backfill budget assignment for category {entry.budget_category.value!r}: "
+                    f"{exc}, domain=budget_management"
+                )
         return imported, skipped_existing, skipped_missing_user, created_budgets, failed
 
     async def backfill_user_budget_assignments(
@@ -1141,6 +1144,11 @@ class BudgetService:
                     logger.warning(
                         f"Failed to reassign default budget for user {user_id!r} category {category.value!r}: {exc}"
                     )
+        logger.info(
+            f"budget_event=user_budget_assignment_completed component=budget_service "
+            f"user_id={user_id!r} categories={sorted(c.value for c in assignments)!r} "
+            f"actor_id={actor_id!r} domain=budget_management"
+        )
 
     async def bulk_set_user_budgets(
         self,
@@ -1168,6 +1176,11 @@ class BudgetService:
         db_users = await self._load_bulk_budget_users(session, user_ids, select, UserDB)
         await self._persist_bulk_budget_assignments(session, user_ids, assignments, actor_id)
         await self._propagate_bulk_budget_assignments(db_users, assignments)
+        logger.info(
+            f"budget_event=bulk_user_budget_assignment_completed component=budget_service "
+            f"user_count={len(user_ids)} categories={sorted(c.value for c in assignments)!r} "
+            f"actor_id={actor_id!r} domain=budget_management"
+        )
 
     async def _load_bulk_budget_users(self, session: AsyncSession, user_ids: list[str], select, user_model) -> dict:
         result = await session.execute(select(user_model).where(user_model.id.in_(user_ids)))

@@ -159,6 +159,7 @@ class ProjectService:
                 session.expunge(project)  # Expunge before commit to preserve loaded attributes for the caller
                 session.commit()
                 invalidate_user_from_cache(user.id)
+                logger.info(f"project_created: project={validated_name!r}, by={user.id}, domain=project_management")
                 return project
             except IntegrityError as e:
                 session.rollback()
@@ -218,6 +219,7 @@ class ProjectService:
             )
             session.commit()
             session.refresh(project)
+            logger.info(f"project_updated: project={project.name!r}, by={user.id}, domain=project_management")
             cls._resync_member_allocations_if_needed(project.name, enforce_member_spend_limits)
             return project
 

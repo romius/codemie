@@ -102,7 +102,7 @@ class CsvImportService:
             )
 
         users = [{"user_id": r["user_id"], "is_project_admin": ROLE_TO_IS_ADMIN[r["role"]]} for r in results]
-        return project_assignment_service.bulk_assign_users_to_project(
+        assignment_results = project_assignment_service.bulk_assign_users_to_project(
             session=session,
             project=project,
             users=users,
@@ -110,6 +110,11 @@ class CsvImportService:
             actor=actor,
             action=action,
         )
+        logger.info(
+            f"csv_import_completed: project={project_name}, users={len(users)}, "
+            f"by={actor.id}, domain=project_management"
+        )
+        return assignment_results
 
     def _parse_and_validate(self, session: Session, content: bytes) -> list[dict]:
         """Core pipeline: decode → structural checks → per-row validation → DB email lookup.

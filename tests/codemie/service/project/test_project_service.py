@@ -40,6 +40,8 @@ def super_admin_user() -> User:
 
 
 class TestProjectServiceCreateSharedProject:
+    @patch("codemie.service.project.project_service.activity_event_repository")
+    @patch("codemie.service.project.project_service.logger")
     @patch("codemie.service.project.project_service.user_project_repository")
     @patch("codemie.service.project.project_service.application_repository")
     @patch("codemie.service.project.project_service.user_repository")
@@ -52,6 +54,8 @@ class TestProjectServiceCreateSharedProject:
         mock_user_repository,
         mock_application_repository,
         mock_user_project_repository,
+        mock_logger,
+        mock_activity,
         regular_user,
     ):
         mock_session = MagicMock()
@@ -68,6 +72,7 @@ class TestProjectServiceCreateSharedProject:
             date=datetime(2026, 2, 10, tzinfo=UTC),
         )
         mock_application_repository.create.return_value = project
+        mock_activity.insert = MagicMock()
 
         result = ProjectService.create_shared_project(
             user=regular_user,
@@ -91,6 +96,8 @@ class TestProjectServiceCreateSharedProject:
             is_project_admin=True,
         )
         mock_session.commit.assert_called_once()
+        mock_logger.info.assert_called_once()
+        assert "project_created" in mock_logger.info.call_args[0][0]
 
     @patch("codemie.service.project.project_service.application_repository")
     @patch("codemie.service.project.project_service.user_repository")

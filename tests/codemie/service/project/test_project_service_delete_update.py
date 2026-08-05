@@ -764,3 +764,36 @@ class TestProjectServiceUpdateProject:
 
         assert result is project
         mock_settings_service.set_enforce_member_spend_limits.assert_called_once_with("my-project", False)
+
+    @patch("codemie.service.project.project_service.activity_event_repository")
+    @patch("codemie.service.project.project_service.logger")
+    @patch("codemie.service.project.project_service.cost_center_service")
+    @patch("codemie.service.project.project_service.application_repository")
+    @patch("codemie.service.project.project_service.get_session")
+    def test_update_project_logs_on_success(
+        self,
+        mock_get_session,
+        mock_app_repo,
+        mock_cc_service,
+        mock_logger,
+        mock_activity,
+    ):
+        """update_project emits a logger.info containing 'project_updated' on success."""
+        mock_session = MagicMock()
+        mock_get_session.return_value.__enter__.return_value = mock_session
+        project = _make_app("my-project")
+        project.cost_center_id = None
+        mock_app_repo.get_by_name.return_value = project
+        updated = _make_app("my-project")
+        updated.description = "new desc"
+        mock_app_repo.update_project.return_value = updated
+        mock_activity.insert = MagicMock()
+
+        ProjectService.update_project(
+            user=self._make_super_admin(),
+            project_name="my-project",
+            description="new desc",
+        )
+
+        mock_logger.info.assert_called_once()
+        assert "project_updated" in mock_logger.info.call_args[0][0]

@@ -189,6 +189,61 @@ async def test_override_member_allocation_raises_404_when_member_missing():
 
 
 @pytest.mark.asyncio
+async def test_override_member_allocation_logs_on_success():
+    """override_member_allocation emits a logger.info containing 'member_allocation_override_completed' on success."""
+    service = ProjectBudgetService()
+    session = AsyncMock()
+
+    allocation = SimpleNamespace(
+        id="alloc-1",
+        user_id="user-a",
+        shared_budget_id="proj-budget-1:shared",
+        override_budget_id=None,
+    )
+    budget = SimpleNamespace(budget_id="proj-budget-1", budget_type="project", budget_category="cli")
+    assignment = SimpleNamespace(project_name="proj-a", budget_category="cli")
+
+    with (
+        patch.object(service, "get_project_budget", new=AsyncMock(return_value=(budget, assignment, [allocation]))),
+        patch(
+            "codemie.service.budget.project_budget_service.project_member_budget_assignment_repository.update_member_override",
+            new=AsyncMock(return_value=allocation),
+        ),
+        patch.object(
+            service,
+            "_ensure_override_child_budget",
+            new=AsyncMock(return_value=SimpleNamespace(budget_id="override-bud-1")),
+        ),
+        patch(
+            "codemie.service.budget.project_budget_service.project_member_budget_assignment_repository.update_member_budget_routing",
+            new=AsyncMock(return_value=allocation),
+        ),
+        patch.object(service, "rebalance_project_budget", new=AsyncMock()),
+        patch(
+            "codemie.service.budget.project_budget_service.activity_event_repository.async_insert",
+            new=AsyncMock(),
+        ),
+        patch("codemie.service.budget.project_budget_service.logger") as mock_logger,
+    ):
+        await service.override_member_allocation(
+            session=session,
+            budget_id="proj-budget-1",
+            user_id="user-a",
+            allocated_max_budget=20.0,
+            allocated_soft_budget=15.0,
+            override_reason="manual",
+            actor_id="actor-1",
+        )
+
+    mock_logger.info.assert_called_once()
+    message = mock_logger.info.call_args[0][0]
+    assert "member_allocation_override_completed" in message
+    assert "project_name='proj-a'" in message
+    assert "budget_category='cli'" in message
+    assert "allocated_max_budget=20.0" in message
+
+
+@pytest.mark.asyncio
 async def test_clear_member_override_raises_404_when_member_missing():
     service = ProjectBudgetService()
     session = AsyncMock()
@@ -336,6 +391,11 @@ async def test_clear_member_override_syncs_litellm_with_shared_child_value():
             new=AsyncMock(),
         ),
         patch.object(service, "rebalance_project_budget", new=AsyncMock()) as mock_rebalance,
+        patch(
+            "codemie.service.budget.project_budget_service.activity_event_repository.async_insert",
+            new=AsyncMock(),
+        ),
+        patch("codemie.service.budget.project_budget_service.logger") as mock_logger,
     ):
         await service.clear_member_override(
             session=session,
@@ -343,6 +403,9 @@ async def test_clear_member_override_syncs_litellm_with_shared_child_value():
             user_id="user-a",
             actor_id="actor-1",
         )
+
+    mock_logger.info.assert_called_once()
+    assert "member_allocation_override_cleared" in mock_logger.info.call_args[0][0]
 
     # Provider must receive the shared child value (25.0), NOT the stale override (50.0).
     mock_provider.sync_member_allocation.assert_awaited_once()
@@ -517,3 +580,46 @@ async def test_resync_member_allocation_syncs_litellm_for_equal_mode_members():
 
     # Must still return amounts so _ensure_shared_child_budget_after_resync can run.
     assert result == (25.0, 20.0)
+
+
+@pytest.mark.asyncio
+async def test_update_project_budget_group_logs_on_scalar_only_edit():
+    """A rename/duration-only group edit returns early but must still emit a completion log."""
+    service = ProjectBudgetService()
+    session = AsyncMock()
+
+    group = SimpleNamespace(
+        id="group-1",
+        project_name="proj-a",
+        deleted_at=None,
+        budget_duration="30d",
+    )
+    data = SimpleNamespace(
+        name="renamed-group",
+        description=None,
+        budget_duration="60d",
+        total_amount=None,
+        categories=None,
+    )
+
+    with (
+        patch(
+            "codemie.service.budget.project_budget_service.project_budget_group_repository.get_by_id",
+            new=AsyncMock(return_value=group),
+        ),
+        patch.object(service, "_update_group_scalar_fields", new=AsyncMock()),
+        patch.object(service, "_load_group_full_result", new=AsyncMock(return_value=SimpleNamespace())),
+        patch("codemie.service.budget.project_budget_service.logger") as mock_logger,
+    ):
+        await service.update_project_budget_group(
+            session=session,
+            group_id="group-1",
+            data=data,
+            actor_id="actor-1",
+        )
+
+    mock_logger.info.assert_called_once()
+    message = mock_logger.info.call_args[0][0]
+    assert "project_budget_group_update_completed" in message
+    assert "project_name='proj-a'" in message
+    assert "updated_fields=['budget_duration', 'name']" in message

@@ -1362,6 +1362,13 @@ class ProjectBudgetService:
             ),
             session,
         )
+        logger.info(
+            f"budget_event=member_allocation_override_completed component=project_budget_service "
+            f"project_name={assignment.project_name if assignment else None!r} budget_id={budget_id!r} "
+            f"budget_category={budget.budget_category!r} user_id={user_id!r} "
+            f"allocated_max_budget={allocated_max_budget!r} allocated_soft_budget={allocated_soft_budget!r} "
+            f"actor_id={actor_id!r} domain=budget_management"
+        )
         return allocation
 
     async def clear_member_override(
@@ -1441,6 +1448,13 @@ class ProjectBudgetService:
                 attributes={"user_id": user_id},
             ),
             session,
+        )
+        logger.info(
+            f"budget_event=member_allocation_override_cleared component=project_budget_service "
+            f"project_name={assignment.project_name if assignment else None!r} budget_id={budget_id!r} "
+            f"budget_category={budget.budget_category!r} user_id={user_id!r} "
+            f"restored_max_budget={correct_max!r} restored_soft_budget={correct_soft!r} "
+            f"actor_id={actor_id!r} domain=budget_management"
         )
         return allocation
 
@@ -1809,9 +1823,20 @@ class ProjectBudgetService:
         if group is None or group.deleted_at is not None:
             raise ExtendedHTTPException(code=404, message=f"Project budget group not found: {group_id}")
 
+        updated_fields = sorted(
+            field
+            for field in ("name", "description", "budget_duration", "total_amount", "categories")
+            if getattr(data, field, None) is not None
+        )
+
         await self._update_group_scalar_fields(session, group_id, data)
 
         if data.categories is None and data.total_amount is None:
+            logger.info(
+                f"budget_event=project_budget_group_update_completed component=project_budget_service "
+                f"project_name={group.project_name!r} group_id={group_id!r} "
+                f"updated_fields={updated_fields!r} actor_id={actor_id!r} domain=budget_management"
+            )
             return await self._load_group_full_result(session, group)
 
         current_result = await self._load_group_full_result(session, group)
@@ -1830,7 +1855,8 @@ class ProjectBudgetService:
         await session.refresh(group)
         logger.info(
             f"budget_event=project_budget_group_update_completed component=project_budget_service "
-            f"project_name={group.project_name!r} group_id={group_id!r} actor_id={actor_id!r}"
+            f"project_name={group.project_name!r} group_id={group_id!r} "
+            f"updated_fields={updated_fields!r} actor_id={actor_id!r} domain=budget_management"
         )
         await activity_event_repository.async_insert(
             ActivityEventCreate(

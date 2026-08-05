@@ -17,6 +17,7 @@ from typing import Optional
 
 from fastapi import APIRouter, status, Request, Depends
 
+from codemie.configs.logger import logger
 from codemie.core.ability import Ability, Action
 from codemie.core.exceptions import ExtendedHTTPException
 from codemie.core.models import BaseResponse, CreatedByUser
@@ -111,6 +112,10 @@ def create_project_setting(request: SettingRequest, user: User = Depends(authent
 
     try:
         SettingsService.create_setting(user_id=user.id, request=request, settings_type=SettingType.PROJECT, user=user)
+        logger.info(
+            f"project_setting_created: project={request.project_name!r}, alias={request.alias!r}, "
+            f"credential_type={request.credential_type.value!r}, by={user.id}, domain=project_management"
+        )
         return BaseResponse(message="Specified credentials saved")
     except Exception as e:
         raise ExtendedHTTPException(
@@ -171,6 +176,11 @@ def update_project_setting(request: SettingRequest, setting_id: str, user: User 
             help="Invalid setting data. Please provide a non-empty, unique alias for the setting"
             " and ensure all required fields are filled correctly. If the problem persists, contact support.",
         ) from e
+    logger.info(
+        f"project_setting_updated: setting_id={setting_id}, project={request.project_name!r}, "
+        f"alias={request.alias!r}, credential_type={request.credential_type.value!r}, "
+        f"by={user.id}, domain=project_management"
+    )
     return BaseResponse(message="Specified credentials updated")
 
 
@@ -199,6 +209,10 @@ def delete_project_setting(setting_id: str, user: User = Depends(authenticate)):
             "is an error, check your project settings or contact support.",
         ) from e
 
+    logger.info(
+        f"project_setting_deleted: setting_id={setting_id}, project={setting.project_name!r}, "
+        f"alias={setting.alias!r}, by={user.id}, domain=project_management"
+    )
     return BaseResponse(message="Specified credential removed")
 
 

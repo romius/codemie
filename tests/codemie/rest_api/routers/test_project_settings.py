@@ -104,3 +104,91 @@ async def test_regular_user_cannot_create_project_litellm_when_personal_feature_
     mock_require_litellm_enabled.assert_not_called()
     mock_validate_litellm_request.assert_not_called()
     mock_create_setting.assert_not_called()
+
+
+def _admin_user():
+    user = User(id="admin1", username="admin", project_names=["test_project"])
+    user.is_admin = True
+    return user
+
+
+@pytest.mark.anyio
+@patch("codemie.rest_api.routers.project_settings.logger")
+@patch('codemie.service.settings.settings.SettingsService.create_setting')
+@patch("codemie.rest_api.security.idp.local.LocalIdp.authenticate")
+async def test_create_project_setting_logs_on_success(mock_authenticate, mock_create_setting, mock_logger):
+    """create_project_setting emits a logger.info containing 'project_setting_created'."""
+    mock_authenticate.return_value = _admin_user()
+    request_data = {
+        "project_name": "test_project",
+        "alias": "my-git",
+        "credential_type": "Git",
+        "credential_values": [{"key": "token", "value": "super-secret-token"}],
+    }
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+        response = await ac.post("/v1/settings/project", headers={"user-id": "admin1"}, json=request_data)
+
+    assert response.status_code == 200
+    mock_logger.info.assert_called_once()
+    message = mock_logger.info.call_args[0][0]
+    assert "project_setting_created" in message
+    assert "my-git" in message
+    assert "super-secret-token" not in message
+
+
+@pytest.mark.anyio
+@patch("codemie.rest_api.routers.project_settings.logger")
+@patch("codemie.rest_api.routers.project_settings.Ability")
+@patch('codemie.service.settings.settings.SettingsService.update_settings')
+@patch('codemie.service.settings.settings.SettingsService.get_setting_ability')
+@patch("codemie.rest_api.security.idp.local.LocalIdp.authenticate")
+async def test_update_project_setting_logs_on_success(
+    mock_authenticate, mock_get_ability, mock_update_settings, mock_ability, mock_logger
+):
+    """update_project_setting emits a logger.info containing 'project_setting_updated'."""
+    mock_authenticate.return_value = _admin_user()
+    mock_ability.return_value.can.return_value = True
+    request_data = {
+        "project_name": "test_project",
+        "alias": "my-git",
+        "credential_type": "Git",
+        "credential_values": [{"key": "token", "value": "super-secret-token"}],
+    }
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+        response = await ac.put("/v1/settings/project/set-1", headers={"user-id": "admin1"}, json=request_data)
+
+    assert response.status_code == 200
+    mock_logger.info.assert_called_once()
+    message = mock_logger.info.call_args[0][0]
+    assert "project_setting_updated" in message
+    assert "set-1" in message
+    assert "super-secret-token" not in message
+
+
+@pytest.mark.anyio
+@patch("codemie.rest_api.routers.project_settings.logger")
+@patch("codemie.rest_api.routers.project_settings.Settings")
+@patch("codemie.service.aws_bedrock.bedrock_orchestration_service.BedrockOrchestratorService.delete_all_entities")
+@patch("codemie.rest_api.security.idp.local.LocalIdp.authenticate")
+async def test_delete_project_setting_logs_on_success(
+    mock_authenticate, mock_delete_entities, mock_settings, mock_logger
+):
+    """delete_project_setting emits a logger.info containing 'project_setting_deleted'."""
+    mock_authenticate.return_value = _admin_user()
+    setting = mock_settings.get_by_id.return_value
+    setting.project_name = "test_project"
+    setting.alias = "my-git"
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+        response = await ac.delete("/v1/settings/project/set-1", headers={"user-id": "admin1"})
+
+    assert response.status_code == 200
+    mock_logger.info.assert_called_once()
+    message = mock_logger.info.call_args[0][0]
+    assert "project_setting_deleted" in message
+    assert "set-1" in message

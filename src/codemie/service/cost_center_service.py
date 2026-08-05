@@ -22,6 +22,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session
 
 from codemie.configs import config
+from codemie.configs.logger import logger
 from codemie.core.exceptions import ExtendedHTTPException
 from codemie.core.models import CostCenter
 from codemie.repository.application_repository import application_repository
@@ -67,7 +68,7 @@ class CostCenterService:
             raise ExtendedHTTPException(code=409, message=f"Cost center '{existing.name}' already exists")
 
         try:
-            return cost_center_repository.create(
+            cost_center = cost_center_repository.create(
                 session,
                 name=validated_name,
                 description=validated_description,
@@ -75,6 +76,12 @@ class CostCenterService:
             )
         except IntegrityError as exc:
             raise ExtendedHTTPException(code=409, message=f"Cost center '{validated_name}' already exists") from exc
+
+        logger.info(
+            f"cost_center_created: cost_center_id={cost_center.id}, name={validated_name!r}, "
+            f"by={user.id}, domain=project_management"
+        )
+        return cost_center
 
     @classmethod
     def list_paginated(cls, session: Session, *, user: User, search: str | None, page: int, per_page: int):
@@ -93,7 +100,12 @@ class CostCenterService:
     def update(cls, session: Session, *, user: User, cost_center_id: UUID, description: str | None) -> CostCenter:
         cost_center = cls.get_or_404(session, user=user, cost_center_id=cost_center_id)
         validated_description = cls.validate_description(description)
-        return cost_center_repository.update(session, cost_center, description=validated_description)
+        updated = cost_center_repository.update(session, cost_center, description=validated_description)
+        logger.info(
+            f"cost_center_updated: cost_center_id={cost_center_id}, name={cost_center.name!r}, "
+            f"updated_fields=['description'], by={user.id}, domain=project_management"
+        )
+        return updated
 
     @classmethod
     def ensure_exists_for_project(cls, session: Session, cost_center_id: UUID | None) -> CostCenter | None:
@@ -114,6 +126,10 @@ class CostCenterService:
         cost_center.update_date = datetime.now()
         session.add(cost_center)
         session.flush()
+        logger.info(
+            f"cost_center_deleted: cost_center_id={cost_center_id}, name={cost_center.name!r}, "
+            f"by={user.id}, domain=project_management"
+        )
 
 
 cost_center_service = CostCenterService()
