@@ -26,6 +26,7 @@ CONFIG_IDS = {
     "userManagement": "features:userManagement",
     "idpProvider": "idpProvider",
     "mcpAuthOrigin": "mcpAuthOrigin",
+    "chatContextualNaming": "features:chatContextualNaming",
 }
 
 
@@ -167,6 +168,13 @@ class CustomerConfig(BaseModel):
             Component(
                 id=CONFIG_IDS["mcpAuthOrigin"],
                 settings=ComponentSetting(enabled=True, value=config.CALLBACK_API_BASE_URL),
+            )
+        )
+
+        runtime_config.append(
+            Component(
+                id=CONFIG_IDS["chatContextualNaming"],
+                settings=ComponentSetting(enabled=config.CHAT_CONTEXTUAL_NAMING_ENABLED),
             )
         )
 

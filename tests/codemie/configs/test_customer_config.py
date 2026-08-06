@@ -115,6 +115,7 @@ class TestCustomerConfig(unittest.TestCase):
             mock_config.ENABLE_USER_MANAGEMENT = False
             mock_config.IDP_PROVIDER = "local"
             mock_config.CALLBACK_API_BASE_URL = "http://localhost:8080"
+            mock_config.CHAT_CONTEXTUAL_NAMING_ENABLED = False
 
             config = CustomerConfig()
             enabled_components = config.get_enabled_components()
@@ -224,6 +225,7 @@ class TestRuntimeFeatures(unittest.TestCase):
         mock_config.ENABLE_USER_MANAGEMENT = True
         mock_config.IDP_PROVIDER = "local"
         mock_config.CALLBACK_API_BASE_URL = "http://localhost:8080"
+        mock_config.CHAT_CONTEXTUAL_NAMING_ENABLED = False
 
         config = CustomerConfig()
         components = config.get_enabled_components()
@@ -251,6 +253,7 @@ class TestRuntimeFeatures(unittest.TestCase):
         mock_config.ENABLE_USER_MANAGEMENT = False
         mock_config.IDP_PROVIDER = "local"
         mock_config.CALLBACK_API_BASE_URL = "http://localhost:8080"
+        mock_config.CHAT_CONTEXTUAL_NAMING_ENABLED = False
 
         config = CustomerConfig()
         components = config.get_enabled_components()
@@ -302,6 +305,7 @@ class TestRuntimeFeatures(unittest.TestCase):
         mock_config.ENABLE_USER_MANAGEMENT = True
         mock_config.IDP_PROVIDER = "local"
         mock_config.CALLBACK_API_BASE_URL = "http://localhost:8080"
+        mock_config.CHAT_CONTEXTUAL_NAMING_ENABLED = False
 
         config = CustomerConfig()
         components = config.get_enabled_components()
@@ -348,6 +352,7 @@ class TestRuntimeFeatures(unittest.TestCase):
         mock_config.ENABLE_USER_MANAGEMENT = False
         mock_config.IDP_PROVIDER = "local"
         mock_config.CALLBACK_API_BASE_URL = "http://localhost:8080"
+        mock_config.CHAT_CONTEXTUAL_NAMING_ENABLED = False
 
         config = CustomerConfig()
         components = config.get_enabled_components()
@@ -381,6 +386,7 @@ class TestRuntimeFeatures(unittest.TestCase):
         mock_config.ENABLE_USER_MANAGEMENT = False
         mock_config.IDP_PROVIDER = "keycloak"
         mock_config.CALLBACK_API_BASE_URL = "http://localhost:8080"
+        mock_config.CHAT_CONTEXTUAL_NAMING_ENABLED = False
 
         config = CustomerConfig()
         components = config.get_enabled_components()
@@ -408,6 +414,7 @@ class TestRuntimeFeatures(unittest.TestCase):
         mock_config.ENABLE_USER_MANAGEMENT = False
         mock_config.IDP_PROVIDER = "local"
         mock_config.CALLBACK_API_BASE_URL = "http://localhost:8080"
+        mock_config.CHAT_CONTEXTUAL_NAMING_ENABLED = False
 
         config = CustomerConfig()
         components = config.get_enabled_components()
@@ -434,6 +441,7 @@ class TestRuntimeFeatures(unittest.TestCase):
         mock_config.ENABLE_USER_MANAGEMENT = False
         mock_config.IDP_PROVIDER = "local"
         mock_config.CALLBACK_API_BASE_URL = "https://codemie.example.com"
+        mock_config.CHAT_CONTEXTUAL_NAMING_ENABLED = False
 
         config = CustomerConfig()
         components = config.get_enabled_components()
@@ -459,6 +467,7 @@ class TestRuntimeFeatures(unittest.TestCase):
         mock_config.ENABLE_USER_MANAGEMENT = False
         mock_config.IDP_PROVIDER = "local"
         mock_config.CALLBACK_API_BASE_URL = "http://host.docker.internal:8080"
+        mock_config.CHAT_CONTEXTUAL_NAMING_ENABLED = False
 
         config = CustomerConfig()
         components = config.get_enabled_components()
