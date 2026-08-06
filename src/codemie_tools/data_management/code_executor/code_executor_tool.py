@@ -332,7 +332,11 @@ class CodeExecutorTool(CodeMieTool):
             "metadata": {
                 "name": pod_name,
                 "namespace": self.config.namespace,
-                "labels": {"app": "codemie-executor", "component": "code-executor"},
+                "labels": {
+                    "app": "codemie-executor",
+                    "component": "code-executor",
+                    "created-by-env": self.config.creator_env,
+                },
             },
             "spec": {
                 "containers": [
@@ -432,7 +436,12 @@ class CodeExecutorTool(CodeMieTool):
         """
         user_workdir = self._get_user_workdir()
         self._validate_export_paths(export_files, user_workdir)
-        guarded_code = build_guarded_python_script(code, workspace_root=user_workdir)
+        guarded_code = build_guarded_python_script(
+            code,
+            workspace_root=user_workdir,
+            max_threads=self.config.max_threads,
+            max_open_files=self.config.max_open_files,
+        )
         logger.info(
             f"code_execution_started: user_id={self.user_id}, sandbox_mode={self.config.sandbox_mode.value}, "
             f"workdir={user_workdir}, domain=code_executor"

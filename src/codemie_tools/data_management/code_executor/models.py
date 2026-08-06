@@ -118,6 +118,25 @@ class CodeExecutorConfig(CodeMieToolConfig):
         description="Ephemeral storage request for executor pods",
     )
 
+    # Per-execution in-process resource limits (enforced via setrlimit in the sandbox prelude)
+    max_threads: int = Field(
+        default=64,
+        description="Maximum number of threads allowed per execution, enforced inside the sandbox process (both modes).",
+        gt=0,
+    )
+
+    max_open_files: int = Field(
+        default=256,
+        description="Maximum number of open files allowed per execution, enforced inside the sandbox process (both modes). "
+        "The Python runtime itself opens roughly 20 files before user code runs.",
+        gt=0,
+    )
+
+    creator_env: str = Field(
+        default="codemie",
+        description="Environment identifier of the backend instance that created this executor pod/Job (from ENV env var)",
+    )
+
     # Dynamic pod pool configuration
     max_pod_pool_size: int = Field(
         default=5,
@@ -309,6 +328,8 @@ class CodeExecutorConfig(CodeMieToolConfig):
             CODE_EXECUTOR_KUBECONFIG_PATH: Path to kubeconfig file (optional, takes priority over in-cluster config)
             CODE_EXECUTOR_SANDBOX_MODE: Sandbox mode (sandbox-shared/sandbox-jobs,
                 default: sandbox-shared)
+            CODE_EXECUTOR_MAX_THREADS: Max threads per execution (default: 64)
+            CODE_EXECUTOR_MAX_OPEN_FILES: Max open files per execution (default: 256)
 
         Returns:
             CodeExecutorConfig: Configuration instance with values from environment or defaults
@@ -345,4 +366,7 @@ class CodeExecutorConfig(CodeMieToolConfig):
             skip_environment_setup=str_to_bool(os.getenv("CODE_EXECUTOR_SKIP_ENVIRONMENT_SETUP", "false")),
             kubeconfig_path=os.getenv("CODE_EXECUTOR_KUBECONFIG_PATH", ""),
             sandbox_mode=os.getenv("CODE_EXECUTOR_SANDBOX_MODE", "sandbox-shared"),
+            max_threads=int(os.getenv("CODE_EXECUTOR_MAX_THREADS", "64")),
+            max_open_files=int(os.getenv("CODE_EXECUTOR_MAX_OPEN_FILES", "256")),
+            creator_env=os.getenv("ENV", "codemie"),
         )

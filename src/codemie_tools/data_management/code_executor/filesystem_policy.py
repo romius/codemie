@@ -40,13 +40,19 @@ DENIAL_MARKER = "__CODEMIE_FS_DENIED__"
 CUSTOMER_DENIAL_MESSAGE = "Filesystem access denied: path is outside the execution workspace"
 
 
-def render_runtime_prelude(workspace_root: str) -> str:
+def render_runtime_prelude(
+    workspace_root: str,
+    *,
+    max_threads: int = 64,
+    max_open_files: int = 256,
+) -> str:
     template = r"""
         import builtins
         import io
         import json
         import os
         import re
+        import resource
         import shutil
         import sqlite3
         import stat
@@ -54,6 +60,21 @@ def render_runtime_prelude(workspace_root: str) -> str:
         import tempfile
         import threading
         import urllib.parse
+
+        try:
+            _soft, _hard = resource.getrlimit(resource.RLIMIT_NPROC)
+            _new_hard = min(__CODEMIE_MAX_THREADS__ * 2, _hard) if _hard >= 0 else __CODEMIE_MAX_THREADS__ * 2
+            _new_soft = min(__CODEMIE_MAX_THREADS__, _new_hard) if _new_hard >= 0 else __CODEMIE_MAX_THREADS__
+            resource.setrlimit(resource.RLIMIT_NPROC, (_new_soft, _new_hard))
+        except Exception:
+            pass
+        try:
+            _soft, _hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+            _new_hard = min(__CODEMIE_MAX_OPEN_FILES__ * 2, _hard) if _hard >= 0 else __CODEMIE_MAX_OPEN_FILES__ * 2
+            _new_soft = min(__CODEMIE_MAX_OPEN_FILES__, _new_hard) if _new_hard >= 0 else __CODEMIE_MAX_OPEN_FILES__
+            resource.setrlimit(resource.RLIMIT_NOFILE, (_new_soft, _new_hard))
+        except Exception:
+            pass
 
         DENIAL_MARKER = __CODEMIE_DENIAL_MARKER__
         CUSTOMER_DENIAL_MESSAGE = __CODEMIE_DENIAL_MESSAGE__
@@ -963,6 +984,8 @@ def render_runtime_prelude(workspace_root: str) -> str:
         .replace("__CODEMIE_DENIAL_MARKER__", repr(DENIAL_MARKER))
         .replace("__CODEMIE_DENIAL_MESSAGE__", repr(CUSTOMER_DENIAL_MESSAGE))
         .replace("__CODEMIE_WORKSPACE_ROOT__", repr(workspace_root))
+        .replace("__CODEMIE_MAX_THREADS__", str(max_threads))
+        .replace("__CODEMIE_MAX_OPEN_FILES__", str(max_open_files))
         .strip()
     )
 

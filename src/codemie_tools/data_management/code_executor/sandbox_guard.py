@@ -22,8 +22,18 @@ from codemie_tools.data_management.code_executor.filesystem_policy import (
 )
 
 
-def build_guarded_python_script(customer_code: str, *, workspace_root: str) -> str:
-    prelude = render_runtime_prelude(workspace_root)
+def build_guarded_python_script(
+    customer_code: str,
+    *,
+    workspace_root: str,
+    max_threads: int = 64,
+    max_open_files: int = 256,
+) -> str:
+    prelude = render_runtime_prelude(
+        workspace_root,
+        max_threads=max_threads,
+        max_open_files=max_open_files,
+    )
     return "\n".join(
         [
             prelude,
@@ -37,11 +47,22 @@ def build_guarded_python_script(customer_code: str, *, workspace_root: str) -> s
     )
 
 
-def build_guarded_workspace_script(script_path: str, *, workspace_root: str) -> str:
+def build_guarded_workspace_script(
+    script_path: str,
+    *,
+    workspace_root: str,
+    max_threads: int = 64,
+    max_open_files: int = 256,
+) -> str:
     launcher = textwrap.dedent(
         f"""
         import runpy
         runpy.run_path({script_path!r}, run_name='__main__')
         """
     ).strip()
-    return build_guarded_python_script(launcher, workspace_root=workspace_root)
+    return build_guarded_python_script(
+        launcher,
+        workspace_root=workspace_root,
+        max_threads=max_threads,
+        max_open_files=max_open_files,
+    )

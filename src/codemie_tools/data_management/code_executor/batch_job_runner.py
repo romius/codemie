@@ -215,7 +215,11 @@ class BatchJobRunner:
             "metadata": {
                 "name": job_name,
                 "namespace": cfg.namespace,
-                "labels": {"app": "codemie-executor", "component": "code-executor"},
+                "labels": {
+                    "app": "codemie-executor",
+                    "component": "code-executor",
+                    "created-by-env": cfg.creator_env,
+                },
             },
             "spec": {
                 "backoffLimit": 0,
@@ -223,7 +227,11 @@ class BatchJobRunner:
                 "ttlSecondsAfterFinished": _TTL_SECONDS_AFTER_FINISHED,
                 "template": {
                     "metadata": {
-                        "labels": {"app": "codemie-executor", "component": "code-executor"},
+                        "labels": {
+                            "app": "codemie-executor",
+                            "component": "code-executor",
+                            "created-by-env": cfg.creator_env,
+                        },
                     },
                     "spec": {
                         "restartPolicy": "Never",

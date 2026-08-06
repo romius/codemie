@@ -76,6 +76,8 @@ All configuration is managed through environment variables. The tool automatical
 | `CODE_EXECUTOR_MEMORY_REQUEST` | Memory request for executor pods | `256Mi` |
 | `CODE_EXECUTOR_CPU_LIMIT` | CPU limit for executor pods | `1` |
 | `CODE_EXECUTOR_CPU_REQUEST` | CPU request for executor pods | `500m` |
+| `CODE_EXECUTOR_MAX_THREADS` | Maximum number of threads allowed per execution (enforced inside the sandbox process, both modes) | `64` |
+| `CODE_EXECUTOR_MAX_OPEN_FILES` | Maximum number of open files allowed per execution (enforced inside the sandbox process, both modes); the Python runtime opens roughly 20 files before user code runs | `256` |
 
 #### Pod Security Settings
 

@@ -547,3 +547,33 @@ class TestSandboxModeFromEnv(unittest.TestCase):
         with patch.dict(os.environ, {"CODE_EXECUTOR_SANDBOX_MODE": "bogus"}, clear=True):
             with pytest.raises(ValueError):
                 CodeExecutorConfig.from_env()
+
+
+class TestResourceLimitFields(unittest.TestCase):
+    """Test suite for in-process resource limit fields (RLIMIT_NPROC / RLIMIT_NOFILE)."""
+
+    def test_max_threads_default(self):
+        config = CodeExecutorConfig()
+        assert config.max_threads == 64
+
+    def test_max_open_files_default(self):
+        config = CodeExecutorConfig()
+        assert config.max_open_files == 256
+
+    def test_max_threads_must_be_positive(self):
+        with pytest.raises(ValueError):
+            CodeExecutorConfig(max_threads=0)
+
+    def test_max_open_files_must_be_positive(self):
+        with pytest.raises(ValueError):
+            CodeExecutorConfig(max_open_files=0)
+
+    def test_from_env_reads_max_threads(self):
+        with patch.dict(os.environ, {"CODE_EXECUTOR_MAX_THREADS": "16"}):
+            config = CodeExecutorConfig.from_env()
+        assert config.max_threads == 16
+
+    def test_from_env_reads_max_open_files(self):
+        with patch.dict(os.environ, {"CODE_EXECUTOR_MAX_OPEN_FILES": "32"}):
+            config = CodeExecutorConfig.from_env()
+        assert config.max_open_files == 32

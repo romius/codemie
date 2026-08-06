@@ -105,9 +105,13 @@ class WorkspaceScriptRunner(CodeExecutorTool):
             raise ToolException("script_path must point to a file")
         return normalized
 
-    @staticmethod
-    def _build_script_wrapper(script_path: str, workspace_root: str) -> str:
-        return build_guarded_workspace_script(script_path, workspace_root=workspace_root)
+    def _build_script_wrapper(self, script_path: str, workspace_root: str) -> str:
+        return build_guarded_workspace_script(
+            script_path,
+            workspace_root=workspace_root,
+            max_threads=self.config.max_threads,
+            max_open_files=self.config.max_open_files,
+        )
 
     @staticmethod
     def _hash_content(content: bytes) -> str:

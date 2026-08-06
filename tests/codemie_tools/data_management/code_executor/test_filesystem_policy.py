@@ -755,3 +755,92 @@ def test_guard_allows_openpyxl_to_save_workbook(tmp_path: Path) -> None:
     assert result.returncode == 0
     assert "saved" in result.stdout
     assert DENIAL_MARKER not in result.stderr
+
+
+def _run_guarded_with_limits(
+    workspace_root: Path,
+    customer_code: str,
+    *,
+    max_threads: int = 64,
+    max_open_files: int = 256,
+) -> subprocess.CompletedProcess[str]:
+    script = build_guarded_python_script(
+        customer_code,
+        workspace_root=str(workspace_root),
+        max_threads=max_threads,
+        max_open_files=max_open_files,
+    )
+    return subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=workspace_root,
+        env=_clean_env(),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def test_prelude_enforces_thread_limit(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    result = _run_guarded_with_limits(
+        workspace,
+        "import resource; soft, hard = resource.getrlimit(resource.RLIMIT_NPROC); print(soft)",
+        max_threads=16,
+    )
+    assert result.returncode == 0
+    assert result.stdout.strip() == "16"
+
+
+def test_prelude_enforces_open_files_limit(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    result = _run_guarded_with_limits(
+        workspace,
+        "import resource; soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE); print(soft)",
+        max_open_files=48,
+    )
+    assert result.returncode == 0
+    assert result.stdout.strip() == "48"
+
+
+def test_prelude_uses_default_limits_without_explicit_params(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    result = _run_guarded_in_workspace(
+        workspace,
+        "import resource; print(resource.getrlimit(resource.RLIMIT_NPROC)[0])",
+    )
+    assert result.returncode == 0
+    assert int(result.stdout.strip()) == 64
+
+
+def test_prelude_clamps_soft_limit_when_hard_ceiling_is_lower(tmp_path: Path) -> None:
+    """If the container's pre-existing hard RLIMIT_NPROC is below the configured cap,
+    setrlimit((soft, hard)) must not raise ValueError for soft > hard; the effective
+    soft limit should be clamped to the lower hard ceiling instead of silently
+    leaving the original (uncapped) limit in place."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    guarded_script = build_guarded_python_script(
+        "import resource; print(resource.getrlimit(resource.RLIMIT_NPROC)[0])",
+        workspace_root=str(workspace),
+        max_threads=256,
+    )
+    wrapper_script = (
+        "import resource\n"
+        "_soft, _hard = resource.getrlimit(resource.RLIMIT_NPROC)\n"
+        "_capped_soft = 100 if _soft < 0 else min(100, _soft)\n"
+        "resource.setrlimit(resource.RLIMIT_NPROC, (_capped_soft, 100))\n"
+        f"exec({guarded_script!r})\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", wrapper_script],
+        cwd=workspace,
+        env=_clean_env(),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert int(result.stdout.strip()) == 100
