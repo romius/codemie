@@ -155,8 +155,10 @@ pyjwt = "^2.13.0"
 pyasn1 = "^0.6.4"
 setuptools = "^82.0.1"
 ecdsa = "^0.19.1"
-# Security (EPMCDME-12868): pin >=48.0.1 to fix GHSA-537c-gmf6-5ccf (cryptography weak RSA key handling)
-cryptography = "~48.0.1"
+# Security (EPMCDME-13893): pin >=3.14.3 to fix GHSA-cq5v-8q36-5273 (aiohttp OOB heap read in HTTP parser)
+aiohttp = "~3.14.3"
+# Security (EPMCDME-12868): pin >=48.0.1 to fix GHSA-537c-gmf6-5ccf (cryptography weak RSA key handling); Security (EPMCDME-13894): pin >=50.0.0 to fix GHSA-g6cj-pr64-35w5 and GHSA-jwv3-5hgf-82ww (PKCS#7 Bleichenbacher oracle + cert-chain path-building DoS)
+cryptography = "~50.0.0"
 pillow = "^12.3.0"
 lxml = "^6.1.0"
 jupyter-server = ">=2.20.0"  # Security (EPMCDME-12962): pin >=2.20.0 to fix CVE-2026-44727 (GHSA-fcw5-x6j4-ccmp arbitrary code exec in jupyter-server)
