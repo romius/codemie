@@ -1016,3 +1016,135 @@ class TestConfigureDirectRuntimeOverridesPremiumNoProject:
             budget_id="personal-premium-budget",
         )
         assert params["model_kwargs"]["user"] == "alice@example.com_codemie_premium_models"
+
+
+class TestConfigureDirectRuntimeOverridesPremiumWithProjectContext:
+    """Test for case when a project context exists but no project
+    PREMIUM_MODELS scope is available for the user, _try_apply_premium_budget must not fire.
+    The request must fall through to the PLATFORM budget path.
+
+    Root cause: adding default_premium_models to budgets-config.yaml made
+    get_category_budget_id(PREMIUM_MODELS) return a non-None value, which activated the
+    not availability.project_scopes branch in _resolve_direct_budget_category for projects
+    with empty scopes.  _resolve_direct_project_budget_runtime then returned (None, {}, None,
+    None) — identical to the no-project-context case — causing _try_apply_premium_budget to
+    fire and silently redirect to the personal premium budget.
+    """
+
+    @pytest.fixture(autouse=True)
+    def clear_caches(self):
+        from codemie.enterprise.litellm.dependencies import (
+            is_premium_model,
+            is_premium_models_enabled,
+        )
+
+        is_premium_models_enabled.cache_clear()
+        is_premium_model.cache_clear()
+        yield
+        is_premium_models_enabled.cache_clear()
+        is_premium_model.cache_clear()
+
+    def _make_litellm_context(self, project_name="my-project"):
+        from codemie.rest_api.models.settings import LiteLLMContext
+
+        return LiteLLMContext(credentials=None, current_project=project_name)
+
+    def _invoke(self, *, litellm_context, user_email="alice@example.com", user_id="uid-1"):
+        from codemie.enterprise.litellm.llm_factory import _configure_direct_runtime_overrides
+
+        llm_model_details = MagicMock()
+        llm_model_details.base_name = "claude-opus-4"
+        request_params: dict = {}
+
+        with patch(
+            "codemie.enterprise.litellm.llm_factory._resolve_direct_project_budget_runtime",
+            return_value=(None, {}, None, None),
+        ):
+            _configure_direct_runtime_overrides(
+                llm_model_details=llm_model_details,
+                litellm_context=litellm_context,
+                user_email=user_email,
+                user_id=user_id,
+                creds=None,
+                merged_headers={},
+                request_params=request_params,
+            )
+        return request_params
+
+    def test_premium_model_project_context_no_scope_uses_platform_budget(self):
+        """Regression: project context + premium model + no project premium scope → PLATFORM budget.
+
+        Before the fix, adding default_premium_models to budgets-config.yaml caused
+        _try_apply_premium_budget to fire here, routing the request to the personal premium
+        budget instead of the project platform budget.
+        """
+
+        def category_budget_id(category):
+            return {"premium_models": "default_premium_models", "platform": "default_platform"}.get(category.value)
+
+        with (
+            patch(
+                "codemie.enterprise.litellm.dependencies.get_premium_username",
+                return_value="alice@example.com_codemie_premium_models",
+            ),
+            patch(
+                "codemie.enterprise.litellm.llm_factory._get_direct_request_category_budget_id",
+                return_value=None,
+            ),
+            patch(
+                "codemie.enterprise.litellm.dependencies.get_category_budget_id",
+                side_effect=category_budget_id,
+            ),
+            patch(
+                "codemie.enterprise.litellm.dependencies.check_user_budget",
+                return_value=MagicMock(),
+            ) as mock_check,
+            patch("codemie.enterprise.litellm.llm_factory._mirror_budget_assignment"),
+        ):
+            params = self._invoke(litellm_context=self._make_litellm_context())
+
+        assert params["model_kwargs"]["user"] == "alice@example.com"
+        mock_check.assert_called_once_with(
+            user_email="alice@example.com",
+            user_id="uid-1",
+            budget_id="default_platform",
+        )
+
+    def test_premium_model_project_context_personal_assignment_still_uses_platform(self):
+        """Project context present + personal PREMIUM_MODELS assignment → personal premium NOT applied."""
+
+        def category_budget_id(category):
+            return {"premium_models": "default_premium_models", "platform": "default_platform"}.get(category.value)
+
+        def direct_budget_id(user_id, category):
+            # Only the personal premium assignment exists; platform has no personal assignment.
+            cat_val = category.value if hasattr(category, "value") else category
+            return "personal-premium-budget" if cat_val == "premium_models" else None
+
+        with (
+            patch(
+                "codemie.enterprise.litellm.dependencies.get_premium_username",
+                return_value="alice@example.com_codemie_premium_models",
+            ),
+            patch(
+                "codemie.enterprise.litellm.llm_factory._get_direct_request_category_budget_id",
+                side_effect=direct_budget_id,
+            ),
+            patch(
+                "codemie.enterprise.litellm.dependencies.get_category_budget_id",
+                side_effect=category_budget_id,
+            ),
+            patch(
+                "codemie.enterprise.litellm.dependencies.check_user_budget",
+                return_value=MagicMock(),
+            ) as mock_check,
+            patch("codemie.enterprise.litellm.llm_factory._mirror_budget_assignment"),
+        ):
+            params = self._invoke(litellm_context=self._make_litellm_context())
+
+        assert params["model_kwargs"]["user"] == "alice@example.com"
+        mock_check.assert_called_once_with(
+            user_email="alice@example.com",
+            user_id="uid-1",
+            budget_id="default_platform",
+        )

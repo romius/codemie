@@ -433,11 +433,19 @@ def _try_apply_premium_budget(
     user_email: Optional[str],
     user_id: Optional[str],
     request_params: dict[str, Any],
+    has_project_context: bool = False,
 ) -> bool:
     """Apply the premium-model budget when the model/user qualify. Returns whether it was applied."""
     from codemie.service.budget.budget_enums import BudgetCategory as CoreBudgetCategory
     from .budget_categories import BudgetCategory as LiteLLMBudgetCategory
     from .dependencies import check_user_budget, get_category_budget_id, get_premium_username
+
+    # Personal premium budget only applies when there is no project context. When a project
+    # context exists but has no premium scope (or no member allocation), the request must fall
+    # through to the project platform budget — not silently redirect to the personal premium
+    # budget that was added for no-project personal agents
+    if has_project_context:
+        return False
 
     if not user_email:
         return False
@@ -556,6 +564,7 @@ def _configure_direct_runtime_overrides(
         user_email=user_email,
         user_id=user_id,
         request_params=request_params,
+        has_project_context=bool(litellm_context and litellm_context.current_project),
     ):
         return
 
