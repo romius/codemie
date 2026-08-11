@@ -6,9 +6,23 @@
 #   name:        unique server name [a-zA-Z0-9_-]
 #   transport:   http | sse
 #   url:         server URL
-#   auth:        oauth | none        (default: none)
+#   auth:        oauth | none        (default: none) -- DEPRECATED, use `oauth`
 #   description: optional human label
 #   clients:     optional list; omit = all clients (e.g. claude-desktop, codex)
+#   oauth:       optional public OAuth client configuration. Keys are camelCase
+#                and camelCase is the ONLY accepted spelling -- a snake_case key
+#                such as `client_id` makes the whole entry invalid, and the
+#                entry is skipped with a warning while the rest of the catalog
+#                still loads. NEVER put a client secret here: this catalog is
+#                served to agent clients as-is and the token exchange runs
+#                entirely client-side.
+#     clientId:         required -- public OAuth client registered in the IdP
+#     scope:            required -- space-delimited scopes
+#     callbackHost:     optional -- loopback redirect host (default: localhost)
+#     callbackPort:     required -- loopback redirect port, 1..65535
+#     authorizationUrl: required -- full authorize URL, including query params
+#                       such as kc_idp_hint and prompt
+#     tokenUrl:         required -- token endpoint
 servers:
   - name: example
     transport: http
@@ -16,3 +30,10 @@ servers:
     auth: oauth
     description: Example MCP server
     clients: [claude-desktop]
+    oauth:
+      clientId: codemie-mcp-proxy
+      scope: openid profile email
+      callbackHost: localhost
+      callbackPort: 3118
+      authorizationUrl: https://auth.example.com/realms/codemie/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login
+      tokenUrl: https://auth.example.com/realms/codemie/protocol/openid-connect/token

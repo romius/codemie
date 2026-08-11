@@ -25,10 +25,11 @@ list rather than raising, so the endpoint degrades to "no managed MCPs".
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Literal, Optional
+from typing import Annotated, Any, List, Literal, Optional
 
 import yaml
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationError
+from pydantic_core import PydanticUseDefault
 
 from codemie.configs.config import config
 from codemie.configs.logger import logger
@@ -36,15 +37,68 @@ from codemie.configs.logger import logger
 MANAGED_MCP_FILENAME = "managed-mcp-servers.yaml"
 
 
+def _use_default_if_none(value: Any) -> Any:
+    """
+    Let an explicitly blank YAML key fall back to the field's default.
+
+    `callbackHost:` written with no value parses as None, not as an absent key,
+    and a non-Optional field would reject it -- dropping the whole server entry
+    over an omitted *optional* value. Raising PydanticUseDefault keeps the
+    default defined in exactly one place: the field itself.
+    """
+    if value is None:
+        raise PydanticUseDefault
+    return value
+
+
+class ManagedMcpOAuthConfig(BaseModel):
+    """
+    Public OAuth client parameters for one managed MCP server.
+
+    Secret-free by design: only public-client values are published (client id,
+    scope, loopback callback, IdP authorize/token URLs). No client secret is
+    stored or transmitted, and the token exchange stays entirely client-side.
+
+    Field aliases are camelCase and `populate_by_name` is deliberately NOT set,
+    so the alias is the only accepted input spelling. That is what keeps the
+    YAML catalog and the HTTP response identical: a snake_case key such as
+    `client_id` is not a second accepted form -- it fails validation, and the
+    whole entry is skipped and logged like any other malformed entry.
+    """
+
+    client_id: str = Field(alias="clientId")
+    scope: str
+    callback_host: Annotated[str, BeforeValidator(_use_default_if_none)] = Field(
+        default="localhost", alias="callbackHost"
+    )
+    callback_port: int = Field(alias="callbackPort", ge=1, le=65535)
+    authorization_url: str = Field(alias="authorizationUrl")
+    token_url: str = Field(alias="tokenUrl")
+
+    # Inherits this module's graceful-degradation contract rather than a
+    # stricter one: an unknown key is ignored, so a ConfigMap may gain a new
+    # OAuth field ahead of a backend rollout without breaking the entry.
+    model_config = ConfigDict(extra="ignore")
+
+
 class ManagedMcpServer(BaseModel):
-    """A client-neutral managed MCP server entry. Remote-only in v1."""
+    """
+    A client-neutral managed MCP server entry. Remote-only in v1.
+
+    `oauth` is the source of truth for OAuth client configuration. The scalar
+    `auth` field is DEPRECATED: it is retained unchanged so existing ConfigMaps
+    keep working, and is never derived from `oauth` -- that would silently
+    override what an operator wrote. Removal is a follow-up ticket, once
+    deployments have migrated.
+    """
 
     name: str
     transport: Literal["http", "sse"]
     url: str
-    auth: Literal["oauth", "none"] = "none"
+    auth: Literal["oauth", "none"] = "none"  # deprecated -- prefer the `oauth` block
     description: Optional[str] = None
     clients: Optional[List[str]] = None
+    oauth: Optional[ManagedMcpOAuthConfig] = None
 
     model_config = ConfigDict(extra="ignore")
 

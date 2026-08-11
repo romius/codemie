@@ -1,0 +1,43 @@
+{
+  "decision": "request-changes",
+  "confidence": "low",
+  "rationale": "All three lenses ran as independent subagents with parseable output against a present spec; the batched reachability verifier refuted 7 of 8 candidates by executing pydantic 2.12.5 in the repo venv and inventorying callers. One reachable defect survives (CR-001) and is bucketed decision_needed because two defensible fixes exist — coerce None to the default, or correct the operator-facing documentation — which forces confidence low. 0 deferred, 7 dismissed as unreachable (operator-trust restatements A/B/C, documented-legacy E, contrived F, speculative-future G, no-such-caller H); no deferred sidecar written.",
+  "risk_flags": ["public-api"],
+  "business_review": [
+    {"kind": "spec", "item": "AC1 — A valid oauth block round-trips through the loader", "status": "pass", "notes": "test_loads_oauth_block asserts ManagedMcpOAuthConfig instance and all six values — tests/codemie/configs/test_managed_mcp_config.py:126-142"},
+    {"kind": "spec", "item": "AC2 — Wire casing: response contains exactly clientId, scope, callbackHost, callbackPort, authorizationUrl, tokenUrl", "status": "pass", "notes": "test_list_managed_servers_serializes_oauth_in_camel_case asserts full response.json() equality; router untouched, relies on FastAPI response_model_by_alias default"},
+    {"kind": "spec", "item": "AC3 — Entry with no oauth key still loads; oauth null in response", "status": "pass", "notes": "test_entry_without_oauth_block_still_loads plus the repaired exact-dict assertion expecting \"oauth\": None"},
+    {"kind": "spec", "item": "AC4 — Malformed oauth skipped and logged, siblings still load (missing key + out-of-range port)", "status": "pass", "notes": "two tests asserting [s.name] == ['good'] and mock_logger.warning.assert_called_once(); rides the pre-existing ValidationError handler"},
+    {"kind": "spec", "item": "AC5 — callbackHost defaults to localhost when omitted", "status": "pass", "notes": "test_callback_host_defaults_to_localhost plus wire-level default in the endpoint test. NOTE: covers the omitted case only; the explicitly-blank case is CR-001"},
+    {"kind": "spec", "item": "AC6 — snake_case required key (client_id) fails validation", "status": "pass", "notes": "test_snake_case_oauth_key_is_rejected; enforced by aliases without populate_by_name"},
+    {"kind": "spec", "item": "AC7 — ?client= filtering unaffected by oauth", "status": "pass", "notes": "test_filters_by_client_is_unaffected_by_oauth for codex and claude-desktop against OAUTH_YAML"},
+    {"kind": "spec", "item": "AC8 — Updated example YAML still validates against the model", "status": "pass", "notes": "test_example_file_is_valid builds ManagedMcpServer for every entry and asserts a complete camelCase oauth block is documented"},
+    {"kind": "spec", "item": "Data model — nested ManagedMcpOAuthConfig with the six specified fields, types and bounds", "status": "pass", "notes": "src/codemie/configs/managed_mcp_config.py:39-64; callbackPort bounded ge=1/le=65535"},
+    {"kind": "spec", "item": "Decision 1 — aliasing scoped to the nested model only; no package-wide alias_generator", "status": "pass", "notes": "aliases appear only on ManagedMcpOAuthConfig fields; ManagedMcpServer keeps its existing names"},
+    {"kind": "spec", "item": "Decision 2 — camelCase canonical; populate_by_name deliberately NOT set", "status": "pass", "notes": "model_config is ConfigDict(extra=\"ignore\") only; rationale documented in the class docstring"},
+    {"kind": "spec", "item": "Decision 3 — nested block keeps extra=\"ignore\", not forbid", "status": "pass", "notes": "managed_mcp_config.py:61-64 with the ConfigMap-ahead-of-rollout rationale in the comment"},
+    {"kind": "spec", "item": "Decision 4 — scalar auth retained, marked deprecated, never derived from oauth", "status": "pass", "notes": "field unchanged with deprecation comment; docstring and example header both mark it DEPRECATED"},
+    {"kind": "spec", "item": "Layers touched — router mcp_managed.py gets NO change", "status": "pass", "notes": "router absent from the diff; verified via git diff --name-only main...HEAD"},
+    {"kind": "spec", "item": "Security — catalog stays secret-free; only public-client parameters published", "status": "pass", "notes": "no secret field on either model; example header explicitly forbids client secrets"},
+    {"kind": "spec", "item": "Security — the \"revisit if a credential-bearing field is ever added\" caveat comment stays in place", "status": "pass", "notes": "still present verbatim at src/codemie/configs/managed_mcp_config.py:128-129; loader body untouched"},
+    {"kind": "spec", "item": "Out of scope respected — no server-side OAuth execution, no client secrets, no local/stdio servers, auth not removed", "status": "pass", "notes": "diff adds only declarative config plus tests; no token-exchange code"}
+  ],
+  "standards_review": [
+    {"kind": "commit-format", "status": "pass", "notes": "All 3 commits in main..HEAD match the required EPMCDME-####: Capital description form per .ai-run/guides/standards/git-workflow.md; no conventional-commit prefixes"},
+    {"kind": "code-quality", "status": "pass", "notes": "make ruff clean (format + check --fix + check all passed) against .ai-run/guides/standards/code-quality.md"},
+    {"kind": "security", "status": "pass", "notes": "Checked against .ai-run/guides/development/security-patterns.md. Auth: endpoint keeps the central authenticate dependency, unchanged. Secret handling: no credential field added, nothing sensitive logged, caveat comment retained. Untrusted input: the loader fails closed on malformed entries and the deliberate rejection of snake_case keys is strict parsing, which the guide endorses over silent coercion"}
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "major",
+      "triage": "decision_needed",
+      "file": "src/codemie/configs/managed_mcp_config.py",
+      "line": 56,
+      "title": "A blank callbackHost key silently drops the entire server entry, contradicting its documented default",
+      "problem": "callback_host is typed str with default \"localhost\". A pydantic v2 default does NOT absorb an explicit None for a non-Optional field, and PyYAML turns a bare `callbackHost:` line into None. Machine-verified against pydantic 2.12.5 in the repo venv: ManagedMcpOAuthConfig(callbackHost=None, ...) raises ValidationError 'Input should be a valid string'. ManagedMcpServer(**item) therefore raises and the per-entry handler skips the whole entry.",
+      "impact": "config/customer/managed-mcp-servers.example.yaml documents callbackHost as 'optional -- loopback redirect host (default: localhost)'. An operator who writes the key and leaves it empty — a natural reading of 'optional' — loses that entire MCP server from the catalog for every agent client. The only signal is one backend warning log; the endpoint returns 200 with the server simply missing. Spec AC5 covers the omitted case but not the explicitly-blank one.",
+      "recommendation": "Two defensible fixes, and the choice is a real decision. (a) Behavior: type it Optional[str] with a validator coercing None to \"localhost\", so the field behaves as documented. (b) Documentation: state in the example YAML header that an optional key must be omitted entirely rather than left blank, preserving the fail-closed parsing that .ai-run/guides/development/security-patterns.md endorses. Whichever is chosen, add a regression test for the blank-key input."
+    }
+  ]
+}

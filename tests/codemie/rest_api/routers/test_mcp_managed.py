@@ -60,8 +60,55 @@ async def test_list_managed_servers_returns_loaded_entries():
                 "auth": "oauth",
                 "description": None,
                 "clients": None,
+                "oauth": None,
             }
         ]
+
+
+@pytest.mark.asyncio
+async def test_list_managed_servers_serializes_oauth_in_camel_case():
+    # The catalog YAML and the HTTP response use identical keys, so this pins
+    # both the wire format and the accepted input spelling. `callbackHost` is
+    # omitted on purpose -- the seam test for its "localhost" default.
+    entries = [
+        ManagedMcpServer(
+            name="onehub_core",
+            transport="http",
+            url="https://codemie.lab.epam.com/mcp/mcp-proxy/onehub_core",
+            auth="oauth",
+            oauth={
+                "clientId": "codemie-mcp-proxy",
+                "scope": "openid profile email",
+                "callbackPort": 3118,
+                "authorizationUrl": "https://auth.example.com/realms/codemie/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login",
+                "tokenUrl": "https://auth.example.com/realms/codemie/protocol/openid-connect/token",
+            },
+        )
+    ]
+    with patch("codemie.rest_api.routers.mcp_managed.load_managed_mcp_servers", return_value=entries):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+            response = await ac.get("/v1/mcp/managed-servers", headers={"Authorization": "Bearer testtoken"})
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json() == [
+        {
+            "name": "onehub_core",
+            "transport": "http",
+            "url": "https://codemie.lab.epam.com/mcp/mcp-proxy/onehub_core",
+            "auth": "oauth",
+            "description": None,
+            "clients": None,
+            "oauth": {
+                "clientId": "codemie-mcp-proxy",
+                "scope": "openid profile email",
+                "callbackHost": "localhost",
+                "callbackPort": 3118,
+                "authorizationUrl": "https://auth.example.com/realms/codemie/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login",
+                "tokenUrl": "https://auth.example.com/realms/codemie/protocol/openid-connect/token",
+            },
+        }
+    ]
 
 
 @pytest.mark.asyncio

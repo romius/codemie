@@ -1,0 +1,78 @@
+{
+  "task": "EPMCDME-14072 — Added an optional nested camelCase `oauth` block (ManagedMcpOAuthConfig) to the ManagedMcpServer catalog model so GET /v1/mcp/managed-servers publishes self-describing, secret-free per-server OAuth client parameters, backward compatible with entries that omit it.",
+  "generated": "2026-08-11T00:00:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 2,
+      "label": "S",
+      "affected": "ManagedMcpOAuthConfig (new nested pydantic model), ManagedMcpServer catalog model, _use_default_if_none BeforeValidator, managed-mcp-servers.example.yaml schema documentation",
+      "layers": "Config/Model (catalog loader), API response contract (no router code change), Deployment config (ConfigMap example)"
+    },
+    "requirements_clarity": {
+      "score": 2,
+      "label": "S",
+      "status": "Clear",
+      "gaps": "One edge-case semantic was unspecified and surfaced only during code review (CR-001): whether a blank `callbackHost:` YAML key (parses as None, not as an absent key) should fall back to the documented default or invalidate the entry. Field list, defaults, port range and camelCase-only spelling were otherwise fully specified up front."
+    },
+    "technical_risk": {
+      "score": 3,
+      "label": "M",
+      "risk_factors": "Publishes OAuth client configuration (clientId, scope, loopback callback, IdP authorize/token URLs) to external agent clients — the secret-free contract must hold, since the catalog is served as-is; fail-closed validation means one malformed `oauth` key drops the entire server entry from the catalog; pydantic v2 defaults do not absorb an explicit None, a non-obvious behaviour that produced a real defect",
+      "mitigation": "Additive optional field, fully backward compatible; deprecated scalar `auth` retained and never derived from `oauth`; per-entry validation failures are logged and degrade to skipping one entry rather than raising; `extra=\"ignore\"` allows ConfigMap to run ahead of a backend rollout; blank-key defect fixed with a BeforeValidator raising PydanticUseDefault so the default stays defined once on the Field; 9 added tests cover defaults, blank keys, missing required keys, out-of-range port, snake_case rejection and camelCase wire format; trivially reversible (no persisted state)"
+    },
+    "file_change_estimate": {
+      "score": 3,
+      "label": "M",
+      "modified_files": 4,
+      "modified_file_list": [
+        "config/customer/managed-mcp-servers.example.yaml",
+        "src/codemie/configs/managed_mcp_config.py",
+        "tests/codemie/configs/test_managed_mcp_config.py",
+        "tests/codemie/rest_api/routers/test_mcp_managed.py"
+      ],
+      "new_files": 0,
+      "new_file_list": [],
+      "affected_dirs": ["config", "src", "tests"]
+    },
+    "dependencies": {
+      "score": 2,
+      "label": "S",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 2,
+      "label": "S",
+      "layers_changed": [
+        "Config/Model (managed MCP catalog loader and models)",
+        "API response contract (schema only — router unchanged, response_model_by_alias defaults to True)",
+        "Deployment config (customer ConfigMap catalog schema, documented via example YAML)"
+      ],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 14,
+  "size": "S",
+  "band_range": "10-14",
+  "files_changed": 4,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "technical_risk",
+      "reason": "Base risk was S — a purely additive optional pydantic field on an existing loader that already had a graceful-degradation contract, with no persisted state and trivial rollback. Bumped to M by the authorization red flag: the published block is OAuth client configuration consumed by external agent clients, so the secret-free invariant is load-bearing, and fail-closed validation means an operator typo silently removes a whole server from the catalog. The pydantic-v2 None-vs-absent defect (CR-001) confirms the non-zero risk was real rather than theoretical."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "4 files changed, 325 insertions / 7 deletions, zero new files — every touched file already existed. Two of the four are tests (13 to 22 tests on the affected files), so production surface is a single module plus its example-YAML documentation. Bottom of the M band per the actual-mode file-count mapping; by the guide's modified/new split (4 modified, 0 new) it would read as S."
+    },
+    {
+      "dimension": "component_scope",
+      "reason": "One component: a new nested model inside the existing ManagedMcpServer catalog model, matching the guide's S archetype 'add a new field to an existing endpoint response'. No layer boundary was crossed — the router needed no change because FastAPI serializes by alias by default, and no service, repository, DB or external call was touched."
+    }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from S (2) to M (3): change affects authorization configuration — the endpoint now publishes per-server OAuth client parameters (clientId, scope, authorize/token URLs) consumed by external agent clients, making the secret-free contract and fail-closed entry validation security-relevant."
+  ],
+  "split_recommendation": null
+}

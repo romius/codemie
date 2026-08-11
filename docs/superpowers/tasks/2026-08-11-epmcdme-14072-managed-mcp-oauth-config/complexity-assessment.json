@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "task": "Add an optional nested camelCase `oauth` config object to the ManagedMcpServer catalog model so GET /v1/mcp/managed-servers exposes self-describing per-server OAuth client parameters, preserving loader skip-and-log resilience and backward compatibility.",
+  "generated": "2026-08-11",
+  "dimensions": {
+    "component_scope":      { "score": 2, "label": "S" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 2, "label": "S" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 14,
+  "size": "S",
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "technical_risk",
+      "reason": "camelCase wire aliasing is a novel convention for src/codemie/configs/ — no alias_generator, to_camel, serialization_alias or populate_by_name exists in managed_mcp_config.py, llm_config.py, budget_config.py, datasources_config.py or mcp_config.py. Compounding this, ManagedMcpServer is a dual-role model (YAML schema and FastAPI response_model), so one alias choice governs both parse and serialize sides, and it interacts with ConfigDict(extra=\"ignore\") under which a near-miss key such as client_id is silently dropped instead of skipped-and-logged — directly at odds with the stated resilience contract. Bumped from M to L for security-adjacent payload (OAuth client id, scope, IdP authorize/token URLs surfaced over the endpoint and written to warning logs, where managed_mcp_config.py:91-92 carries an explicit \"revisit if a credential-bearing field is added\" caveat)."
+    },
+    {
+      "dimension": "component_scope",
+      "reason": "One meaningful component: the self-contained 99-line src/codemie/configs/managed_mcp_config.py holding both the Pydantic model and the loader. The router mcp_managed.py needs no edit — response_model=List[ManagedMcpServer] inherits the new field and FastAPI serializes by_alias by default. Additive nested model on an existing endpoint response, no service or repository layer involved."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "4 files, no new files, ~40-70 net new lines: managed_mcp_config.py, config/customer/managed-mcp-servers.example.yaml (hard-bound to the model by test_example_file_is_valid), tests/codemie/configs/test_managed_mcp_config.py, and tests/codemie/rest_api/routers/test_mcp_managed.py — the latter unstated in the ticket but broken by its exact-dict assertion at lines 55-64 the moment an oauth key appears."
+    },
+    {
+      "dimension": "requirements_clarity",
+      "reason": "Field names, types, required/optional status, defaults, bounds, target JSON shape, backward-compat rule and out-of-scope items are all enumerated. Open items (alias only the nested OAuth model vs the whole ManagedMcpServer; whether snake_case keys stay loadable via populate_by_name) are implementation design decisions, not requirement gaps."
+    }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from M (3) to L (4): security-adjacent change — the endpoint now publishes OAuth client parameters (client id, scope, loopback callback, IdP authorization and token URLs), and those values enter warning logs at a call site explicitly annotated \"revisit if a credential-bearing field is ever added\". No secret is stored and token exchange stays client-side, so no further bump applied."
+  ],
+  "split_recommendation": null
+}
