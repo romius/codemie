@@ -525,6 +525,7 @@ def _configure_direct_runtime_overrides(
         project_runtime_headers,
         project_runtime_api_key,
         project_runtime_base_url,
+        has_project_budget_scopes,
     ) = _resolve_direct_project_budget_runtime(
         llm_model_details=llm_model_details,
         litellm_context=litellm_context,
@@ -562,8 +563,13 @@ def _configure_direct_runtime_overrides(
     # current_project equals user_email when a personal user accesses a global assistant
     # (_resolve_effective_project returns user.email for non-members). That is not a real
     # project context — treat it the same as current_project=None for budget routing.
+    # A project with no budget scopes (has_project_budget_scopes=False) also falls through
+    # to personal/default budget — same behaviour as an own (no-project) assistant.
     has_real_project_context = bool(
-        litellm_context and litellm_context.current_project and litellm_context.current_project != user_email
+        litellm_context
+        and litellm_context.current_project
+        and litellm_context.current_project != user_email
+        and has_project_budget_scopes
     )
     if _try_apply_premium_budget(
         llm_model_details=llm_model_details,
@@ -757,8 +763,12 @@ def _resolve_direct_project_budget_runtime(
     litellm_context: Optional["LiteLLMContext"],
     user_id: Optional[str],
     user_email: Optional[str],
-) -> tuple[str | None, dict[str, str], str | None, str | None]:
-    """Resolve project budget headers for direct LiteLLM chat model usage."""
+) -> tuple[str | None, dict[str, str], str | None, str | None, bool]:
+    """Resolve project budget headers for direct LiteLLM chat model usage.
+
+    The 5th element (has_project_budget_scopes) is True when the project has at least one budget
+    scope for this user. False means the caller must not block personal/default budget fallback.
+    """
     if not litellm_context or not litellm_context.current_project or not user_id or not user_email:
         logger.info(
             f"budget_event=budget_resolution_global_fallback component=litellm_llm_factory path=sync "
@@ -766,7 +776,7 @@ def _resolve_direct_project_budget_runtime(
             f"project_name={(litellm_context.current_project if litellm_context else None)!r} "
             f"model={llm_model_details.base_name!r} reason=missing_context_or_project"
         )
-        return None, {}, None, None
+        return None, {}, None, None, False
 
     from codemie.service.budget.budget_resolution_service import budget_resolution_service
 
@@ -774,6 +784,18 @@ def _resolve_direct_project_budget_runtime(
         litellm_context.current_project,
         user_id,
     )
+
+    # Project has no budget assignments for this user — fall through to personal/default budget
+    # so that premium enforcement applies just as it would for an own (no-project) assistant.
+    if not availability.project_scopes:
+        logger.info(
+            f"budget_event=budget_resolution_global_fallback component=litellm_llm_factory path=sync "
+            f"user_id={user_id!r} username={user_email!r} "
+            f"project_name={litellm_context.current_project!r} "
+            f"model={llm_model_details.base_name!r} reason=no_project_budget_scopes"
+        )
+        return None, {}, None, None, False
+
     category = _resolve_direct_budget_category(
         user_email=user_email,
         llm_model=llm_model_details.base_name,
@@ -816,7 +838,7 @@ def _resolve_direct_project_budget_runtime(
             f"budget_category={category.value!r} model={llm_model_details.base_name!r} "
             f"reason=no_provider_result"
         )
-        return None, {}, None, None
+        return None, {}, None, None, True
 
     selection = select_runtime_budget_mode(
         has_user_litellm_credentials=False,
@@ -841,9 +863,9 @@ def _resolve_direct_project_budget_runtime(
             raise RuntimeError(
                 f"Project member runtime selected but provider returned no runtime user for {project_name!r}"
             )
-        return runtime_user, provider_result.headers, provider_result.api_key, provider_result.base_url
+        return runtime_user, provider_result.headers, provider_result.api_key, provider_result.base_url, True
 
-    return None, provider_result.headers, provider_result.api_key, provider_result.base_url
+    return None, provider_result.headers, provider_result.api_key, provider_result.base_url, True
 
 
 def create_litellm_embedding_model(

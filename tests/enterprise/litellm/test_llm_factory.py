@@ -199,7 +199,7 @@ class TestCreateLiteLLMChatModel:
                                     "codemie.enterprise.litellm.llm_factory._resolve_direct_project_budget_runtime"
                                 ) as mock_resolver:
                                     # Return a non-None user so the bug would inject it before the fix
-                                    mock_resolver.return_value = ("project-member-123", {}, None, None)
+                                    mock_resolver.return_value = ("project-member-123", {}, None, None, True)
                                     with patch(
                                         "codemie.enterprise.litellm.llm_factory.LiteLLMChatOpenAI"
                                     ) as mock_model_cls:
@@ -245,7 +245,7 @@ class TestCreateLiteLLMChatModel:
                                 with patch.object(config, "LITE_LLM_PROJECTS_TO_TAGS_LIST", ""):
                                     with patch(
                                         "codemie.enterprise.litellm.llm_factory._resolve_direct_project_budget_runtime",
-                                        return_value=("member-user-123", {}, None, None),
+                                        return_value=("member-user-123", {}, None, None, True),
                                     ):
                                         with patch(
                                             "codemie.enterprise.litellm.llm_factory.LiteLLMChatOpenAI"
@@ -492,6 +492,7 @@ class TestResolveDirectProjectBudgetRuntime:
             {"x-budget-runtime": "true"},
             "runtime-api-key",
             "https://runtime.example",
+            True,
         )
         mock_sync.assert_called_once_with(
             user_id="user-1",
@@ -589,7 +590,7 @@ class TestResolveDirectProjectBudgetRuntime:
                         user_email=user_email,
                     )
 
-        assert result == (None, {}, None, None)
+        assert result == (None, {}, None, None, False)
         mock_sync.assert_not_called()
         mock_resolve.assert_not_called()
         mock_dispatch.assert_not_called()
@@ -642,6 +643,7 @@ class TestResolveDirectProjectBudgetRuntime:
             {"x-budget-runtime": "true"},
             "runtime-api-key",
             "https://runtime.example",
+            True,
         )
         mock_sync.assert_called_once_with(
             user_id="user-1",
@@ -660,6 +662,43 @@ class TestResolveDirectProjectBudgetRuntime:
             user_email="user@example.com",
             model="claude-opus-4-6-20260205",
         )
+
+    def test_project_with_no_budget_scopes_early_returns_with_false(self):
+        """Project with no budget scopes must return early with has_project_budget_scopes=False
+        and skip resolve/dispatch entirely — billing falls through to personal/default budget."""
+        from codemie.enterprise.litellm.llm_factory import (
+            DirectBudgetAvailability,
+            _resolve_direct_project_budget_runtime,
+        )
+
+        model_details = MagicMock()
+        model_details.base_name = "claude-opus-4"
+
+        litellm_context = MagicMock()
+        litellm_context.current_project = "project-without-budgets"
+
+        with patch(
+            "codemie.enterprise.litellm.llm_factory._resolve_direct_budget_availability",
+            return_value=DirectBudgetAvailability(user_budget_ids={}, project_scopes=set()),
+        ):
+            with patch("codemie.enterprise.litellm.llm_factory.ensure_project_member_runtime_ready_sync") as mock_sync:
+                with patch(
+                    "codemie.service.budget.budget_resolution_service.budget_resolution_service.resolve_sync"
+                ) as mock_resolve:
+                    with patch(
+                        "codemie.service.budget.budget_resolution_service.budget_resolution_service.dispatch_runtime_sync"
+                    ) as mock_dispatch:
+                        result = _resolve_direct_project_budget_runtime(
+                            llm_model_details=model_details,
+                            litellm_context=litellm_context,
+                            user_id="user-1",
+                            user_email="user@example.com",
+                        )
+
+        assert result == (None, {}, None, None, False)
+        mock_sync.assert_not_called()
+        mock_resolve.assert_not_called()
+        mock_dispatch.assert_not_called()
 
 
 class TestLiteLLMChatOpenAI:
@@ -835,7 +874,7 @@ class TestConfigureDirectRuntimeOverridesPremiumNoProject:
 
         with patch(
             "codemie.enterprise.litellm.llm_factory._resolve_direct_project_budget_runtime",
-            return_value=(None, {}, None, None),
+            return_value=(None, {}, None, None, False),
         ):
             _configure_direct_runtime_overrides(
                 llm_model_details=llm_model_details,
@@ -1055,7 +1094,14 @@ class TestConfigureDirectRuntimeOverridesPremiumWithProjectContext:
 
         return LiteLLMContext(credentials=None, current_project=project_name)
 
-    def _invoke(self, *, litellm_context, user_email="alice@example.com", user_id="uid-1"):
+    def _invoke(
+        self,
+        *,
+        litellm_context,
+        user_email="alice@example.com",
+        user_id="uid-1",
+        has_project_budget_scopes=True,
+    ):
         from codemie.enterprise.litellm.llm_factory import _configure_direct_runtime_overrides
 
         llm_model_details = MagicMock()
@@ -1064,7 +1110,7 @@ class TestConfigureDirectRuntimeOverridesPremiumWithProjectContext:
 
         with patch(
             "codemie.enterprise.litellm.llm_factory._resolve_direct_project_budget_runtime",
-            return_value=(None, {}, None, None),
+            return_value=(None, {}, None, None, has_project_budget_scopes),
         ):
             _configure_direct_runtime_overrides(
                 llm_model_details=llm_model_details,
@@ -1114,6 +1160,48 @@ class TestConfigureDirectRuntimeOverridesPremiumWithProjectContext:
             user_email="alice@example.com",
             user_id="uid-1",
             budget_id="default_platform",
+        )
+
+    def test_premium_model_project_no_budget_scopes_uses_personal_premium(self):
+        """Project exists but has no budget assignments → personal premium budget must apply.
+
+        When _resolve_direct_project_budget_runtime returns has_project_budget_scopes=False
+        (project has no budget scopes at all), the request must fall through to personal premium
+        budget — same behaviour as an own assistant with no project context.
+        """
+
+        def category_budget_id(category):
+            return {"premium_models": "default_premium_models", "platform": "default_platform"}.get(category.value)
+
+        with (
+            patch(
+                "codemie.enterprise.litellm.dependencies.get_premium_username",
+                return_value="alice@example.com_codemie_premium_models",
+            ),
+            patch(
+                "codemie.enterprise.litellm.llm_factory._get_direct_request_category_budget_id",
+                return_value=None,
+            ),
+            patch(
+                "codemie.enterprise.litellm.dependencies.get_category_budget_id",
+                side_effect=category_budget_id,
+            ),
+            patch(
+                "codemie.enterprise.litellm.dependencies.check_user_budget",
+                return_value=MagicMock(),
+            ) as mock_check,
+            patch("codemie.enterprise.litellm.llm_factory._mirror_budget_assignment"),
+        ):
+            params = self._invoke(
+                litellm_context=self._make_litellm_context(project_name="my-project"),
+                has_project_budget_scopes=False,
+            )
+
+        assert params["model_kwargs"]["user"] == "alice@example.com_codemie_premium_models"
+        mock_check.assert_called_once_with(
+            user_email="alice@example.com_codemie_premium_models",
+            user_id="uid-1",
+            budget_id="default_premium_models",
         )
 
     def test_premium_model_global_assistant_email_as_project_uses_premium_budget(self):
