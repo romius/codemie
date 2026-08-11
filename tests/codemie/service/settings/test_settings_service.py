@@ -577,32 +577,6 @@ def test_get_azure_devops_creds_uses_setting_id_when_provided(mock_retrieve):
     assert call_args[2] == "ado-id"
 
 
-@patch.object(SettingsService, 'retrieve_setting')
-def test_get_azure_devops_creds_returns_none_project_when_empty(mock_retrieve):
-    # Given: a stored integration where project value is empty (not set)
-    mock_setting = MagicMock()
-
-    def credential_side_effect(key):
-        return {
-            SettingsService.URL: "https://dev.azure.com",
-            SettingsService.PROJECT: "",
-            SettingsService.ORGANIZATION: "my-org",
-            SettingsService.TOKEN: "secret-pat",
-        }.get(key, "")
-
-    mock_setting.credential.side_effect = credential_side_effect
-    mock_retrieve.return_value = mock_setting
-
-    # When: indexed_repo=None so project_name fallback is also ""
-    result = SettingsService.get_azure_devops_creds(user_id="u1", project_name="p1")
-
-    # Then: project is None, not empty string
-    assert result.project is None
-    assert result.base_url == "https://dev.azure.com"
-    assert result.organization == "my-org"
-    assert result.access_token == "secret-pat"
-
-
 # ---------------------------------------------------------------------------
 # hide_sensitive_fields: empty values must not be masked
 # ---------------------------------------------------------------------------

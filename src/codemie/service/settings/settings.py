@@ -1283,9 +1283,7 @@ class SettingsService(BaseSettingsService):
         organization = get_credential(cls.ORGANIZATION, organization_name)
         token = get_credential(cls.TOKEN, creds.token if creds else "")
 
-        return AzureDevOpsCredentials(
-            base_url=base_url, project=project or None, organization=organization, access_token=token
-        )
+        return AzureDevOpsCredentials(base_url=base_url, project=project, organization=organization, access_token=token)
 
     @classmethod
     def get_elastic_creds(

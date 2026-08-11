@@ -12,19 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 from codemie_tools.azure_devops.generic.models import GenericAzureDevOpsConfig
 
 
 class TestGenericAzureDevOpsConfig:
     def test_valid_config(self):
-        config = GenericAzureDevOpsConfig(
-            url="https://dev.azure.com",
-            organization="myorg",
-            token="test_token",
-        )
-        assert config.url == "https://dev.azure.com"
-        assert config.organization == "myorg"
+        config = GenericAzureDevOpsConfig(url="https://dev.azure.com/myorg", token="test_token")
+        assert config.url == "https://dev.azure.com/myorg"
         assert config.token == "test_token"
 
     def test_url_placeholder_from_tool_defaults(self, monkeypatch):
@@ -54,39 +48,3 @@ def test_url_default_wired_to_tool_default():
 
     expected = customer_config.get_tool_default(GenericAzureDevOpsConfig.TOOL_NAME, "url") or ""
     assert GenericAzureDevOpsConfig.model_fields["url"].default == expected
-
-
-class TestGenericAzureDevOpsConfigOrganizationAndProject:
-    def test_organization_marked_required_at_runtime(self):
-        # RequiredField uses lazy-validation: default="" but json_schema_extra flags it for runtime
-        field = GenericAzureDevOpsConfig.model_fields["organization"]
-        assert field.json_schema_extra.get("required_at_runtime") is True
-
-    def test_organization_accepted(self):
-        config = GenericAzureDevOpsConfig(
-            url="https://dev.azure.com",
-            organization="my-org",
-            token="pat",
-        )
-        assert config.organization == "my-org"
-
-    def test_project_optional_defaults_to_none(self):
-        config = GenericAzureDevOpsConfig(
-            url="https://dev.azure.com",
-            organization="my-org",
-            token="pat",
-        )
-        assert config.project is None
-
-    def test_project_accepted_when_provided(self):
-        config = GenericAzureDevOpsConfig(
-            url="https://dev.azure.com",
-            organization="my-org",
-            project="my-project",
-            token="pat",
-        )
-        assert config.project == "my-project"
-
-    def test_field_order(self):
-        fields = [f for f in GenericAzureDevOpsConfig.model_fields if f != "credential_type"]
-        assert fields == ["url", "organization", "project", "token"]

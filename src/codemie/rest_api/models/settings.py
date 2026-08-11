@@ -191,10 +191,10 @@ class LiteLLMContext(BaseModel):
 
 
 class AzureDevOpsCredentials(BaseModel):
-    base_url: str = Field(min_length=1)
-    organization: str = Field(min_length=1)
-    project: Optional[str] = None
-    access_token: str = Field(min_length=1)
+    base_url: str
+    project: str
+    organization: str
+    access_token: str
 
 
 class SharePointCredentials(BaseModel):
