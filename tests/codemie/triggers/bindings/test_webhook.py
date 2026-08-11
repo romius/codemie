@@ -118,6 +118,7 @@ async def test_invoke_webhook_logic_handle_workflow(mock_request, mock_backgroun
     workflow.created_by.user_id = "user_id"
     workflow.created_by.name = "user_name"
     workflow.created_by.username = "user_username"
+    workflow.project = "test_project"
 
     with patch.object(SettingsService, 'retrieve_setting', return_value=setting):
         with patch.object(WorkflowService, 'get_workflow', return_value=workflow):
@@ -134,7 +135,7 @@ def datasource_fixture():
     mock.app_name = "app_name"
     mock.user_id = "user_id"
     mock.repo_name = "repo_name"
-    mock.project_name = "project_name"
+    mock.project_name = "test_project"
     setattr(mock, WebhookService.INDEX_TYPE, "code")
     # Ensure created_by.id is a string for Pydantic validation
     creator = MagicMock()

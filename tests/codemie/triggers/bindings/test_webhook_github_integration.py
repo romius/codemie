@@ -103,6 +103,7 @@ class TestGitHubWebhookIntegration:
         workflow.created_by.user_id = "user-123"
         workflow.created_by.name = "Test User"
         workflow.created_by.username = "testuser"
+        workflow.project = "test-project"
 
         with patch.object(SettingsService, 'retrieve_setting', return_value=github_webhook_setting):
             with patch.object(WorkflowService, 'get_workflow', return_value=workflow):
@@ -187,6 +188,7 @@ class TestGitHubWebhookIntegration:
         workflow.created_by.user_id = "user-123"
         workflow.created_by.name = "Test User"
         workflow.created_by.username = "testuser"
+        workflow.project = "test-project"
 
         with patch.object(SettingsService, 'retrieve_setting', return_value=setting):
             with patch.object(WorkflowService, 'get_workflow', return_value=workflow):
@@ -259,6 +261,7 @@ class TestBackwardCompatibility:
 
         assistant = MagicMock()
         assistant.created_by.id = "user-456"
+        assistant.project = "legacy-project"
 
         with patch.object(SettingsService, 'retrieve_setting', return_value=setting):
             with patch('codemie.triggers.bindings.webhook.validate_assistant', return_value=assistant):
@@ -293,6 +296,7 @@ class TestBackwardCompatibility:
 
         assistant = MagicMock()
         assistant.created_by.id = "user"
+        assistant.project = "test"
 
         with patch.object(SettingsService, 'retrieve_setting', return_value=setting):
             with patch('codemie.triggers.bindings.webhook.validate_assistant', return_value=assistant):
@@ -335,6 +339,7 @@ class TestSecurityRequirements:
         workflow.created_by.user_id = "user"
         workflow.created_by.name = "User"
         workflow.created_by.username = "user"
+        workflow.project = "test"
 
         with patch.object(SettingsService, 'retrieve_setting', return_value=setting):
             with patch.object(WorkflowService, 'get_workflow', return_value=workflow):

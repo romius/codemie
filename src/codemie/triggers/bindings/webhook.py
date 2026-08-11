@@ -489,6 +489,11 @@ class WebhookService:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail=cls.ASSISTANT_NOT_FOUND.format(assistant_id)
             )
+        if assistant.project != setting.project_name:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"Assistant '{assistant_id}' does not belong to the webhook project '{setting.project_name}'.",
+            )
 
         background_tasks.add_task(invoke_assistant, assistant_id, setting.user_id, assistant_id, formatted_payload)
 
@@ -504,6 +509,11 @@ class WebhookService:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail=cls.WORKFLOW_NOT_FOUND.format(workflow_id)
             )
+        if workflow.project != setting.project_name:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"Workflow '{workflow_id}' does not belong to the webhook project '{setting.project_name}'.",
+            )
         user = User(id=setting.user_id)
 
         background_tasks.add_task(invoke_workflow, workflow_id, user.id, workflow_id, formatted_payload)
@@ -517,21 +527,21 @@ class WebhookService:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail=cls.DATASOURCE_NOT_FOUND.format(resource_id)
             )
-        project_name = datasource.project_name
         if not datasource.created_by:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Datasource '{resource_id}' is missing creator information.",
             )
-        if datasource.project_name != project_name:
+        if datasource.project_name != setting.project_name:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=f"Datasource '{resource_id}' project {datasource.project_name} name does not belong"
-                + f" to the webhook project '{project_name}'.",
+                + f" to the webhook project '{setting.project_name}'.",
             )
 
         user = resolve_trigger_user(setting.user_id)
         resource_name = datasource.repo_name
+        project_name = datasource.project_name
         index_type = datasource.index_type
 
         if index_type == FullDatasourceTypes.PROVIDER:
