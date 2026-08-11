@@ -278,7 +278,7 @@ class SandboxSessionManager:
         if bound_workdir != workdir:
             logger.info(
                 f"session_workdir_mismatch: pod={pod_name}, bound_workdir={bound_workdir}, "
-                f"requested_workdir={workdir}, domain=code_executor"
+                f"requested_workdir={workdir}, created_by_env={self._config.creator_env}, domain=code_executor"
             )
             return None
 

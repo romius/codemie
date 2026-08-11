@@ -20,7 +20,7 @@ def _make_tool(sandbox_mode: SandboxMode) -> CodeExecutorTool:
         file_repository=file_repo,
         execution_mode=ExecutionMode.SANDBOX,
     )
-    tool.config = tool.config.model_copy(update={"sandbox_mode": sandbox_mode})
+    tool.config = tool.config.model_copy(update={"sandbox_mode": sandbox_mode, "creator_env": "codemie"})
     return tool
 
 
@@ -207,15 +207,96 @@ class TestGuardDenialLogging(unittest.TestCase):
             tool._log_guard_denials("", marker, workdir="/home/codemie/u")
 
         info.assert_called_once_with(
-            "filesystem_access_denied: "
-            "sandbox_mode=%s user_id=%s workdir=%s operation=%s path=%s reason=%s domain=code_executor",
+            "filesystem_access_denied: sandbox_mode=%s user_id=%s workdir=%s "
+            "operation=%s reason=%s count=%d paths=[%s] created_by_env=%s domain=code_executor",
             "sandbox-jobs",
             "user-1",
             "/home/codemie/u",
             "open",
-            "../secret.txt",
             "outside_workspace",
+            1,
+            "../secret.txt",
+            "codemie",
         )
+
+    def test_groups_repeated_denials_with_same_operation_and_reason_into_one_line(self):
+        tool = _make_tool(SandboxMode.JOBS)
+        tool.user_id = "user-1"
+        paths = [
+            "/opt/venv/lib/python3.12/site-packages/pymupdf/__init__.py",
+            "/usr/lib/python312.zip/__init__.py",
+            "/usr/lib/python3.12/__init__.py",
+            "/usr/lib/python3.12/lib-dynload/__init__.py",
+        ]
+        marker = "".join(
+            _denial_marker({"operation": "io.open", "path": path, "reason": "absolute_path"}) for path in paths
+        )
+
+        with patch("codemie_tools.data_management.code_executor.code_executor_tool.logger.info") as info:
+            tool._log_guard_denials("", marker, workdir="/home/codemie/u")
+
+        info.assert_called_once_with(
+            "filesystem_access_denied: sandbox_mode=%s user_id=%s workdir=%s "
+            "operation=%s reason=%s count=%d paths=[%s] created_by_env=%s domain=code_executor",
+            "sandbox-jobs",
+            "user-1",
+            "/home/codemie/u",
+            "io.open",
+            "absolute_path",
+            4,
+            ", ".join(paths[:3]) + ", +1 more",
+            "codemie",
+        )
+
+    def test_groups_denials_separately_by_operation_and_reason(self):
+        tool = _make_tool(SandboxMode.JOBS)
+        tool.user_id = "user-1"
+        marker = _denial_marker(
+            {"operation": "io.open", "path": "/etc/passwd", "reason": "absolute_path"}
+        ) + _denial_marker({"operation": "os.stat", "path": "/etc/shadow", "reason": "outside_workspace"})
+
+        with patch("codemie_tools.data_management.code_executor.code_executor_tool.logger.info") as info:
+            tool._log_guard_denials("", marker, workdir="/home/codemie/u")
+
+        assert info.call_count == 2
+
+    def test_session_based_validation_logs_created_by_env_on_block(self):
+        from langchain_core.tools import ToolException
+
+        tool = _make_tool(SandboxMode.SHARED)
+        session = MagicMock(name="session")
+        violation = MagicMock()
+        violation.severity.name = "HIGH"
+        violation.description = "blocked import"
+        session.is_safe.return_value = (False, [violation])
+
+        with patch("codemie_tools.data_management.code_executor.code_executor_tool.logger.warning") as warn:
+            with self.assertRaises(ToolException):
+                tool._validate_code_security(session, "import os", user_id="user-1", creator_env="codemie")
+
+        warn.assert_called_once()
+        assert "created_by_env=codemie" in warn.call_args[0][0]
+
+    def test_jobs_mode_validation_logs_created_by_env_on_block(self):
+        from langchain_core.tools import ToolException
+
+        tool = _make_tool(SandboxMode.JOBS)
+        tool.user_id = "user-1"
+        tool.security_policy = MagicMock(name="security_policy")
+        violation = MagicMock()
+        violation.severity.name = "HIGH"
+        violation.description = "blocked import"
+
+        with patch(
+            "codemie_tools.data_management.code_executor.code_executor_tool.check_security_policy",
+            return_value=(False, [violation]),
+        ):
+            with patch("codemie_tools.data_management.code_executor.code_executor_tool.logger.warning") as warn:
+                with self.assertRaises(ToolException):
+                    tool._validate_code_security_policy("import os")
+
+        warn.assert_called_once()
+        assert "created_by_env=codemie" in warn.call_args[0][0]
 
     def test_rejects_malformed_or_untrusted_stderr_markers(self):
         tool = _make_tool(SandboxMode.SHARED)

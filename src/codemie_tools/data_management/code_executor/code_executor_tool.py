@@ -62,6 +62,7 @@ _DENIAL_EVENT_FIELD_LIMITS: dict[str, int] = {
     "path": 4096,
     "reason": 128,
 }
+_DENIAL_EVENT_SAMPLE_PATHS = 3
 
 _BLOCKED_EXPORT_PATH_PREFIXES: frozenset[str] = frozenset(
     {
@@ -444,7 +445,7 @@ class CodeExecutorTool(CodeMieTool):
         )
         logger.info(
             f"code_execution_started: user_id={self.user_id}, sandbox_mode={self.config.sandbox_mode.value}, "
-            f"workdir={user_workdir}, domain=code_executor"
+            f"workdir={user_workdir}, created_by_env={self.config.creator_env}, domain=code_executor"
         )
         try:
             if self.config.sandbox_mode == SandboxMode.JOBS:
@@ -465,7 +466,7 @@ class CodeExecutorTool(CodeMieTool):
                 if self.input_files:
                     self._upload_files_to_sandbox(session, self.input_files, user_workdir)
 
-                self._validate_code_security(session, code, user_id=self.user_id)
+                self._validate_code_security(session, code, user_id=self.user_id, creator_env=self.config.creator_env)
 
                 result, exec_time = self._execute_code_sandbox(session, guarded_code)
                 self._log_execution_timing(0.0, exec_time)
@@ -474,7 +475,10 @@ class CodeExecutorTool(CodeMieTool):
                 result_text = self._format_execution_result(result)
                 exported_files = self._export_files_from_execution(session, export_files, user_workdir)
                 if exported_files:
-                    logger.info(f"files_exported: user_id={self.user_id}, paths={exported_files}, domain=code_executor")
+                    logger.info(
+                        f"files_exported: user_id={self.user_id}, paths={exported_files}, "
+                        f"created_by_env={self.config.creator_env}, domain=code_executor"
+                    )
                     result_text += ", ".join(exported_files)
 
                 return result_text
@@ -567,7 +571,9 @@ class CodeExecutorTool(CodeMieTool):
         return session, elapsed
 
     @staticmethod
-    def _validate_code_security(session, code: str, *, user_id: Optional[str] = None) -> None:
+    def _validate_code_security(
+        session, code: str, *, user_id: Optional[str] = None, creator_env: Optional[str] = None
+    ) -> None:
         """
         Validate code against security policy before execution.
 
@@ -575,6 +581,7 @@ class CodeExecutorTool(CodeMieTool):
             session: Active sandbox session
             code: Python code to validate
             user_id: Caller's user ID for audit logging
+            creator_env: Backend environment identifier for audit logging
 
         Raises:
             ToolException: If code fails security validation
@@ -591,7 +598,7 @@ class CodeExecutorTool(CodeMieTool):
             logger.warning(
                 f"code_execution_blocked: user_id={user_id}, reason=security_policy, "
                 f"violations={len(violations)}, details={', '.join([v.description for v in violations[:3]])}, "
-                f"domain=code_executor"
+                f"created_by_env={creator_env}, domain=code_executor"
             )
             raise ToolException(error_msg)
 
@@ -610,7 +617,7 @@ class CodeExecutorTool(CodeMieTool):
             logger.warning(
                 f"code_execution_blocked: user_id={self.user_id}, reason=security_policy, "
                 f"violations={len(violations)}, details={', '.join([v.description for v in violations[:3]])}, "
-                f"domain=code_executor"
+                f"created_by_env={self.config.creator_env}, domain=code_executor"
             )
             raise ToolException(error_msg)
 
@@ -735,7 +742,10 @@ class CodeExecutorTool(CodeMieTool):
 
     def _log_guard_denials(self, stdout: str, stderr: str, *, workdir: str) -> None:
         # Guard markers are always written to stderr by the sandbox wrapper; stdout carries no denial events.
+        # Execution has already finished by this point, so all denials for this run are collected up front;
+        # grouping them here trades one log line per denied path for one line per (operation, reason) pair.
         del stdout
+        grouped: dict[tuple[str, str], list[str]] = {}
         for event in extract_denial_events(stderr):
             if set(event) != set(_DENIAL_EVENT_FIELD_LIMITS):
                 logger.debug(
@@ -750,15 +760,23 @@ class CodeExecutorTool(CodeMieTool):
             ):
                 logger.debug("Skipping denial event with invalid field values: %r", event)
                 continue
+            grouped.setdefault((event["operation"], event["reason"]), []).append(event["path"])
+
+        for (operation, reason), paths in grouped.items():
+            sample_paths = paths[:_DENIAL_EVENT_SAMPLE_PATHS]
+            extra = len(paths) - len(sample_paths)
+            sample = ", ".join(sample_paths) + (f", +{extra} more" if extra else "")
             logger.info(
-                "filesystem_access_denied: "
-                "sandbox_mode=%s user_id=%s workdir=%s operation=%s path=%s reason=%s domain=code_executor",
+                "filesystem_access_denied: sandbox_mode=%s user_id=%s workdir=%s "
+                "operation=%s reason=%s count=%d paths=[%s] created_by_env=%s domain=code_executor",
                 self.config.sandbox_mode.value,
                 self.user_id,
                 workdir,
-                event["operation"],
-                event["path"],
-                event["reason"],
+                operation,
+                reason,
+                len(paths),
+                sample,
+                self.config.creator_env,
             )
 
     @staticmethod
@@ -825,5 +843,8 @@ class CodeExecutorTool(CodeMieTool):
             if url:
                 urls.append(url)
         if urls:
-            logger.info(f"files_exported: user_id={self.user_id}, paths={urls}, domain=code_executor")
+            logger.info(
+                f"files_exported: user_id={self.user_id}, paths={urls}, "
+                f"created_by_env={self.config.creator_env}, domain=code_executor"
+            )
         return urls

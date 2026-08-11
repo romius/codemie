@@ -36,6 +36,7 @@ class TestSandboxSessionManager(unittest.TestCase):
             max_pod_pool_size=3,
             pod_name_prefix="test-executor-",
             docker_image="test-image:latest",
+            creator_env="codemie",
         )
 
     def tearDown(self):
@@ -247,9 +248,12 @@ class TestSandboxSessionManager(unittest.TestCase):
         manager._sessions["pod-1"] = session
 
         with patch.object(manager, "_is_session_healthy", return_value=True):
-            reused = manager._try_reuse_session("pod-1", "/home/codemie/new")
+            with patch("codemie_tools.data_management.code_executor.session_manager.logger.info") as info:
+                reused = manager._try_reuse_session("pod-1", "/home/codemie/new")
 
         assert reused is None
+        info.assert_called_once()
+        assert "created_by_env=codemie" in info.call_args[0][0]
 
     def test_try_reuse_session_rejects_session_without_workdir_metadata(self):
         manager = SandboxSessionManager(config=self.config)
