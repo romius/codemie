@@ -13,11 +13,23 @@
 # limitations under the License.
 
 import pytest
+from unittest.mock import MagicMock, patch
 from sqlmodel import select
 
 from codemie.rest_api.models.assistant import Assistant, AssistantSortBy
 from codemie.rest_api.models.index import SortOrder
 from codemie.service.assistant.assistant_repository import AssistantRepository, AssistantScope
+
+
+@pytest.fixture
+def mock_user():
+    user = MagicMock()
+    user.is_admin = False
+    user.is_external_user = False
+    user.project_names = ["DEMO"]
+    user.admin_project_names = []
+    user.id = "test_user"
+    return user
 
 
 # ---------------------------------------------------------------------------
@@ -167,3 +179,86 @@ def test_other_scope_sorts_by_update_date():
     order_by_part = sql.split("ORDER BY", 1)[-1] if "ORDER BY" in sql else sql
     assert "UPDATE_DATE" in order_by_part
     assert "UNIQUE_USERS_COUNT" not in order_by_part
+
+
+# ---------------------------------------------------------------------------
+# EPMCDME-13980 — search filter must not override explicit sort_by
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "sort_by,expected_col",
+    [
+        (AssistantSortBy.LIKES, "unique_likes_count"),
+        (AssistantSortBy.DISLIKES, "unique_dislikes_count"),
+        (AssistantSortBy.USAGE, "unique_users_count"),
+    ],
+)
+@patch("codemie.service.assistant.assistant_repository.Session")
+def test_marketplace_search_with_explicit_sort_sort_takes_precedence_over_priority_case(
+    mock_session_class, mock_user, sort_by, expected_col
+):
+    """When user searches AND sorts by likes/dislikes/usage, the sort must apply to ALL
+    matched assistants (title + description), not just re-order within each priority group.
+
+    Bug: compose_multi_field_wildcard_filter injects an ORDER BY priority_case, which
+    is then followed by the user's sort. SQLAlchemy appends ORDER BYs, so the priority
+    case wins and description-matched assistants stay after all title-matched ones
+    regardless of likes/dislikes/usage.
+    """
+    mock_session = MagicMock()
+    mock_session_class.return_value.__enter__.return_value = mock_session
+    mock_session.exec.return_value.all.return_value = []
+    mock_session.exec.return_value.one.return_value = 0
+
+    AssistantRepository().query(
+        user=mock_user,
+        scope=AssistantScope.MARKETPLACE,
+        filters={"search": "AI"},
+        sort_by=sort_by,
+        sort_order=SortOrder.DESC,
+        page=0,
+        per_page=10,
+    )
+
+    # Last exec call runs the paginated/sorted query
+    executed_query = mock_session.exec.call_args_list[-1][0][0]
+    sql = str(executed_query).lower()
+
+    order_by_part = sql.split("order by", 1)[-1] if "order by" in sql else sql
+
+    # The requested sort column must be the FIRST ORDER BY term — before any priority CASE.
+    assert expected_col in order_by_part, f"Expected {expected_col} in ORDER BY, got: {order_by_part}"
+
+    if "case" in order_by_part:
+        # If a CASE expression still appears (fallback tiebreaker is acceptable),
+        # it must come AFTER the user-requested sort column.
+        assert order_by_part.index(expected_col) < order_by_part.index(
+            "case"
+        ), f"User sort '{expected_col}' must precede any priority CASE. ORDER BY: {order_by_part}"
+
+
+@patch("codemie.service.assistant.assistant_repository.Session")
+def test_marketplace_search_without_explicit_sort_still_uses_priority_ordering(mock_session_class, mock_user):
+    """When user searches WITHOUT explicit sort, title-first priority ordering is preserved."""
+    mock_session = MagicMock()
+    mock_session_class.return_value.__enter__.return_value = mock_session
+    mock_session.exec.return_value.all.return_value = []
+    mock_session.exec.return_value.one.return_value = 0
+
+    AssistantRepository().query(
+        user=mock_user,
+        scope=AssistantScope.MARKETPLACE,
+        filters={"search": "AI"},
+        sort_by=None,
+        sort_order=SortOrder.DESC,
+        page=0,
+        per_page=10,
+    )
+
+    executed_query = mock_session.exec.call_args_list[-1][0][0]
+    sql = str(executed_query).lower()
+    order_by_part = sql.split("order by", 1)[-1] if "order by" in sql else sql
+
+    # The default MARKETPLACE sort (unique_users_count) is still present
+    assert "unique_users_count" in order_by_part

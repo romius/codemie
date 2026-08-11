@@ -26,7 +26,7 @@ from codemie.core.models import CreatedByUser
 from codemie.rest_api.models.assistant import Assistant, AssistantListResponse, AssistantRequest, AssistantSortBy
 from codemie.rest_api.models.index import SortOrder
 from codemie.rest_api.security.user import User
-from codemie.service.filter.filter_services import AssistantFilter, AssistantNameFilter
+from codemie.service.filter.filter_services import AssistantFilter
 
 
 class AssistantScope(str, Enum):
@@ -184,6 +184,15 @@ class AssistantRepository:
                     query = AssistantFilter.add_sql_filters(
                         query, model_class=Assistant, raw_filters=filters, is_admin=user.is_admin
                     )
+
+            # EPMCDME-13980: The multi-field wildcard search filter injects an ORDER BY
+            # priority_case (title matches before description matches). When the user
+            # requests an explicit sort (likes/dislikes/usage/name), that sort must apply
+            # to the full result set — clear the filter's ordering so _apply_sort_to_query
+            # sets the ORDER BY from scratch. Without an explicit sort_by, the priority
+            # ordering is preserved as the default behavior.
+            if sort_by is not None:
+                query = query.order_by(None)
 
             # Apply sorting
             query = self._apply_sort_to_query(query, scope, sort_by, sort_order, group_by_is_global)
@@ -600,7 +609,7 @@ class AssistantRepository:
 
         # Build non-global query: apply ALL filters (including project)
         non_global_query = select(Assistant).where(non_global_base_condition)
-        non_global_query = AssistantNameFilter.add_sql_filters(
+        non_global_query = AssistantFilter.add_sql_filters(
             non_global_query, model_class=Assistant, raw_filters=filters, is_admin=user.is_admin
         )
         non_global_condition = non_global_query.whereclause  # Extract WHERE clause for combining
@@ -609,7 +618,7 @@ class AssistantRepository:
         marketplace_base_condition = self._get_marketplace_condition(user)
         if marketplace_filters:
             marketplace_query = select(Assistant).where(marketplace_base_condition)
-            marketplace_query = AssistantNameFilter.add_sql_filters(
+            marketplace_query = AssistantFilter.add_sql_filters(
                 marketplace_query, model_class=Assistant, raw_filters=marketplace_filters, is_admin=user.is_admin
             )
             marketplace_condition = marketplace_query.whereclause  # Extract WHERE clause for combining

@@ -712,6 +712,21 @@ class TestProjectWithMarketplaceQuery:
         # Should reference the name field (search filter)
         assert "name" in whereclause_str and "like" in whereclause_str
 
+    def test_build_query_search_filter_matches_description_field(self, repository, mock_user):
+        """EPMCDME-13980: search filter must match against description, not only name.
+
+        Bug: _build_project_with_marketplace_query used AssistantNameFilter, which searches
+        only the name column. Description-matching assistants were entirely excluded from
+        the PROJECT_WITH_MARKETPLACE scope search results.
+        """
+        filters = {"project": "DEMO", "search": "test"}
+
+        query = repository._build_project_with_marketplace_query(mock_user, filters)
+        whereclause_str = str(query.whereclause).lower()
+
+        # Description field must appear in the WHERE clause (as a LIKE search)
+        assert "description" in whereclause_str, f"description column must be searched, got: {whereclause_str}"
+
 
 @patch("codemie.service.assistant.assistant_repository.Session")
 def test_query_marketplace_sorts_by_clone_count_after_unique_users_count(mock_session_class, mock_user):
