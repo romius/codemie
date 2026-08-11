@@ -559,12 +559,18 @@ def _configure_direct_runtime_overrides(
         )
         return
 
+    # current_project equals user_email when a personal user accesses a global assistant
+    # (_resolve_effective_project returns user.email for non-members). That is not a real
+    # project context — treat it the same as current_project=None for budget routing.
+    has_real_project_context = bool(
+        litellm_context and litellm_context.current_project and litellm_context.current_project != user_email
+    )
     if _try_apply_premium_budget(
         llm_model_details=llm_model_details,
         user_email=user_email,
         user_id=user_id,
         request_params=request_params,
-        has_project_context=bool(litellm_context and litellm_context.current_project),
+        has_project_context=has_real_project_context,
     ):
         return
 

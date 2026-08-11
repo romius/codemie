@@ -1019,16 +1019,22 @@ class TestConfigureDirectRuntimeOverridesPremiumNoProject:
 
 
 class TestConfigureDirectRuntimeOverridesPremiumWithProjectContext:
-    """Test for case when a project context exists but no project
-    PREMIUM_MODELS scope is available for the user, _try_apply_premium_budget must not fire.
-    The request must fall through to the PLATFORM budget path.
+    """Tests for premium budget routing when a project context is present.
 
-    Root cause: adding default_premium_models to budgets-config.yaml made
-    get_category_budget_id(PREMIUM_MODELS) return a non-None value, which activated the
-    not availability.project_scopes branch in _resolve_direct_budget_category for projects
-    with empty scopes.  _resolve_direct_project_budget_runtime then returned (None, {}, None,
-    None) — identical to the no-project-context case — causing _try_apply_premium_budget to
-    fire and silently redirect to the personal premium budget.
+    Covers two distinct scenarios:
+    1. Real project (current_project != user_email): _try_apply_premium_budget must NOT fire;
+       request falls through to project platform budget.
+    2. Global-assistant personal context (current_project == user_email): treated as no real
+       project — _try_apply_premium_budget MUST fire, same as the no-project-context case.
+
+    Root cause of original regression (EPMCDME-13794): adding default_premium_models to
+    budgets-config.yaml made get_category_budget_id(PREMIUM_MODELS) return a non-None value,
+    activating the not availability.project_scopes branch for real projects with empty scopes
+    and routing them to the personal premium budget instead of the project platform budget.
+
+    Root cause of second regression (this fix's predecessor): has_project_context was set from
+    bool(litellm_context.current_project) without excluding the email-as-project case that
+    _resolve_effective_project produces for global assistants accessed by non-members.
     """
 
     @pytest.fixture(autouse=True)
@@ -1108,6 +1114,49 @@ class TestConfigureDirectRuntimeOverridesPremiumWithProjectContext:
             user_email="alice@example.com",
             user_id="uid-1",
             budget_id="default_platform",
+        )
+
+    def test_premium_model_global_assistant_email_as_project_uses_premium_budget(self):
+        """Global assistant accessed by non-member: current_project == user_email.
+
+        _resolve_effective_project sets current_project = user.email for personal users
+        on a global assistant. This is NOT a real project context — personal premium budget
+        must still be enforced, not suppressed by has_project_context guard.
+        """
+
+        def category_budget_id(category):
+            return {"premium_models": "default_premium_models", "platform": "default_platform"}.get(category.value)
+
+        with (
+            patch(
+                "codemie.enterprise.litellm.dependencies.get_premium_username",
+                return_value="alice@example.com_codemie_premium_models",
+            ),
+            patch(
+                "codemie.enterprise.litellm.llm_factory._get_direct_request_category_budget_id",
+                return_value=None,
+            ),
+            patch(
+                "codemie.enterprise.litellm.dependencies.get_category_budget_id",
+                side_effect=category_budget_id,
+            ),
+            patch(
+                "codemie.enterprise.litellm.dependencies.check_user_budget",
+                return_value=MagicMock(),
+            ) as mock_check,
+            patch("codemie.enterprise.litellm.llm_factory._mirror_budget_assignment"),
+        ):
+            # current_project == user_email: global assistant personal context
+            params = self._invoke(
+                litellm_context=self._make_litellm_context(project_name="alice@example.com"),
+                user_email="alice@example.com",
+            )
+
+        assert params["model_kwargs"]["user"] == "alice@example.com_codemie_premium_models"
+        mock_check.assert_called_once_with(
+            user_email="alice@example.com_codemie_premium_models",
+            user_id="uid-1",
+            budget_id="default_premium_models",
         )
 
     def test_premium_model_project_context_personal_assignment_still_uses_platform(self):
