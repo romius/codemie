@@ -41,13 +41,13 @@ def mock_user():
     "sort_by,sort_order,expected_column,expected_direction,expected_nulls",
     [
         (AssistantSortBy.USAGE, SortOrder.DESC, "unique_users_count", "DESC", "NULLS LAST"),
-        (AssistantSortBy.USAGE, SortOrder.ASC, "unique_users_count", "ASC", "NULLS LAST"),
+        (AssistantSortBy.USAGE, SortOrder.ASC, "unique_users_count", "ASC", "NULLS FIRST"),
         (AssistantSortBy.LIKES, SortOrder.DESC, "unique_likes_count", "DESC", "NULLS LAST"),
-        (AssistantSortBy.LIKES, SortOrder.ASC, "unique_likes_count", "ASC", "NULLS LAST"),
+        (AssistantSortBy.LIKES, SortOrder.ASC, "unique_likes_count", "ASC", "NULLS FIRST"),
         (AssistantSortBy.DISLIKES, SortOrder.DESC, "unique_dislikes_count", "DESC", "NULLS LAST"),
-        (AssistantSortBy.DISLIKES, SortOrder.ASC, "unique_dislikes_count", "ASC", "NULLS LAST"),
+        (AssistantSortBy.DISLIKES, SortOrder.ASC, "unique_dislikes_count", "ASC", "NULLS FIRST"),
         (AssistantSortBy.NAME, SortOrder.DESC, "name", "DESC", "NULLS LAST"),
-        (AssistantSortBy.NAME, SortOrder.ASC, "name", "ASC", "NULLS LAST"),
+        (AssistantSortBy.NAME, SortOrder.ASC, "name", "ASC", "NULLS FIRST"),
     ],
 )
 def test_build_sort_column(sort_by, sort_order, expected_column, expected_direction, expected_nulls):
@@ -236,6 +236,38 @@ def test_marketplace_search_with_explicit_sort_sort_takes_precedence_over_priori
         assert order_by_part.index(expected_col) < order_by_part.index(
             "case"
         ), f"User sort '{expected_col}' must precede any priority CASE. ORDER BY: {order_by_part}"
+
+
+@patch("codemie.service.assistant.assistant_repository.Session")
+def test_marketplace_search_with_name_sort_keeps_priority_case(mock_session_class, mock_user):
+    """When user searches AND sorts by NAME, priority (title-first) must apply BEFORE
+    the name ordering — so title matches are listed A→Z first, then description-only
+    matches A→Z. Any priority CASE injected by the filter must precede the NAME term.
+    """
+    mock_session = MagicMock()
+    mock_session_class.return_value.__enter__.return_value = mock_session
+    mock_session.exec.return_value.all.return_value = []
+    mock_session.exec.return_value.one.return_value = 0
+
+    AssistantRepository().query(
+        user=mock_user,
+        scope=AssistantScope.MARKETPLACE,
+        filters={"search": "AI"},
+        sort_by=AssistantSortBy.NAME,
+        sort_order=SortOrder.ASC,
+        page=0,
+        per_page=10,
+    )
+
+    executed_query = mock_session.exec.call_args_list[-1][0][0]
+    sql = str(executed_query).lower()
+    order_by_part = sql.split("order by", 1)[-1] if "order by" in sql else sql
+
+    assert "name" in order_by_part
+    if "case" in order_by_part:
+        assert order_by_part.index("case") < order_by_part.index(
+            "name"
+        ), f"Priority CASE must precede NAME sort. ORDER BY: {order_by_part}"
 
 
 @patch("codemie.service.assistant.assistant_repository.Session")

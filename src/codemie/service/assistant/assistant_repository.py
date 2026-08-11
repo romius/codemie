@@ -71,8 +71,12 @@ class AssistantRepository:
             AssistantSortBy.NAME: Assistant.name,
         }
         col = column_map[sort_by]
+        # NULLs sort as smallest values: NULLS FIRST for ASC, NULLS LAST for DESC.
+        # For metric fields (usage/likes/dislikes) NULL means "no data yet", which the
+        # user perceives as 0, so it must sit at the low end of the range in both
+        # directions instead of always at the end.
         if sort_order == SortOrder.ASC:
-            return col.asc().nullslast()
+            return col.asc().nullsfirst()
         return col.desc().nullslast()
 
     @staticmethod
@@ -186,12 +190,12 @@ class AssistantRepository:
                     )
 
             # EPMCDME-13980: The multi-field wildcard search filter injects an ORDER BY
-            # priority_case (title matches before description matches). When the user
-            # requests an explicit sort (likes/dislikes/usage/name), that sort must apply
-            # to the full result set — clear the filter's ordering so _apply_sort_to_query
-            # sets the ORDER BY from scratch. Without an explicit sort_by, the priority
-            # ordering is preserved as the default behavior.
-            if sort_by is not None:
+            # priority_case (title matches before description matches). Explicit metric
+            # sorts (likes/dislikes/usage) must apply to the full result set, so clear
+            # the filter's ordering. For sort_by=NAME we keep the priority CASE so name
+            # ordering happens within each priority group (title matches A→Z, then
+            # description-only matches A→Z). No sort_by → priority ordering preserved.
+            if sort_by is not None and sort_by != AssistantSortBy.NAME:
                 query = query.order_by(None)
 
             # Apply sorting
