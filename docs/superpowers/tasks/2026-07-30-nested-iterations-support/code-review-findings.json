@@ -1,0 +1,56 @@
+[
+  {
+    "id": "CR-003",
+    "severity": "critical",
+    "triage": "patch",
+    "file": "src/codemie/workflows/workflow.py",
+    "line": 662,
+    "summary": "Nested-iteration Send payloads share the same messages list by reference; _apply_node_input_guardrails mutates message objects in-place so sibling branches skip their own guardrail checks",
+    "failure_scenario": "When is_in_iteration=True all inner Send payloads receive the identical messages list object (no .copy()). _apply_node_input_guardrails retrieves the last message from that shared list and (a) sets message.additional_kwargs['metadata'][GUARDRAIL_CHECKED_FLAG]=True in-place (base_node.py:831) and (b) calls update_message_texts which assigns message.content and message.tool_calls in-place. Branch A's before_execution stamps GUARDRAIL_CHECKED_FLAG=True on the shared message object; all sibling branches then hit the early-return guard ('if metadata.get(GUARDRAIL_CHECKED_FLAG): return') and skip guardrail evaluation entirely — including active content filters and safety substitutions. The outer fan-out path uses messages.copy() precisely to prevent this."
+  },
+  {
+    "id": "CR-004",
+    "severity": "major",
+    "triage": "patch",
+    "file": "src/codemie/workflows/models.py",
+    "line": 84,
+    "summary": "OUTER_* state keys are permanently sticky: the right-wins-unless-None reducer silently ignores None-writes from non-nested continue_iteration, leaving stale nested counters visible to all subsequent nodes",
+    "failure_scenario": "After a nested fan-out completes, continue_iteration is called at the outer level with is_in_iteration=False, so outer_iter_number=None and outer_total=None are placed in every Send payload. The reducer 'lambda left, right: right if right is not None else left' sees right=None and keeps the previous non-None value (e.g. outer_iteration_node_number=1 from the completed nested run). All subsequent nodes calling get_node_name with total_iterations > 1 render 'NodeName 1-2/3' instead of '2 of 3'. No code path resets OUTER_* after nested iteration; the only write sites are the Send constructor and _add_iteration_state, both blocked by the reducer."
+  },
+  {
+    "id": "CR-001",
+    "severity": "major",
+    "triage": "defer",
+    "file": "src/codemie/workflows/workflow.py",
+    "line": 733,
+    "summary": "_handle_condition and _handle_switch lambdas use the old accidental pattern where _self=self default is overridden by LangGraph's positional state arg — the same PR fixed _handle_single_state but left these two unchanged",
+    "failure_scenario": "lambda _self=self, _transition=transition, ...: evaluate(_self, ...) — LangGraph passes state as first positional arg, displacing _self's default with the graph state dict. evaluate_conditional_route receives graph_state as state_schema, which happens to be correct. Works accidentally. The same PR explicitly fixed the iteration lambda to 'lambda state, _self=self, ...'; if a developer adds _self.some_method() alongside evaluate() expecting _self to be the executor, the call will crash at runtime."
+  },
+  {
+    "id": "CR-002",
+    "severity": "major",
+    "triage": "defer",
+    "file": "src/codemie/workflows/workflow.py",
+    "line": 648,
+    "summary": "No depth-3 detection guard: when OUTER_* are already set and continue_iteration is called with is_in_iteration=True, depth-3 entry silently overwrites OUTER_* with depth-2 values",
+    "failure_scenario": "is_in_iteration = iter_number > 0 is True at both depth-2 and depth-3 entries. At depth 3, outer_iter_number=iter_number (depth-2 counter) overwrites OUTER_ITERATION_NODE_NUMBER_KEY, permanently losing the depth-1 identity. state_schema.get(OUTER_ITERATION_NODE_NUMBER_KEY) is already non-None at depth-3 entry — checking it would be the natural sentinel — but no assertion, log warning, or raise exists."
+  },
+  {
+    "id": "CR-005",
+    "severity": "minor",
+    "triage": "patch",
+    "file": "src/codemie/workflows/models.py",
+    "line": 82,
+    "summary": "4 new TypedDict fields use Optional[int] instead of int | None, violating code-quality.md convention",
+    "failure_scenario": "code-quality.md rule: 'Avoid: typing.Optional[X] | Prefer: X | None unions'. Fields iteration_node_number (82), total_iterations (83), outer_iteration_node_number (84), outer_total_iterations (85) all use Annotated[Optional[int], ...] — should be Annotated[int | None, ...]."
+  },
+  {
+    "id": "CR-006",
+    "severity": "minor",
+    "triage": "defer",
+    "file": "src/codemie/workflows/models.py",
+    "line": 80,
+    "summary": "Reducer lambda right-wins-unless-None duplicated 6 times across AgentMessages fields with no named helper extracted",
+    "failure_scenario": "Lines 80-85 repeat 'lambda left, right: right if right is not None else left' six times. A semantic change to the reducer requires updating all six independently; missing one creates a silent behavioral divergence between fields."
+  }
+]

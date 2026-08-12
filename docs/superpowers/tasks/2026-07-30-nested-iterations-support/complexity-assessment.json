@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "task": "Implement nested iterations support in the workflow engine with outer/inner iter_key tracking, independent counters, message history preservation, correct graph edge creation, and Alembic migration for DB column.",
+  "generated": "2026-07-30T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 6, "label": "XXL" },
+    "requirements_clarity": { "score": 4, "label": "L" },
+    "technical_risk":       { "score": 6, "label": "XXL" },
+    "file_change_estimate": { "score": 5, "label": "XL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 5, "label": "XL" }
+  },
+  "total": 27,
+  "size": "XL",
+  "routing": "split-required",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Touches WorkflowExecutor (continue_iteration, _build_parallel_context, _handle_single_state, find_map_nodes, init_workflow_edges), WorkflowNextState, AgentMessages TypedDict, BaseNode (_add_iteration_state, _prepare_iter_task_messages), AgentNode (get_node_name), constants.py, and DB persistence — 4+ components across Workflow/Orchestration, Data Models, Node Layer, and Persistence subsystems. Bumped from XL to XXL by 'affects multiple workflows' red flag (all workflows using iter_key are affected by changes to the core iteration mechanism)."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "Genuinely new semantic with no complete prior art in the codebase. Core design decision (flat pair of constants vs. stack-based nesting) is unresolved. Pre-existing lambda closure bug at workflow.py:698, LangGraph untyped-key state merging uncertainty, concurrent context reference mutation risk, and JSONB size blow-up for deeply nested branches all raise risk. Bumped from XL to XXL by 'DB schema change' and 'data migration' red flags — the Alembic migration for WorkflowExecutionState.iteration_number is irreversible once deployed."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "Minimum 5–7 source files (workflow.py, workflow_models.py, models.py, constants.py, base_node.py, agent_node.py, execution_config_schema.yaml) plus Alembic migration file, YAML template, and 5–7 new test files — realistic total 10–14 files spanning workflows/, workflows/nodes/, core/workflow_models/, tests/, config/templates/, alembic/versions/. Bumped from L to XL by 'data migration' red flag."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "Workflow/Orchestration layer, Data Models layer, Node Layer, and DB-Persistence layer (Alembic migration required for WorkflowExecutionState.iteration_number). Bumped from L to XL by 'DB schema change significantly' red flag."
+    },
+    {
+      "dimension": "requirements_clarity",
+      "reason": "Five expected results are stated but key architectural decisions are open: flat pair of counter constants vs. stack-based nesting, DB column strategy (new column vs. type change), and whether include_in_iterator_context whitelist should apply at inner iteration depth. These open decisions risk rework if the wrong path is chosen."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from XL(5) to XXL(6): 'Affects multiple workflows' — changes to WorkflowExecutor.continue_iteration impact every workflow configuration that uses iter_key",
+    "Technical Risk bumped from XL(5) to XXL(6): 'Changes database schema significantly' (WorkflowExecutionState.iteration_number column) + 'Requires data migration' (Alembic migration); already at cap XXL(6)",
+    "File Change Estimate bumped from L(4) to XL(5): 'Requires data migration' adds Alembic migration file and increases cross-directory spread",
+    "Affected Layers bumped from L(4) to XL(5): 'Changes database schema significantly' — DB column change and migration add a deployment-time step beyond normal code change"
+  ],
+  "split_recommendation": "This ticket scores XL (27/36) and should be split before implementation. Suggested decomposition by dependency order:\n\n1. Story A (M): Design decision and constants — resolve the flat-pair-of-constants vs. stack-based nesting architectural decision; add OUTER_ITERATION_NODE_NUMBER_KEY / INNER_ITERATION_NODE_NUMBER_KEY (or equivalent) to constants.py; add typed fields to AgentMessages TypedDict in models.py; write ADR. No behavior change.\n\n2. Story B (S): Alembic migration — add outer_iteration_number column (or change type of iteration_number) to WorkflowExecutionState; update WorkflowExecutionService.start_state and finish_state call sites; no workflow logic changes.\n\n3. Story C (M): Core WorkflowExecutor changes — update continue_iteration to emit independent inner counters, update _build_parallel_context for proper nested context scoping, fix find_map_nodes depth detection, fix lambda closure bug in _handle_single_state. Covered by new unit tests (TC_IMR_013+).\n\n4. Story D (M): Node layer and display — update BaseNode._add_iteration_state and _prepare_iter_task_messages to write outer+inner counters independently; update AgentNode.get_node_name for nested display; add integration test building a StateGraph with two nested iter_key transitions end-to-end.\n\n5. Story E (S): Config schema and YAML template — update execution_config_schema.yaml and WorkflowNextState validator for nested iter_key; create a nested iteration YAML template; update workflow_generator/schemas.py if WORKFLOW_GENERATION_ENABLED path is in scope."
+}

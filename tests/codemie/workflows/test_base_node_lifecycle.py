@@ -42,6 +42,8 @@ from codemie.workflows.constants import (
     ITER_SOURCE,
     ITERATION_NODE_NUMBER_KEY,
     TOTAL_ITERATIONS_KEY,
+    OUTER_ITERATION_NODE_NUMBER_KEY,
+    OUTER_TOTAL_ITERATIONS_KEY,
     GUARDRAIL_CHECKED_FLAG,
     PREVIOUS_EXECUTION_STATE_NAMES,
 )
@@ -467,6 +469,49 @@ def test_state_finalization_with_iteration_state(mock_workflow_execution_service
     assert "current_item" in result
     # Since override_task=False, should use task from state_schema
     assert result["current_item"] == "item_3"
+
+
+def test_tc_imr_017_add_iteration_state_propagates_outer_counters(
+    mock_workflow_execution_service, mock_thought_queue, mock_callbacks
+):
+    """
+    TC_IMR_017: _add_iteration_state must propagate OUTER_ITERATION_NODE_NUMBER_KEY
+    and OUTER_TOTAL_ITERATIONS_KEY from state_schema to the final node output.
+    """
+    # Arrange
+    workflow_state = WorkflowState(
+        id="inner_node",
+        task="Inner task",
+        assistant_id="assistant_1",
+        next=WorkflowNextState(state_id="next", iter_key="sub_items"),
+    )
+
+    state_schema = {
+        MESSAGES_VARIABLE: [],
+        CONTEXT_STORE_VARIABLE: {},
+        ITERATION_NODE_NUMBER_KEY: 2,
+        TOTAL_ITERATIONS_KEY: 4,
+        OUTER_ITERATION_NODE_NUMBER_KEY: 1,
+        OUTER_TOTAL_ITERATIONS_KEY: 3,
+    }
+
+    node = MockNode(
+        callbacks=mock_callbacks,
+        workflow_execution_service=mock_workflow_execution_service,
+        thought_queue=mock_thought_queue,
+        workflow_state=workflow_state,
+    )
+    node.mock_execute_result = "inner result"
+
+    # Act
+    result = node(state_schema)
+
+    # Assert — outer counters must be present in the output
+    assert result[OUTER_ITERATION_NODE_NUMBER_KEY] == 1
+    assert result[OUTER_TOTAL_ITERATIONS_KEY] == 3
+    # Inner counters must be preserved too
+    assert result[ITERATION_NODE_NUMBER_KEY] == 2
+    assert result[TOTAL_ITERATIONS_KEY] == 4
 
 
 def test_execution_context_generation_for_agent_node(

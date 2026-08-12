@@ -39,6 +39,8 @@ from codemie.workflows.constants import (
     GUARDRAIL_CHECKED_FLAG,
     ITER_SOURCE,
     ITERATION_NODE_NUMBER_KEY,
+    OUTER_ITERATION_NODE_NUMBER_KEY,
+    OUTER_TOTAL_ITERATIONS_KEY,
     PREV_STATE_NAMES_TO_MERGE,
     MESSAGES_VARIABLE,
     ABORTED_MSG,
@@ -460,6 +462,8 @@ class BaseNode(ABC, Generic[StateSchemaType]):
         final_state[ITER_SOURCE] = processed_output
         final_state[ITERATION_NODE_NUMBER_KEY] = state_schema.get(ITERATION_NODE_NUMBER_KEY, 0)
         final_state[TOTAL_ITERATIONS_KEY] = state_schema.get(TOTAL_ITERATIONS_KEY, 0)
+        final_state[OUTER_ITERATION_NODE_NUMBER_KEY] = state_schema.get(OUTER_ITERATION_NODE_NUMBER_KEY)
+        final_state[OUTER_TOTAL_ITERATIONS_KEY] = state_schema.get(OUTER_TOTAL_ITERATIONS_KEY)
 
         # Handle current_task_key if present (agent_node specific logic)
         current_task_key = self.kwargs.get('current_task_key')

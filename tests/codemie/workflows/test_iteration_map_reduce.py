@@ -42,6 +42,8 @@ from codemie.workflows.constants import (
     TASK_KEY,
     ITERATION_NODE_NUMBER_KEY,
     TOTAL_ITERATIONS_KEY,
+    OUTER_ITERATION_NODE_NUMBER_KEY,
+    OUTER_TOTAL_ITERATIONS_KEY,
     ITER_SOURCE,
     FIRST_STATE_IN_ITERATION,
 )
@@ -481,6 +483,7 @@ def test_tc_imr_009_nested_iterations(mock_wf_exec_service, mock_user, mock_thou
     TC_IMR_009: Nested Iterations
 
     Test iteration within iteration.
+    Inner branches receive independent counters; outer counter is preserved.
     """
     # Arrange - Simulating nested iteration
     workflow_state_inner = WorkflowState(
@@ -493,12 +496,12 @@ def test_tc_imr_009_nested_iterations(mock_wf_exec_service, mock_user, mock_thou
         assistant_id="assistant_1",
     )
 
-    # State already in an outer iteration
+    # State already in an outer iteration (outer branch 2 of 5)
     state_schema_nested = {
         CONTEXT_STORE_VARIABLE: {"parent_key": "parent_value"},
         MESSAGES_VARIABLE: [HumanMessage(content="parent_msg")],
         ITER_SOURCE: '{"sub_items": ["sub_a", "sub_b"]}',
-        ITERATION_NODE_NUMBER_KEY: 2,  # Already in iteration (outer)
+        ITERATION_NODE_NUMBER_KEY: 2,  # Already in iteration (outer branch index)
         TOTAL_ITERATIONS_KEY: 5,  # Outer iteration total
     }
 
@@ -516,11 +519,20 @@ def test_tc_imr_009_nested_iterations(mock_wf_exec_service, mock_user, mock_thou
     # Assert
     assert len(send_actions) == 2
 
-    # In nested iteration, context and messages are NOT cloned (shared reference)
-    # This is detected by is_in_iteration flag (ITERATION_NODE_NUMBER_KEY > 0)
+    # Inner branches receive independent counters (1, 2), not the outer counter (2)
+    assert send_actions[0].arg[ITERATION_NODE_NUMBER_KEY] == 1
+    assert send_actions[1].arg[ITERATION_NODE_NUMBER_KEY] == 2
+
+    # Outer counter is preserved in the dedicated key
     for send_action in send_actions:
-        # Outer iteration counter should be preserved
-        assert send_action.arg[ITERATION_NODE_NUMBER_KEY] == 2
+        assert send_action.arg[OUTER_ITERATION_NODE_NUMBER_KEY] == 2
+        assert send_action.arg[OUTER_TOTAL_ITERATIONS_KEY] == 5
+
+    # messages are always copied (CR-003 fix); context_store is still shared
+    for send_action in send_actions:
+        assert send_action.arg[CONTEXT_STORE_VARIABLE] is state_schema_nested[CONTEXT_STORE_VARIABLE]
+        assert send_action.arg[MESSAGES_VARIABLE] is not state_schema_nested[MESSAGES_VARIABLE]
+        assert send_action.arg[MESSAGES_VARIABLE] == state_schema_nested[MESSAGES_VARIABLE]
 
 
 @patch('codemie.workflows.workflow.WorkflowExecutionService')
@@ -716,3 +728,189 @@ def test_tc_imr_012_include_in_iterator_context_wildcard_default(
         assert branch_ctx["key_a"] == "val_a"
         assert branch_ctx["key_b"] == "val_b"
         assert branch_ctx["key_c"] == "val_c"
+
+
+# ---------------------------------------------------------------------------
+# TC_IMR_013 – TC_IMR_018: Nested iteration — new behaviour
+# ---------------------------------------------------------------------------
+
+
+@patch('codemie.workflows.workflow.WorkflowExecutionService')
+def test_tc_imr_013_nested_inner_branches_get_independent_counters(
+    mock_wf_exec_service, mock_user, mock_thought_queue, basic_workflow_config
+):
+    """
+    TC_IMR_013: Inner branches in a nested iteration must receive independent,
+    sequential counters (1..M), NOT the outer branch index.
+    """
+    workflow_state = WorkflowState(
+        id="inner_fan",
+        task="Inner fan-out",
+        next=WorkflowNextState(state_id="inner_worker", iter_key="sub_items"),
+        assistant_id="a1",
+    )
+    # Outer branch 2 of 3; inner list has 4 items
+    state_schema = {
+        CONTEXT_STORE_VARIABLE: {},
+        MESSAGES_VARIABLE: [],
+        ITER_SOURCE: '{"sub_items": ["p", "q", "r", "s"]}',
+        ITERATION_NODE_NUMBER_KEY: 2,
+        TOTAL_ITERATIONS_KEY: 3,
+    }
+    executor = WorkflowExecutor(
+        workflow_config=basic_workflow_config,
+        user_input="test",
+        user=mock_user,
+        thought_queue=mock_thought_queue,
+        execution_id="exec_inner_counters",
+    )
+
+    send_actions = executor.continue_iteration(state_schema, workflow_state)
+
+    assert len(send_actions) == 4
+    for i, action in enumerate(send_actions):
+        assert action.arg[ITERATION_NODE_NUMBER_KEY] == i + 1, (
+            f"Branch {i}: expected inner counter {i + 1}, " f"got {action.arg[ITERATION_NODE_NUMBER_KEY]}"
+        )
+
+
+@patch('codemie.workflows.workflow.WorkflowExecutionService')
+def test_tc_imr_014_outer_counter_preserved_in_inner_sends(
+    mock_wf_exec_service, mock_user, mock_thought_queue, basic_workflow_config
+):
+    """
+    TC_IMR_014: OUTER_ITERATION_NODE_NUMBER_KEY equals the outer iter_number
+    on every inner Send.
+    """
+    workflow_state = WorkflowState(
+        id="outer_preservation",
+        task="Outer counter",
+        next=WorkflowNextState(state_id="w", iter_key="items"),
+        assistant_id="a1",
+    )
+    outer_index = 3
+    state_schema = {
+        CONTEXT_STORE_VARIABLE: {},
+        MESSAGES_VARIABLE: [],
+        ITER_SOURCE: '{"items": ["x", "y"]}',
+        ITERATION_NODE_NUMBER_KEY: outer_index,
+        TOTAL_ITERATIONS_KEY: 7,
+    }
+    executor = WorkflowExecutor(
+        workflow_config=basic_workflow_config,
+        user_input="test",
+        user=mock_user,
+        thought_queue=mock_thought_queue,
+        execution_id="exec_outer_pres",
+    )
+
+    send_actions = executor.continue_iteration(state_schema, workflow_state)
+
+    for action in send_actions:
+        assert action.arg[OUTER_ITERATION_NODE_NUMBER_KEY] == outer_index
+
+
+@patch('codemie.workflows.workflow.WorkflowExecutionService')
+def test_tc_imr_015_outer_total_preserved_in_inner_sends(
+    mock_wf_exec_service, mock_user, mock_thought_queue, basic_workflow_config
+):
+    """
+    TC_IMR_015: OUTER_TOTAL_ITERATIONS_KEY equals the outer TOTAL_ITERATIONS_KEY
+    on every inner Send.
+    """
+    workflow_state = WorkflowState(
+        id="outer_total_preservation",
+        task="Outer total",
+        next=WorkflowNextState(state_id="w", iter_key="items"),
+        assistant_id="a1",
+    )
+    outer_total = 7
+    state_schema = {
+        CONTEXT_STORE_VARIABLE: {},
+        MESSAGES_VARIABLE: [],
+        ITER_SOURCE: '{"items": ["x", "y", "z"]}',
+        ITERATION_NODE_NUMBER_KEY: 2,
+        TOTAL_ITERATIONS_KEY: outer_total,
+    }
+    executor = WorkflowExecutor(
+        workflow_config=basic_workflow_config,
+        user_input="test",
+        user=mock_user,
+        thought_queue=mock_thought_queue,
+        execution_id="exec_outer_total",
+    )
+
+    send_actions = executor.continue_iteration(state_schema, workflow_state)
+
+    for action in send_actions:
+        assert action.arg[OUTER_TOTAL_ITERATIONS_KEY] == outer_total
+
+
+@patch('codemie.workflows.workflow.WorkflowExecutionService')
+def test_tc_imr_016_empty_inner_collection_returns_empty_list(
+    mock_wf_exec_service, mock_user, mock_thought_queue, basic_workflow_config
+):
+    """
+    TC_IMR_016: An empty inner list produces an empty Send list without error.
+    """
+    workflow_state = WorkflowState(
+        id="empty_inner",
+        task="Empty inner",
+        next=WorkflowNextState(state_id="w", iter_key="items"),
+        assistant_id="a1",
+    )
+    state_schema = {
+        CONTEXT_STORE_VARIABLE: {},
+        MESSAGES_VARIABLE: [],
+        ITER_SOURCE: '{"items": []}',
+        ITERATION_NODE_NUMBER_KEY: 1,
+        TOTAL_ITERATIONS_KEY: 2,
+    }
+    executor = WorkflowExecutor(
+        workflow_config=basic_workflow_config,
+        user_input="test",
+        user=mock_user,
+        thought_queue=mock_thought_queue,
+        execution_id="exec_empty_inner",
+    )
+
+    send_actions = executor.continue_iteration(state_schema, workflow_state)
+
+    assert send_actions == []
+
+
+@patch('codemie.workflows.workflow.WorkflowExecutionService')
+def test_tc_imr_018_single_level_iteration_output_unchanged(
+    mock_wf_exec_service, mock_user, mock_thought_queue, basic_workflow_config
+):
+    """
+    TC_IMR_018: Single-level (non-nested) calls must produce the same output as before.
+    Regression guard: OUTER_* keys are None; inner counter equals index+1.
+    """
+    workflow_state = WorkflowState(
+        id="flat_map",
+        task="Flat iteration",
+        next=WorkflowNextState(state_id="worker", iter_key="tasks"),
+        assistant_id="a1",
+    )
+    state_schema = {
+        CONTEXT_STORE_VARIABLE: {"k": "v"},
+        MESSAGES_VARIABLE: [],
+        ITER_SOURCE: '{"tasks": ["a", "b", "c"]}',
+    }
+    executor = WorkflowExecutor(
+        workflow_config=basic_workflow_config,
+        user_input="test",
+        user=mock_user,
+        thought_queue=mock_thought_queue,
+        execution_id="exec_flat",
+    )
+
+    send_actions = executor.continue_iteration(state_schema, workflow_state)
+
+    assert len(send_actions) == 3
+    for i, action in enumerate(send_actions):
+        assert action.arg[ITERATION_NODE_NUMBER_KEY] == i + 1
+        assert action.arg[TOTAL_ITERATIONS_KEY] == 3
+        assert action.arg[OUTER_ITERATION_NODE_NUMBER_KEY] is None
+        assert action.arg[OUTER_TOTAL_ITERATIONS_KEY] is None

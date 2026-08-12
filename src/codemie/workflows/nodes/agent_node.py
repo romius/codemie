@@ -25,6 +25,7 @@ from codemie.service.workflow_execution import WorkflowExecutionService
 from codemie.workflows.callbacks.base_callback import BaseCallback
 from codemie.workflows.constants import (
     ITERATION_NODE_NUMBER_KEY,
+    OUTER_ITERATION_NODE_NUMBER_KEY,
     SUMMARIZE_MEMORY_NODE,
     TOTAL_ITERATIONS_KEY,
     CURRENT_TASK_KEY,
@@ -263,14 +264,20 @@ class AgentNode(BaseNode[AgentMessages]):
             state_schema: The current state schema containing iteration information
 
         Returns:
-            str: Display name with iteration info if applicable (e.g., "NodeName 2 of 5")
+            str: Display name with iteration info if applicable.
+                 Single-level: "NodeName 2 of 5"
+                 Nested: "NodeName 1-2/5"  (outer-inner/inner_total)
         """
         result = super().get_node_name(state_schema)
         if self.current_task_key:
             iter_number = state_schema.get(ITERATION_NODE_NUMBER_KEY, 0)
             total_iterations = state_schema.get(TOTAL_ITERATIONS_KEY, 0)
+            outer_iter_number = state_schema.get(OUTER_ITERATION_NODE_NUMBER_KEY)
             if total_iterations > 1:
-                result += f" {iter_number} of {total_iterations}"
+                if outer_iter_number is not None:
+                    result += f" {outer_iter_number}-{iter_number}/{total_iterations}"
+                else:
+                    result += f" {iter_number} of {total_iterations}"
         return result
 
     def post_process_output(self, state_schema: Type[AgentMessages], task, output: TaskResult) -> str:

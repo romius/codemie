@@ -43,6 +43,8 @@ from codemie.workflows.constants import (
     TASK_KEY,
     ITERATION_NODE_NUMBER_KEY,
     TOTAL_ITERATIONS_KEY,
+    OUTER_ITERATION_NODE_NUMBER_KEY,
+    OUTER_TOTAL_ITERATIONS_KEY,
     ITER_SOURCE,
     FIRST_STATE_IN_ITERATION,
     RESULT_FINALIZER_NODE,
@@ -441,7 +443,7 @@ def test_tc_wst_008_nested_iteration_handling(
     """
     TC_WST_008: Nested Iteration Handling
 
-    Test is_in_iteration flag behavior.
+    Inner branches receive independent counters; outer counter preserved separately.
     """
     # Arrange
     workflow_state = WorkflowState(
@@ -454,7 +456,7 @@ def test_tc_wst_008_nested_iteration_handling(
         assistant_id="assistant_1",
     )
 
-    # Already in an iteration (nested case)
+    # Already in an iteration (nested case) — outer branch 2 of 5
     state_schema = {
         CONTEXT_STORE_VARIABLE: {"parent_key": "parent_value"},
         MESSAGES_VARIABLE: [HumanMessage(content="msg")],
@@ -475,13 +477,22 @@ def test_tc_wst_008_nested_iteration_handling(
     send_actions = executor.continue_iteration(state_schema, workflow_state)
 
     # Assert
-    # In nested iteration, context and messages should NOT be copied (just referenced)
-    # Check that the same list objects are used (not copies)
     assert len(send_actions) == 2
 
-    # All branches should share the same ITERATION_NODE_NUMBER_KEY from parent
+    # Inner branches receive independent counters (1, 2), not the outer counter
+    assert send_actions[0].arg[ITERATION_NODE_NUMBER_KEY] == 1
+    assert send_actions[1].arg[ITERATION_NODE_NUMBER_KEY] == 2
+
+    # Outer counter is preserved in the dedicated key on every inner branch
     for send_action in send_actions:
-        assert send_action.arg[ITERATION_NODE_NUMBER_KEY] == 2
+        assert send_action.arg[OUTER_ITERATION_NODE_NUMBER_KEY] == 2
+        assert send_action.arg[OUTER_TOTAL_ITERATIONS_KEY] == 5
+
+    # messages are always copied (CR-003 fix); context_store is still shared
+    for send_action in send_actions:
+        assert send_action.arg[CONTEXT_STORE_VARIABLE] is state_schema[CONTEXT_STORE_VARIABLE]
+        assert send_action.arg[MESSAGES_VARIABLE] is not state_schema[MESSAGES_VARIABLE]
+        assert send_action.arg[MESSAGES_VARIABLE] == state_schema[MESSAGES_VARIABLE]
 
 
 def test_tc_wst_009_state_transition_with_end_node(mock_user, mock_thought_queue, basic_workflow_config):
@@ -1076,3 +1087,65 @@ def test_tc_wst_013_diamond_pattern_convergence(mock_user, mock_thought_queue):
     # Assert
     assert "node_d" in convergence_nodes, "node_d should be detected in diamond pattern"
     assert len(convergence_nodes) == 1, "Only node_d should be convergence node"
+
+
+@patch('codemie.workflows.workflow.WorkflowExecutionService')
+def test_tc_wst_014_handle_single_state_iter_key_lambda_passes_state(
+    mock_wf_exec_service, mock_user, mock_thought_queue, basic_workflow_config
+):
+    """
+    TC_WST_014: _handle_single_state iter_key lambda must pass the LangGraph state dict
+    to continue_iteration as state_schema, not the executor instance.
+    """
+    # Arrange
+    transition = WorkflowState(
+        id="source_node",
+        task="fan out",
+        next=WorkflowNextState(state_id="target_node", iter_key="items"),
+        assistant_id="a1",
+    )
+
+    executor = WorkflowExecutor(
+        workflow_config=basic_workflow_config,
+        user_input="test",
+        user=mock_user,
+        thought_queue=mock_thought_queue,
+        execution_id="exec_lambda_test",
+    )
+
+    captured_callable = None
+
+    mock_workflow = Mock()
+
+    def capture_callable(source, fn, nodes):
+        nonlocal captured_callable
+        captured_callable = fn
+
+    mock_workflow.add_conditional_edges.side_effect = capture_callable
+
+    executor._handle_single_state(mock_workflow, transition, enable_summarization_node=False)
+
+    assert captured_callable is not None, "_handle_single_state must register a callable"
+
+    # Act — call the lambda with a synthetic state dict (simulating LangGraph calling it)
+    synthetic_state = {
+        "context_store": {},
+        "messages": [],
+        "iteration_source": '{"items": ["a"]}',
+    }
+
+    received_state_schemas = []
+    original = executor.continue_iteration
+
+    def capture_call(state_schema, workflow_state):
+        received_state_schemas.append(state_schema)
+        return original(state_schema, workflow_state)
+
+    executor.continue_iteration = capture_call
+    captured_callable(synthetic_state)
+
+    # Assert — continue_iteration must have received the dict, not the executor
+    assert len(received_state_schemas) == 1
+    assert (
+        received_state_schemas[0] is synthetic_state
+    ), "continue_iteration must receive the state dict, not the executor instance"

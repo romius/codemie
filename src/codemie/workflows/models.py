@@ -79,6 +79,10 @@ class AgentMessages(TypedDict):
     user_input: str
     previous_execution_state_id: Annotated[Optional[str], lambda left, right: right if right is not None else left]
     previous_execution_state_names: Annotated[Optional[str], lambda left, right: right if right is not None else left]
+    iteration_node_number: Annotated[Optional[int], lambda left, right: right if right is not None else left]
+    total_iterations: Annotated[Optional[int], lambda left, right: right if right is not None else left]
+    outer_iteration_node_number: Annotated[Optional[int], lambda left, right: right]
+    outer_total_iterations: Annotated[Optional[int], lambda left, right: right]
 
 
 class SupervisorAgentMessages(AgentMessages):

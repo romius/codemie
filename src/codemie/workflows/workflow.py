@@ -64,6 +64,8 @@ from codemie.workflows.constants import (
     FIRST_STATE_IN_ITERATION,
     ITER_SOURCE,
     ITERATION_NODE_NUMBER_KEY,
+    OUTER_ITERATION_NODE_NUMBER_KEY,
+    OUTER_TOTAL_ITERATIONS_KEY,
     PREV_STATE_NAMES_TO_MERGE,
     PROPAGATED_HEADERS_CONTEXT_KEY,
     MESSAGES_VARIABLE,
@@ -653,9 +655,12 @@ class WorkflowExecutor:
             f"{iter_number} of {total_iterations}. "
         )
 
-        # Only clone for first-level parallelization, not for nested iterations
         # Detect nested iteration: if ITERATION_NODE_NUMBER_KEY exists, we're already in a parallel branch
         is_in_iteration = iter_number is not None and iter_number > 0
+
+        # Preserve outer counters so inner branches can reference both depth levels
+        outer_iter_number = iter_number if is_in_iteration else None
+        outer_total = state_schema.get(TOTAL_ITERATIONS_KEY) if is_in_iteration else None
 
         parallel_context = self._build_parallel_context(context_store, workflow_state, is_in_iteration)
 
@@ -664,11 +669,12 @@ class WorkflowExecutor:
                 send_to_node,
                 {
                     TASK_KEY: item,
-                    # Clone only for first-level parallelization, not nested
-                    MESSAGES_VARIABLE: messages.copy() if not is_in_iteration else messages,
+                    MESSAGES_VARIABLE: messages.copy(),
                     CONTEXT_STORE_VARIABLE: parallel_context,
-                    ITERATION_NODE_NUMBER_KEY: iter_number if iter_number else index + 1,
+                    ITERATION_NODE_NUMBER_KEY: index + 1,
                     TOTAL_ITERATIONS_KEY: total_iterations,
+                    OUTER_ITERATION_NODE_NUMBER_KEY: outer_iter_number,
+                    OUTER_TOTAL_ITERATIONS_KEY: outer_total,
                     FIRST_STATE_IN_ITERATION: iter_key not in state_schema,
                     PREVIOUS_EXECUTION_STATE_ID: state_schema.get(PREVIOUS_EXECUTION_STATE_ID),
                     PREVIOUS_EXECUTION_STATE_NAMES: state_schema.get(PREVIOUS_EXECUTION_STATE_NAMES),
@@ -707,7 +713,7 @@ class WorkflowExecutor:
         if transition.next.iter_key:
             workflow.add_conditional_edges(
                 source,
-                lambda _self=self, _transition=transition: self.continue_iteration(_self, _transition),
+                lambda state, _self=self, _transition=transition: _self.continue_iteration(state, _transition),
                 transition_nodes,
             )
         else:

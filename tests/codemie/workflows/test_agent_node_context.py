@@ -44,6 +44,7 @@ from codemie.workflows.constants import (
     SUMMARIZE_MEMORY_NODE,
     CURRENT_TASK_KEY,
     ITERATION_NODE_NUMBER_KEY,
+    OUTER_ITERATION_NODE_NUMBER_KEY,
     TOTAL_ITERATIONS_KEY,
 )
 from codemie.core.workflow_models import WorkflowNextState, WorkflowState, WorkflowConfig, WorkflowAssistant
@@ -457,6 +458,52 @@ def test_tc_anc_007_agent_node_name_with_iteration(
     # Should include iteration info
     assert "ProcessItem" in node_name
     assert "3 of 10" in node_name
+
+
+def test_tc_anc_007b_agent_node_name_with_nested_iteration(
+    mock_workflow_execution_service, mock_thought_queue, mock_callbacks, mock_assistant, mock_workflow_config, mock_user
+):
+    """
+    TC_ANC_007b: Agent Node Name with Nested Iteration
+
+    Verify outer-N + inner display in nested iterations: "{name} {outer}-{inner}/{inner_total}".
+    """
+    # Arrange — inner branch 2 of 5, outer branch 1
+    state_schema = {
+        CONTEXT_STORE_VARIABLE: {},
+        MESSAGES_VARIABLE: [],
+        ITERATION_NODE_NUMBER_KEY: 2,
+        TOTAL_ITERATIONS_KEY: 5,
+        OUTER_ITERATION_NODE_NUMBER_KEY: 1,
+        CURRENT_TASK_KEY: "item_2",
+    }
+
+    workflow_state = WorkflowState(
+        id="agent_node",
+        task="Process item",
+        next=WorkflowNextState(state_id="next"),
+        assistant_id="assistant_1",
+    )
+
+    node = AgentNode(
+        callbacks=mock_callbacks,
+        workflow_execution_service=mock_workflow_execution_service,
+        thought_queue=mock_thought_queue,
+        workflow_state=workflow_state,
+        workflow_config=mock_workflow_config,
+        assistant=mock_assistant,
+        user=mock_user,
+        execution_id="exec_nested",
+        node_name="ProcessItem",
+        current_task_key=CURRENT_TASK_KEY,
+    )
+
+    # Act
+    node_name = node.get_node_name(state_schema)
+
+    # Assert — must reflect outer-inner depth
+    assert "ProcessItem" in node_name
+    assert "1-2/5" in node_name
 
 
 def test_tc_anc_008_agent_task_result_processing_success(
