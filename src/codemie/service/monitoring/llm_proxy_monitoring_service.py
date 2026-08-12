@@ -487,6 +487,7 @@ class LLMProxyMonitoringService(BaseMonitoringService):
                 BRANCH: request_info.get(BRANCH, ""),
                 REPOSITORY: request_info.get(REPOSITORY, ""),
                 MetricsAttributes.PROJECT: get_current_project(fallback=request_info.get(PROJECT)),
+                MetricsAttributes.CODEMIE_CLIENT: request_info.get(CLIENT_TYPE, ""),
                 "cli_request": cli_request,
             }
 

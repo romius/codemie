@@ -448,6 +448,7 @@ class TestCLIRepositories:
                                                         "output_tokens": {"value": 8000},
                                                     },
                                                     "session_data": {
+                                                        "doc_count": 1,
                                                         "session_duration": {"value": 60000},
                                                         "total_lines_added": {"value": 500},
                                                     },
@@ -461,6 +462,7 @@ class TestCLIRepositories:
                                                         "output_tokens": {"value": 4000},
                                                     },
                                                     "session_data": {
+                                                        "doc_count": 1,
                                                         "session_duration": {"value": 30000},
                                                         "total_lines_added": {"value": 200},
                                                     },
@@ -481,6 +483,7 @@ class TestCLIRepositories:
                                                         "output_tokens": {"value": 2000},
                                                     },
                                                     "session_data": {
+                                                        "doc_count": 1,
                                                         "session_duration": {"value": 15000},
                                                         "total_lines_added": {"value": 100},
                                                     },
@@ -508,6 +511,7 @@ class TestCLIRepositories:
                                                         "output_tokens": {"value": 10000},
                                                     },
                                                     "session_data": {
+                                                        "doc_count": 1,
                                                         "session_duration": {"value": 90000},
                                                         "total_lines_added": {"value": 800},
                                                     },
@@ -612,30 +616,45 @@ class TestCLIRepositories:
                                             "buckets": [
                                                 {
                                                     "key": "alice@example.com",
-                                                    "input_tokens": {"value": 1000},
-                                                    "cache_creation_tokens": {"value": 100},
-                                                    "cache_read_tokens": {"value": 200},
-                                                    "output_tokens": {"value": 500},
-                                                    "session_duration": {"value": 10000},
-                                                    "total_lines_added": {"value": 50},
+                                                    "token_data": {
+                                                        "input_tokens": {"value": 1000},
+                                                        "cache_creation_tokens": {"value": 100},
+                                                        "cache_read_tokens": {"value": 200},
+                                                        "output_tokens": {"value": 500},
+                                                    },
+                                                    "session_data": {
+                                                        "doc_count": 1,
+                                                        "session_duration": {"value": 10000},
+                                                        "total_lines_added": {"value": 50},
+                                                    },
                                                 },
                                                 {
                                                     "key": "bob@example.com",
-                                                    "input_tokens": {"value": 2000},
-                                                    "cache_creation_tokens": {"value": 200},
-                                                    "cache_read_tokens": {"value": 400},
-                                                    "output_tokens": {"value": 1000},
-                                                    "session_duration": {"value": 20000},
-                                                    "total_lines_added": {"value": 100},
+                                                    "token_data": {
+                                                        "input_tokens": {"value": 2000},
+                                                        "cache_creation_tokens": {"value": 200},
+                                                        "cache_read_tokens": {"value": 400},
+                                                        "output_tokens": {"value": 1000},
+                                                    },
+                                                    "session_data": {
+                                                        "doc_count": 1,
+                                                        "session_duration": {"value": 20000},
+                                                        "total_lines_added": {"value": 100},
+                                                    },
                                                 },
                                                 {
                                                     "key": "charlie@example.com",
-                                                    "input_tokens": {"value": 1500},
-                                                    "cache_creation_tokens": {"value": 150},
-                                                    "cache_read_tokens": {"value": 300},
-                                                    "output_tokens": {"value": 750},
-                                                    "session_duration": {"value": 15000},
-                                                    "total_lines_added": {"value": 75},
+                                                    "token_data": {
+                                                        "input_tokens": {"value": 1500},
+                                                        "cache_creation_tokens": {"value": 150},
+                                                        "cache_read_tokens": {"value": 300},
+                                                        "output_tokens": {"value": 750},
+                                                    },
+                                                    "session_data": {
+                                                        "doc_count": 1,
+                                                        "session_duration": {"value": 15000},
+                                                        "total_lines_added": {"value": 75},
+                                                    },
                                                 },
                                             ]
                                         },
@@ -646,21 +665,31 @@ class TestCLIRepositories:
                                             "buckets": [
                                                 {
                                                     "key": "alice@example.com",
-                                                    "input_tokens": {"value": 500},
-                                                    "cache_creation_tokens": {"value": 50},
-                                                    "cache_read_tokens": {"value": 100},
-                                                    "output_tokens": {"value": 250},
-                                                    "session_duration": {"value": 5000},
-                                                    "total_lines_added": {"value": 25},
+                                                    "token_data": {
+                                                        "input_tokens": {"value": 500},
+                                                        "cache_creation_tokens": {"value": 50},
+                                                        "cache_read_tokens": {"value": 100},
+                                                        "output_tokens": {"value": 250},
+                                                    },
+                                                    "session_data": {
+                                                        "doc_count": 1,
+                                                        "session_duration": {"value": 5000},
+                                                        "total_lines_added": {"value": 25},
+                                                    },
                                                 },
                                                 {
                                                     "key": "bob@example.com",
-                                                    "input_tokens": {"value": 800},
-                                                    "cache_creation_tokens": {"value": 80},
-                                                    "cache_read_tokens": {"value": 160},
-                                                    "output_tokens": {"value": 400},
-                                                    "session_duration": {"value": 8000},
-                                                    "total_lines_added": {"value": 40},
+                                                    "token_data": {
+                                                        "input_tokens": {"value": 800},
+                                                        "cache_creation_tokens": {"value": 80},
+                                                        "cache_read_tokens": {"value": 160},
+                                                        "output_tokens": {"value": 400},
+                                                    },
+                                                    "session_data": {
+                                                        "doc_count": 1,
+                                                        "session_duration": {"value": 8000},
+                                                        "total_lines_added": {"value": 40},
+                                                    },
                                                 },
                                             ]
                                         },
@@ -671,12 +700,17 @@ class TestCLIRepositories:
                                             "buckets": [
                                                 {
                                                     "key": "alice@example.com",
-                                                    "input_tokens": {"value": 300},
-                                                    "cache_creation_tokens": {"value": 30},
-                                                    "cache_read_tokens": {"value": 60},
-                                                    "output_tokens": {"value": 150},
-                                                    "session_duration": {"value": 3000},
-                                                    "total_lines_added": {"value": 15},
+                                                    "token_data": {
+                                                        "input_tokens": {"value": 300},
+                                                        "cache_creation_tokens": {"value": 30},
+                                                        "cache_read_tokens": {"value": 60},
+                                                        "output_tokens": {"value": 150},
+                                                    },
+                                                    "session_data": {
+                                                        "doc_count": 1,
+                                                        "session_duration": {"value": 3000},
+                                                        "total_lines_added": {"value": 15},
+                                                    },
                                                 }
                                             ]
                                         },
@@ -694,21 +728,31 @@ class TestCLIRepositories:
                                             "buckets": [
                                                 {
                                                     "key": "alice@example.com",
-                                                    "input_tokens": {"value": 3000},
-                                                    "cache_creation_tokens": {"value": 300},
-                                                    "cache_read_tokens": {"value": 600},
-                                                    "output_tokens": {"value": 1500},
-                                                    "session_duration": {"value": 30000},
-                                                    "total_lines_added": {"value": 150},
+                                                    "token_data": {
+                                                        "input_tokens": {"value": 3000},
+                                                        "cache_creation_tokens": {"value": 300},
+                                                        "cache_read_tokens": {"value": 600},
+                                                        "output_tokens": {"value": 1500},
+                                                    },
+                                                    "session_data": {
+                                                        "doc_count": 1,
+                                                        "session_duration": {"value": 30000},
+                                                        "total_lines_added": {"value": 150},
+                                                    },
                                                 },
                                                 {
                                                     "key": "bob@example.com",
-                                                    "input_tokens": {"value": 2500},
-                                                    "cache_creation_tokens": {"value": 250},
-                                                    "cache_read_tokens": {"value": 500},
-                                                    "output_tokens": {"value": 1250},
-                                                    "session_duration": {"value": 25000},
-                                                    "total_lines_added": {"value": 125},
+                                                    "token_data": {
+                                                        "input_tokens": {"value": 2500},
+                                                        "cache_creation_tokens": {"value": 250},
+                                                        "cache_read_tokens": {"value": 500},
+                                                        "output_tokens": {"value": 1250},
+                                                    },
+                                                    "session_data": {
+                                                        "doc_count": 1,
+                                                        "session_duration": {"value": 25000},
+                                                        "total_lines_added": {"value": 125},
+                                                    },
                                                 },
                                             ]
                                         },
@@ -719,12 +763,17 @@ class TestCLIRepositories:
                                             "buckets": [
                                                 {
                                                     "key": "charlie@example.com",
-                                                    "input_tokens": {"value": 1200},
-                                                    "cache_creation_tokens": {"value": 120},
-                                                    "cache_read_tokens": {"value": 240},
-                                                    "output_tokens": {"value": 600},
-                                                    "session_duration": {"value": 12000},
-                                                    "total_lines_added": {"value": 60},
+                                                    "token_data": {
+                                                        "input_tokens": {"value": 1200},
+                                                        "cache_creation_tokens": {"value": 120},
+                                                        "cache_read_tokens": {"value": 240},
+                                                        "output_tokens": {"value": 600},
+                                                    },
+                                                    "session_data": {
+                                                        "doc_count": 1,
+                                                        "session_duration": {"value": 12000},
+                                                        "total_lines_added": {"value": 60},
+                                                    },
                                                 }
                                             ]
                                         },
@@ -735,30 +784,45 @@ class TestCLIRepositories:
                                             "buckets": [
                                                 {
                                                     "key": "alice@example.com",
-                                                    "input_tokens": {"value": 900},
-                                                    "cache_creation_tokens": {"value": 90},
-                                                    "cache_read_tokens": {"value": 180},
-                                                    "output_tokens": {"value": 450},
-                                                    "session_duration": {"value": 9000},
-                                                    "total_lines_added": {"value": 45},
+                                                    "token_data": {
+                                                        "input_tokens": {"value": 900},
+                                                        "cache_creation_tokens": {"value": 90},
+                                                        "cache_read_tokens": {"value": 180},
+                                                        "output_tokens": {"value": 450},
+                                                    },
+                                                    "session_data": {
+                                                        "doc_count": 1,
+                                                        "session_duration": {"value": 9000},
+                                                        "total_lines_added": {"value": 45},
+                                                    },
                                                 },
                                                 {
                                                     "key": "bob@example.com",
-                                                    "input_tokens": {"value": 700},
-                                                    "cache_creation_tokens": {"value": 70},
-                                                    "cache_read_tokens": {"value": 140},
-                                                    "output_tokens": {"value": 350},
-                                                    "session_duration": {"value": 7000},
-                                                    "total_lines_added": {"value": 35},
+                                                    "token_data": {
+                                                        "input_tokens": {"value": 700},
+                                                        "cache_creation_tokens": {"value": 70},
+                                                        "cache_read_tokens": {"value": 140},
+                                                        "output_tokens": {"value": 350},
+                                                    },
+                                                    "session_data": {
+                                                        "doc_count": 1,
+                                                        "session_duration": {"value": 7000},
+                                                        "total_lines_added": {"value": 35},
+                                                    },
                                                 },
                                                 {
                                                     "key": "charlie@example.com",
-                                                    "input_tokens": {"value": 600},
-                                                    "cache_creation_tokens": {"value": 60},
-                                                    "cache_read_tokens": {"value": 120},
-                                                    "output_tokens": {"value": 300},
-                                                    "session_duration": {"value": 6000},
-                                                    "total_lines_added": {"value": 30},
+                                                    "token_data": {
+                                                        "input_tokens": {"value": 600},
+                                                        "cache_creation_tokens": {"value": 60},
+                                                        "cache_read_tokens": {"value": 120},
+                                                        "output_tokens": {"value": 300},
+                                                    },
+                                                    "session_data": {
+                                                        "doc_count": 1,
+                                                        "session_duration": {"value": 6000},
+                                                        "total_lines_added": {"value": 30},
+                                                    },
                                                 },
                                             ]
                                         },
@@ -809,12 +873,17 @@ class TestCLIRepositories:
                                             "buckets": [
                                                 {
                                                     "key": f"user-{j}@example.com",
-                                                    "input_tokens": {"value": 1000},
-                                                    "cache_creation_tokens": {"value": 100},
-                                                    "cache_read_tokens": {"value": 200},
-                                                    "output_tokens": {"value": 500},
-                                                    "session_duration": {"value": 10000},
-                                                    "total_lines_added": {"value": 50},
+                                                    "token_data": {
+                                                        "input_tokens": {"value": 1000},
+                                                        "cache_creation_tokens": {"value": 100},
+                                                        "cache_read_tokens": {"value": 200},
+                                                        "output_tokens": {"value": 500},
+                                                    },
+                                                    "session_data": {
+                                                        "doc_count": 1,
+                                                        "session_duration": {"value": 10000},
+                                                        "total_lines_added": {"value": 50},
+                                                    },
                                                 }
                                                 for j in range(3)
                                             ]
@@ -860,12 +929,17 @@ class TestCLIRepositories:
                                             "buckets": [
                                                 {
                                                     "key": "alice@example.com",
-                                                    "input_tokens": {"value": 1000},
-                                                    "cache_creation_tokens": {"value": 100},
-                                                    "cache_read_tokens": {"value": 200},
-                                                    "output_tokens": {"value": 500},
-                                                    "session_duration": {"value": 10000},
-                                                    "total_lines_added": {"value": 50},
+                                                    "token_data": {
+                                                        "input_tokens": {"value": 1000},
+                                                        "cache_creation_tokens": {"value": 100},
+                                                        "cache_read_tokens": {"value": 200},
+                                                        "output_tokens": {"value": 500},
+                                                    },
+                                                    "session_data": {
+                                                        "doc_count": 1,
+                                                        "session_duration": {"value": 10000},
+                                                        "total_lines_added": {"value": 50},
+                                                    },
                                                 }
                                             ]
                                         },
@@ -883,12 +957,17 @@ class TestCLIRepositories:
                                             "buckets": [
                                                 {
                                                     "key": "bob@example.com",
-                                                    "input_tokens": {"value": 2000},
-                                                    "cache_creation_tokens": {"value": 200},
-                                                    "cache_read_tokens": {"value": 400},
-                                                    "output_tokens": {"value": 1000},
-                                                    "session_duration": {"value": 20000},
-                                                    "total_lines_added": {"value": 100},
+                                                    "token_data": {
+                                                        "input_tokens": {"value": 2000},
+                                                        "cache_creation_tokens": {"value": 200},
+                                                        "cache_read_tokens": {"value": 400},
+                                                        "output_tokens": {"value": 1000},
+                                                    },
+                                                    "session_data": {
+                                                        "doc_count": 1,
+                                                        "session_duration": {"value": 20000},
+                                                        "total_lines_added": {"value": 100},
+                                                    },
                                                 }
                                             ]
                                         },
@@ -899,12 +978,17 @@ class TestCLIRepositories:
                                             "buckets": [
                                                 {
                                                     "key": "alice@example.com",
-                                                    "input_tokens": {"value": 1500},
-                                                    "cache_creation_tokens": {"value": 150},
-                                                    "cache_read_tokens": {"value": 300},
-                                                    "output_tokens": {"value": 750},
-                                                    "session_duration": {"value": 15000},
-                                                    "total_lines_added": {"value": 75},
+                                                    "token_data": {
+                                                        "input_tokens": {"value": 1500},
+                                                        "cache_creation_tokens": {"value": 150},
+                                                        "cache_read_tokens": {"value": 300},
+                                                        "output_tokens": {"value": 750},
+                                                    },
+                                                    "session_data": {
+                                                        "doc_count": 1,
+                                                        "session_duration": {"value": 15000},
+                                                        "total_lines_added": {"value": 75},
+                                                    },
                                                 }
                                             ]
                                         },
@@ -1267,31 +1351,59 @@ class TestCLIInsightsHelpers:
                         "total_cost": {"value": 1210.894},
                         "models": {"buckets": [{"key": "claude-sonnet-4-6", "doc_count": 3583}]},
                     },
-                    "repositories": {
-                        "buckets": [
-                            {
-                                "key": "infra/codemie-terraform-gcp-platform",
-                                "usage": {
-                                    "lines_added": {"value": 5685},
-                                    "lines_removed": {"value": 788},
-                                    "branches": {"buckets": [{"key": "epmcdme-9952"}, {"key": "main"}]},
-                                    "projects": {"buckets": [{"key": "epm-cdme"}]},
+                    "repositories_data": {
+                        "repositories": {
+                            "buckets": [
+                                {
+                                    "key": "infra/codemie-terraform-gcp-platform",
+                                    "branches": {
+                                        "buckets": [
+                                            {
+                                                "key": "main",
+                                                "clients": {
+                                                    "buckets": [
+                                                        {
+                                                            "key": "CLI",
+                                                            "usage": {
+                                                                "lines_added": {"value": 5685},
+                                                                "lines_removed": {"value": 788},
+                                                                "projects": {"buckets": [{"key": "epm-cdme"}]},
+                                                            },
+                                                            "sessions": {"count": {"value": 23}},
+                                                            "proxy": {"total_cost": {"value": 74.87}},
+                                                        }
+                                                    ]
+                                                },
+                                            }
+                                        ]
+                                    },
                                 },
-                                "sessions": {"count": {"value": 23}},
-                                "proxy": {"total_cost": {"value": 74.87}},
-                            },
-                            {
-                                "key": "home/pavlo_chaikivskyi",
-                                "usage": {
-                                    "lines_added": {"value": 152},
-                                    "lines_removed": {"value": 24},
-                                    "branches": {"buckets": [{"key": "HEAD"}]},
-                                    "projects": {"buckets": [{"key": "epm-cdme"}]},
+                                {
+                                    "key": "home/pavlo_chaikivskyi",
+                                    "branches": {
+                                        "buckets": [
+                                            {
+                                                "key": "HEAD",
+                                                "clients": {
+                                                    "buckets": [
+                                                        {
+                                                            "key": "CLI",
+                                                            "usage": {
+                                                                "lines_added": {"value": 152},
+                                                                "lines_removed": {"value": 24},
+                                                                "projects": {"buckets": [{"key": "epm-cdme"}]},
+                                                            },
+                                                            "sessions": {"count": {"value": 3}},
+                                                            "proxy": {"total_cost": {"value": 11.81}},
+                                                        }
+                                                    ]
+                                                },
+                                            }
+                                        ]
+                                    },
                                 },
-                                "sessions": {"count": {"value": 3}},
-                                "proxy": {"total_cost": {"value": 11.81}},
-                            },
-                        ]
+                            ]
+                        }
                     },
                 }
             }
@@ -1372,11 +1484,12 @@ class TestCLIInsightsHelpers:
         }
         assert set(response["data"]["repository_classifications"][0]) == {
             "repository",
+            "branch",
+            "client",
             "sessions",
             "cost",
             "classification",
             "net_lines",
-            "branches",
         }
         assert response["data"]["tools"][0] == {"tool_name": "Bash", "usage_count": 15}
         assert response["data"]["models"][0] == {"model_name": "claude-sonnet-4-6", "count": 3583}
@@ -1389,7 +1502,7 @@ class TestCLIInsightsHelpers:
         assert response["data"]["classification_metrics"]["data"]["metrics"][0]["id"] == "primary_category"
         assert response["data"]["category_breakdown_chart"]["data"]["columns"][1]["id"] == "percentage"
         assert response["data"]["repositories_table"]["data"]["columns"][0]["id"] == "repository"
-        assert response["data"]["repositories_table"]["data"]["rows"][0]["branches"] == ["epmcdme-9952", "main"]
+        assert response["data"]["repositories_table"]["data"]["rows"][0]["branch"] == "main"
 
     def test_build_cli_insights_user_aggregation_uses_session_total_for_unique_sessions(self, handler):
         aggregation = handler._build_cli_insights_user_aggregation({"bool": {"filter": []}})

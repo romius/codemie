@@ -23,6 +23,7 @@ from enum import Enum
 from .constants import (
     AGENT_TOOL_MATCHERS,
     CODE_CHANGE_TOOL_MATCHERS,
+    COWORK_VALUE,
     EXPERIMENTAL_REPO_PATTERNS,
     LEARNING_REPO_PATTERNS,
     LOCAL_PATH_PATTERNS,
@@ -306,38 +307,92 @@ class CLIClassificationEngine:
             reasons.append(f"cost: ${total_cost:.2f}")
         return reasons
 
+    # Client types that all represent the CLI client label.
+    _CLI_CLIENT_KEYS = frozenset({"CLI", "codemie-daemon", "codemie-claude", "codemie-claude-acp", "codemie-code"})
+
+    @staticmethod
+    def _normalize_client(raw: str) -> str:
+        """Map all CLI-variant client keys to the canonical 'CLI' label."""
+        return "CLI" if raw in CLIClassificationEngine._CLI_CLIENT_KEYS else raw
+
+    @staticmethod
+    def _normalize_branch(raw: str) -> str:
+        """Treat 'HEAD' as empty — it means no real tracked branch (e.g. CLI from ~)."""
+        return "" if raw == "HEAD" else raw
+
+    @staticmethod
+    def _extract_cli_client_usage(client_bucket: dict) -> dict:
+        """Extract usage/cost/session metrics for a single (repository, branch, client) bucket."""
+        usage_aggs = client_bucket.get("usage", {})
+        project_buckets = usage_aggs.get("projects", {}).get("buckets", [])
+        return {
+            "project_name": project_buckets[0]["key"] if project_buckets else None,
+            "cost": round(client_bucket.get("proxy", {}).get("total_cost", {}).get("value", 0) or 0, 2),
+            "lines_added": int(usage_aggs.get("lines_added", {}).get("value", 0) or 0),
+            "lines_removed": int(usage_aggs.get("lines_removed", {}).get("value", 0) or 0),
+            "sessions": int(client_bucket.get("sessions", {}).get("count", {}).get("value", 0) or 0),
+        }
+
+    @staticmethod
+    def _merge_cli_repository_row(row: dict, raw_branch: str, usage: dict) -> None:
+        """Fold usage from a duplicate (repository, branch, client) bucket into an existing row."""
+        row["sessions"] += usage["sessions"]
+        row["cost"] = round(row["cost"] + usage["cost"], 2)
+        row["net_lines"] += usage["lines_added"] - usage["lines_removed"]
+        if raw_branch and not row["branch"]:
+            row["branch"] = raw_branch
+
+    @staticmethod
+    def _new_cli_repository_row(repository: str, raw_branch: str, branch: str, client: str, usage: dict) -> dict:
+        """Build a new output row, classifying the (repository, branch) pair."""
+        classification, _confidence = CLIClassificationEngine._classify_cli_entity(
+            repositories=[repository],
+            branches=[branch] if branch else [],
+            project_name=usage["project_name"],
+            total_cost=usage["cost"],
+        )
+        return {
+            "repository": repository,
+            "branch": raw_branch,
+            "client": client,
+            "sessions": usage["sessions"],
+            "cost": usage["cost"],
+            "classification": classification,
+            "net_lines": usage["lines_added"] - usage["lines_removed"],
+        }
+
     @staticmethod
     def _build_cli_repository_classifications(repository_buckets: list[dict]) -> list[dict]:
-        """Build repository rows for CLI user detail."""
-        rows = []
-        for bucket in repository_buckets:
-            repository = str(bucket.get("key", "")).strip()
-            if not repository:
-                continue
-            usage_aggs = bucket.get("usage", {})
-            branch_buckets = usage_aggs.get("branches", {}).get("buckets", [])
-            branches = [branch["key"] for branch in branch_buckets if branch["key"]]
-            project_buckets = usage_aggs.get("projects", {}).get("buckets", [])
-            project_name = project_buckets[0]["key"] if project_buckets else None
-            repository_cost = round(bucket.get("proxy", {}).get("total_cost", {}).get("value", 0) or 0, 2)
-            total_lines_added = int(usage_aggs.get("lines_added", {}).get("value", 0) or 0)
-            total_lines_removed = int(usage_aggs.get("lines_removed", {}).get("value", 0) or 0)
-            classification, _confidence = CLIClassificationEngine._classify_cli_entity(
-                repositories=[repository],
-                branches=branches,
-                project_name=project_name,
-                total_cost=repository_cost,
-            )
-            rows.append(
-                {
-                    "repository": repository,
-                    "sessions": int(bucket.get("sessions", {}).get("count", {}).get("value", 0) or 0),
-                    "cost": repository_cost,
-                    "classification": classification,
-                    "net_lines": total_lines_added - total_lines_removed,
-                    "branches": branches,
-                }
-            )
+        """Build repository rows for CLI user detail, one row per (repository, branch, client).
+
+        ES produces multiple buckets for the same logical row when different event types
+        carry inconsistent branch/client values (proxy cost events have no branch/client,
+        tool-usage events do). Normalise both dimensions before merging so sessions and
+        cost always land in the same output row.
+        """
+        merged: dict[tuple[str, str, str], dict] = {}
+        for repo_bucket in repository_buckets:
+            # Fall back to Cowork rather than dropping the bucket — an empty repository value
+            # still carries real cost (proxy events without attribution), and silently
+            # skipping it here caused the row's cost to vanish from this table while still
+            # counting toward the flat, unfiltered top-level total_cost sum.
+            repository = str(repo_bucket.get("key", "")).strip() or COWORK_VALUE
+            for branch_bucket in repo_bucket.get("branches", {}).get("buckets", []):
+                raw_branch = str(branch_bucket.get("key", "")).strip()
+                branch = CLIClassificationEngine._normalize_branch(raw_branch)
+                for client_bucket in branch_bucket.get("clients", {}).get("buckets", []):
+                    raw_client = str(client_bucket.get("key", "")).strip() or "CLI"
+                    client = CLIClassificationEngine._normalize_client(raw_client)
+                    usage = CLIClassificationEngine._extract_cli_client_usage(client_bucket)
+                    key = (repository, branch, client)
+                    if key in merged:
+                        CLIClassificationEngine._merge_cli_repository_row(merged[key], raw_branch, usage)
+                    else:
+                        merged[key] = CLIClassificationEngine._new_cli_repository_row(
+                            repository, raw_branch, branch, client, usage
+                        )
+
+        rows = [row for row in merged.values() if row["sessions"] > 0]
         rows.sort(key=lambda row: (row["cost"], row["sessions"]), reverse=True)
         return rows
 

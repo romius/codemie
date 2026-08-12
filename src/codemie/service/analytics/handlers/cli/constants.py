@@ -47,9 +47,11 @@ USER_ID_KEYWORD_FIELD = "attributes.user_id.keyword"
 USER_NAME_KEYWORD_FIELD = "attributes.user_name.keyword"
 USER_EMAIL_RAW_FIELD = "attributes.user_email"
 BRANCH_KEYWORD_FIELD = "attributes.branch.keyword"
+CODEMIE_CLIENT_KEYWORD_FIELD = "attributes.codemie_client.keyword"
 
 # Special values
 N_A_VALUE = "N/A"
+COWORK_VALUE = "Cowork"
 PROJECT_TYPE_PERSONAL = "personal"
 PROJECT_TYPE_TEAM = "team"
 LEARNING_REPO_PATTERNS = [r"tutorial", r"learn", r"course", r"training", r"workshop", r"sample", r"example"]

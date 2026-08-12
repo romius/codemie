@@ -1,0 +1,74 @@
+{
+  "decision": "approve",
+  "rationale": "One finding raised during review turned out to be intentional behavior after clarification from the ticket owner (no code change). One finding was a real, measured cost-attribution bug (confirmed against live preview Elasticsearch data: $321.58 across 9,389 documents) and has been fixed. No outstanding findings.",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    {
+      "criterion": "cli-insights-user-repositories returns one row per (repository, branch, client) combination actually observed for the user/period, with branch and client as scalar fields.",
+      "status": "pass",
+      "notes": "insights_handler.py repositories_data aggregation nests repositories -> branches (missing: \"\") -> clients (missing: \"CLI\"); classification_engine.py builds one row per (repository, branch, client) key."
+    },
+    {
+      "criterion": "A session whose documents are inconsistently tagged (some with a real branch, some blank) still produces exactly one row for that repository/branch/client, not two.",
+      "status": "pass",
+      "notes": "_normalize_branch/_normalize_client collapse the noisy dimension for merge-key purposes only; merged dict sums sessions/cost/net_lines for buckets sharing a normalized key."
+    },
+    {
+      "criterion": "No repository row's cost is silently excluded from the table.",
+      "status": "pass",
+      "notes": "Fixed by CR-002 below. Verified against live data: 9,389 of 711,917 codemie_litellm_proxy_usage documents ($321.58) had repository=\"\" and were being dropped by 'if not repository: continue' before the fix."
+    },
+    {
+      "criterion": "The Repositories table total cost, summed across all its rows, matches the flat top-level Total cost figure for the same user/time-period.",
+      "status": "pass",
+      "notes": "Addressed by two independent fixes: (1) (repository, branch, client) merge prevents the same session splitting into a zero-cost and a real-cost row; (2) CR-002 prevents whole-row cost loss for unresolved repository. Top-level total_cost (proxy_usage, unfiltered) and the Repositories table sum now draw from the same underlying document set."
+    },
+    {
+      "criterion": "CLI-summary rows backed only by LLM-proxy noise (no real tool-usage activity) do not appear as spurious users/sessions.",
+      "status": "pass",
+      "notes": "handler.py skips session_data.doc_count == 0 rows."
+    }
+  ],
+  "standards_review": [
+    {
+      "standard": "commit-format",
+      "status": "na",
+      "notes": "Changes not yet committed at time of this review (working tree only)."
+    },
+    {
+      "standard": "code-quality",
+      "status": "pass",
+      "notes": "poetry run ruff check clean on classification_engine.py and constants.py after the fix. Syntax verified via ast.parse; functional behavior verified via direct interactive calls against synthetic ES-shaped bucket dicts."
+    },
+    {
+      "standard": "security-patterns",
+      "status": "pass",
+      "notes": "New UserIdentityResolver.resolve(entity_name, target=\"id\") fallback call in insights_handler.py reviewed: uses the existing, pre-existing UserIdentityResolver utility (parameterized ORM lookup via user_repository.afind_users_by_identifiers), no new raw-query surface, no new data-access path."
+    }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "info",
+      "triage": "no-change",
+      "outcome": "no_change_needed",
+      "problem": "classification_engine.py's merged row displays the raw (un-normalized) branch value rather than the normalized merge key — e.g. a bucket with raw branch=\"HEAD\" displays 'HEAD' in the UI, not '-', even though _normalize_branch(\"HEAD\") == \"\". Docstring says 'Treat HEAD as empty', which reads as if display should follow.",
+      "impact": "Initially flagged as a display bug (HEAD leaking into the UI instead of showing '-'). Traced against real Repositories-table data provided by the ticket owner and confirmed this is intentional: CLI runs from a global/home terminal genuinely produce git's own 'HEAD' output (real information, not noise), while '-' represents a separate case (no branch info written at all, e.g. Claude Desktop Cowork sessions outside the Code tab). The two raw values (\"HEAD\" vs \"\") come from genuinely different real scenarios and must stay distinguishable in the display; only the merge KEY needed normalizing so same-session documents with inconsistent tagging land in one row.",
+      "recommendation": "No code change. Documented the clarified semantics in spec.md / technical-analysis.md so this isn't re-flagged in a future review without the same context.",
+      "file": "src/codemie/service/analytics/handlers/cli/classification_engine.py",
+      "line": 338
+    },
+    {
+      "id": "CR-002",
+      "severity": "major",
+      "triage": "patch",
+      "outcome": "fixed",
+      "problem": "'if not repository: continue' in _build_cli_repository_classifications unconditionally dropped any ES bucket whose repository value was empty, discarding that bucket's cost from the Repositories table entirely.",
+      "impact": "The same cost was still counted in the flat, repository-unfiltered top-level total_cost sum (proxy_usage.total_cost in insights_handler.py), so the two numbers diverge — the exact symptom reported in the ticket ('Total cost does not match Repositories table'). Verified against live preview Elasticsearch: 9,389 of 711,917 codemie_litellm_proxy_usage documents (~1.3%) have repository=\"\", totaling $321.58. 90% of that dollar amount ($288.34) is from March 2026 (pre-dates current attribution logic); by client_type, 90% ($288.13) is codemie-claude (Claude Code CLI plugin), not claude-desktop ($14.59, ~4.5%) — the leak is not primarily a Claude Desktop-specific problem despite the ticket's framing.",
+      "recommendation": "Fall back to the existing 'Cowork' convention (already used client-side by codemie-code's extractRepository()) instead of dropping the bucket: 'repository = str(repo_bucket.get(\"key\", \"\")).strip() or COWORK_VALUE'. New constant COWORK_VALUE = \"Cowork\" added to constants.py alongside the pre-existing N_A_VALUE.",
+      "file": "src/codemie/service/analytics/handlers/cli/classification_engine.py",
+      "line": 334
+    }
+  ]
+}

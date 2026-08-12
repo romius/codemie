@@ -39,6 +39,7 @@ from .base_handler import CLIBaseHandler
 from .classification_engine import CLIClassificationEngine, EnrichedUserScope
 from .constants import (
     BRANCH_KEYWORD_FIELD,
+    CODEMIE_CLIENT_KEYWORD_FIELD,
     CACHE_CREATION_TOKENS_FIELD,
     CACHE_READ_INPUT_TOKENS_FIELD,
     FILES_CREATED_FIELD,
@@ -548,6 +549,13 @@ class CLIInsightsHandler(CLIBaseHandler):
             user_email = str(self._extract_top_metric(b, "user_email", USER_EMAIL_KEYWORD_FIELD) or "").strip().lower()
             if normalized_email == user_email and user_id:
                 return str(user_id)
+
+        resolved_id = await UserIdentityResolver.resolve(entity_name, target="id")
+        if resolved_id and resolved_id != entity_name:
+            normalized_resolved_id = resolved_id.strip().lower()
+            for b in buckets:
+                if normalized_resolved_id == str(b["key"]).strip().lower():
+                    return str(b["key"])
         return None
 
     async def get_cli_insights_project_classification(
@@ -1149,28 +1157,55 @@ class CLIInsightsHandler(CLIBaseHandler):
                         "models": {"terms": {"field": LLM_MODEL_KEYWORD_FIELD, "size": 20}},
                     },
                 },
-                "repositories": {
-                    "terms": {"field": REPOSITORY_KEYWORD_FIELD, "size": 1000},
+                "repositories_data": {
+                    "filter": {
+                        "terms": {
+                            METRIC_NAME_KEYWORD_FIELD: [
+                                MetricName.CLI_TOOL_USAGE_TOTAL.value,
+                                MetricName.CLI_LLM_USAGE_TOTAL.value,
+                            ]
+                        }
+                    },
                     "aggs": {
-                        "usage": {
-                            "filter": usage_filter,
+                        "repositories": {
+                            "terms": {"field": REPOSITORY_KEYWORD_FIELD, "size": 1000},
                             "aggs": {
-                                "lines_added": {"sum": {"field": TOTAL_LINES_ADDED_FIELD}},
-                                "lines_removed": {"sum": {"field": TOTAL_LINES_REMOVED_FIELD}},
-                                "branches": {"terms": {"field": BRANCH_KEYWORD_FIELD, "size": 20}},
-                                "projects": {"terms": {"field": PROJECT_KEYWORD_FIELD, "size": 10}},
-                            },
-                        },
-                        "sessions": {
-                            "filter": session_filter,
-                            "aggs": {
-                                "count": {"cardinality": {"field": SESSION_ID_KEYWORD_FIELD}},
-                            },
-                        },
-                        "proxy": {
-                            "filter": proxy_filter,
-                            "aggs": {
-                                "total_cost": {"sum": {"field": MONEY_SPENT_FIELD}},
+                                "branches": {
+                                    "terms": {"field": BRANCH_KEYWORD_FIELD, "size": 50, "missing": ""},
+                                    "aggs": {
+                                        "clients": {
+                                            "terms": {
+                                                "field": CODEMIE_CLIENT_KEYWORD_FIELD,
+                                                "size": 10,
+                                                "missing": "CLI",
+                                            },
+                                            "aggs": {
+                                                "usage": {
+                                                    "filter": usage_filter,
+                                                    "aggs": {
+                                                        "lines_added": {"sum": {"field": TOTAL_LINES_ADDED_FIELD}},
+                                                        "lines_removed": {"sum": {"field": TOTAL_LINES_REMOVED_FIELD}},
+                                                        "projects": {
+                                                            "terms": {"field": PROJECT_KEYWORD_FIELD, "size": 10}
+                                                        },
+                                                    },
+                                                },
+                                                "sessions": {
+                                                    "filter": usage_filter,
+                                                    "aggs": {
+                                                        "count": {"cardinality": {"field": SESSION_ID_KEYWORD_FIELD}},
+                                                    },
+                                                },
+                                                "proxy": {
+                                                    "filter": proxy_filter,
+                                                    "aggs": {
+                                                        "total_cost": {"sum": {"field": MONEY_SPENT_FIELD}},
+                                                    },
+                                                },
+                                            },
+                                        },
+                                    },
+                                },
                             },
                         },
                     },
@@ -1234,7 +1269,7 @@ class CLIInsightsHandler(CLIBaseHandler):
             ],
             "repositories": [
                 repo_bucket["key"]
-                for repo_bucket in aggs.get("repositories", {}).get("buckets", [])
+                for repo_bucket in aggs.get("repositories_data", {}).get("repositories", {}).get("buckets", [])
                 if str(repo_bucket.get("key", "")).strip()
             ],
         }
@@ -1305,7 +1340,7 @@ class CLIInsightsHandler(CLIBaseHandler):
             total_cost=metrics["total_cost"],
         )
         repository_classifications = CLIClassificationEngine._build_cli_repository_classifications(
-            aggs.get("repositories", {}).get("buckets", []),
+            aggs.get("repositories_data", {}).get("repositories", {}).get("buckets", []),
         )
         category_breakdown = CLIClassificationEngine._build_cli_category_breakdown(repository_classifications)
         tool_counts = CLIClassificationEngine._extract_cli_tool_counts(tool_docs_result)
@@ -1576,20 +1611,23 @@ class CLIInsightsHandler(CLIBaseHandler):
         rows = [
             {
                 "repository": row["repository"],
+                "branch": row.get("branch", ""),
                 "classification": row["classification"],
-                "cost": row["cost"],
+                "client": row.get("client", ""),
                 "sessions": row["sessions"],
+                "cost": row["cost"],
                 "net_lines": row["net_lines"],
-                "branches": row.get("branches", []),
             }
             for row in repository_rows
         ]
         return ResponseFormatter.format_tabular_response(
             columns=[
                 {"id": "repository", "label": "Repository", "type": "string"},
+                {"id": "branch", "label": "Branch", "type": "string"},
                 {"id": "classification", "label": "Category", "type": "string"},
-                {"id": "cost", "label": "Cost", "type": "number", "format": "currency"},
+                {"id": "client", "label": "Client", "type": "string"},
                 {"id": "sessions", "label": "Sessions", "type": "number", "format": "number"},
+                {"id": "cost", "label": "Cost", "type": "number", "format": "currency"},
                 {"id": "net_lines", "label": NET_LINES_LABEL, "type": "number", "format": "number"},
             ],
             rows=rows,

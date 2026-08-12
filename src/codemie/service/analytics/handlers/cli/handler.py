@@ -870,8 +870,16 @@ class CLIHandler(CLIBaseHandler):
                     cache_read_tokens = int(token_data.get("cache_read_tokens", {}).get("value", 0))
                     cache_creation_tokens = int(token_data.get("cache_creation_tokens", {}).get("value", 0))
 
-                    # Extract session data from OLD metric (filtered aggregation)
+                    # Extract session data from CLI_TOOL_USAGE_TOTAL (filtered aggregation)
                     session_data = user_bucket.get("session_data", {})
+                    session_doc_count = int(session_data.get("doc_count", 0))
+
+                    # Skip rows with no real CLI sessions — these are noise from LLM proxy
+                    # metrics (e.g. Claude Desktop ping requests) with no corresponding
+                    # cli_tool_usage_total document.
+                    if session_doc_count == 0:
+                        continue
+
                     session_duration = int(session_data.get("session_duration", {}).get("value", 0))
                     total_lines_added = int(session_data.get("total_lines_added", {}).get("value", 0))
 
