@@ -88,6 +88,7 @@ class TestMapLiteLLMToLLMModel:
             ("openai", LLMProvider.AZURE_OPENAI),
             ("azure", LLMProvider.AZURE_OPENAI),
             ("bedrock", LLMProvider.AWS_BEDROCK),
+            ("bedrock_converse", LLMProvider.AWS_BEDROCK),
             ("vertex_ai", LLMProvider.GOOGLE_VERTEX_AI),
             ("anthropic", LLMProvider.ANTHROPIC),
             ("unknown", LLMProvider.AZURE_OPENAI),  # Falls back to AZURE_OPENAI

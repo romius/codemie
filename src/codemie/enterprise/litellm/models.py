@@ -75,6 +75,7 @@ def map_litellm_to_llm_model(litellm_model: dict[str, Any]) -> "LLMModel":
         "openai": LLMProvider.AZURE_OPENAI,
         "azure": LLMProvider.AZURE_OPENAI,
         "bedrock": LLMProvider.AWS_BEDROCK,
+        "bedrock_converse": LLMProvider.AWS_BEDROCK,
         "vertex_ai": LLMProvider.GOOGLE_VERTEX_AI,
         "anthropic": LLMProvider.ANTHROPIC,
         LLMProvider.VERTEX_AI_ANTHROPIC.value: LLMProvider.VERTEX_AI_ANTHROPIC,
