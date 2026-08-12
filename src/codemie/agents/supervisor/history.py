@@ -17,6 +17,7 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 
+from codemie.agents.agent_runtime_utils import sanitize_rich_history_for_llm
 from codemie.agents.supervisor.constants import (
     METADATA_KEY_HANDOFF_BACK,
     METADATA_KEY_HANDOFF_DESTINATION,
@@ -169,7 +170,7 @@ def _append_pending_handoffs(
             _append_unique_message(
                 filtered_messages,
                 ToolMessage(
-                    content="",
+                    content="[no response]",
                     name=queued_handoff.tool_calls[0]["name"],
                     tool_call_id=queued_handoff.tool_calls[0]["id"],
                 ),
@@ -179,7 +180,7 @@ def _append_pending_handoffs(
         for tool_name, tool_call_id in queued_handoffs:
             _append_unique_message(
                 filtered_messages,
-                ToolMessage(content="", name=tool_name, tool_call_id=tool_call_id),
+                ToolMessage(content="[no response]", name=tool_name, tool_call_id=tool_call_id),
             )
 
 
@@ -254,6 +255,6 @@ def _subagent_task_pre_model_hook(state: dict[str, Any]) -> dict[str, Any]:
         return {}
 
     task_message = messages[task_message_index]
-    llm_input_messages = [HumanMessage(content=task_message.content)]
-    llm_input_messages.extend(messages[task_message_index + 1 :])
+    tail = sanitize_rich_history_for_llm(list(messages[task_message_index + 1 :]))
+    llm_input_messages = [HumanMessage(content=task_message.content), *tail]
     return {"llm_input_messages": llm_input_messages}

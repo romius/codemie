@@ -283,9 +283,19 @@ class ExecuteWorkspaceScriptTool(CodeMieTool):
     @staticmethod
     def _dump_json(payload) -> str:
         if isinstance(payload, list):
-            data = [item.model_dump(mode="json") if hasattr(item, "model_dump") else item for item in payload]
+            data = [
+                item.model_dump(mode="json", exclude={"checksum"}) if hasattr(item, "model_dump") else item
+                for item in payload
+            ]
         elif hasattr(payload, "model_dump"):
-            data = payload.model_dump(mode="json")
+            raw = payload.model_dump(mode="json")
+            raw.pop("checksum", None)
+            for val in raw.values():
+                if isinstance(val, list):
+                    for item in val:
+                        if isinstance(item, dict):
+                            item.pop("checksum", None)
+            data = raw
         else:
             data = payload
         return json.dumps(data, ensure_ascii=False, indent=2)

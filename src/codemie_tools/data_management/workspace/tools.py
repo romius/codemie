@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-import json
+import base64
 from typing import Optional, Type
 
 from pydantic import BaseModel, Field, PrivateAttr
@@ -38,13 +38,9 @@ from codemie_tools.data_management.workspace.tools_vars import (
 
 
 class ListWorkspaceFilesInput(BaseModel):
-    prefix: Optional[str] = Field(
+    glob: str | None = Field(
         default=None,
-        description="Optional workspace-relative path prefix to filter files.",
-    )
-    recursive: bool = Field(
-        default=True,
-        description="Whether to search recursively under the given prefix.",
+        description="Optional glob pattern to filter files (e.g. '*.py', 'src/**/*.ts'). If omitted, all files are returned.",
     )
 
 
@@ -73,13 +69,9 @@ class DeleteWorkspaceFileInput(BaseModel):
 
 class GrepWorkspaceFilesInput(BaseModel):
     query: str = Field(description="Case-insensitive search string to find in workspace text files.")
-    prefix: Optional[str] = Field(
+    glob: str | None = Field(
         default=None,
-        description="Optional workspace-relative prefix to limit the search.",
-    )
-    recursive: bool = Field(
-        default=True,
-        description="Whether to search recursively under the given prefix.",
+        description="Optional glob pattern to limit the search scope (e.g. '*.py', 'src/**'). If omitted, all text files are searched.",
     )
 
 
@@ -105,13 +97,7 @@ class BaseWorkspaceTool(CodeMieTool):
 
     @staticmethod
     def _dump_json(payload) -> str:
-        if isinstance(payload, list):
-            data = [item.model_dump(mode="json") if hasattr(item, "model_dump") else item for item in payload]
-        elif hasattr(payload, "model_dump"):
-            data = payload.model_dump(mode="json")
-        else:
-            data = payload
-        return json.dumps(data, ensure_ascii=False, indent=2)
+        return ExecuteWorkspaceScriptTool._dump_json(payload)
 
 
 class ListWorkspaceFilesTool(BaseWorkspaceTool):
@@ -119,9 +105,9 @@ class ListWorkspaceFilesTool(BaseWorkspaceTool):
     description: str = LIST_WORKSPACE_FILES_TOOL.description
     args_schema: Type[BaseModel] = ListWorkspaceFilesInput
 
-    def execute(self, prefix: str | None = None, recursive: bool = True) -> str:
+    def execute(self, glob: str | None = None) -> str:
         workspace_id = self._get_workspace_id()
-        files = self.workspace_service.list_files(workspace_id, self.user, prefix=prefix, recursive=recursive)
+        files = self.workspace_service.list_files(workspace_id, self.user, glob=glob)
         return self._dump_json(files)
 
 
@@ -133,6 +119,17 @@ class ReadWorkspaceFileTool(BaseWorkspaceTool):
     def execute(self, file_path: str) -> str:
         workspace_id = self._get_workspace_id()
         file_content = self.workspace_service.get_file_content(workspace_id, file_path, self.user)
+
+        if getattr(file_content, "is_binary", False):
+            raw = file_content.content or b""
+            if not isinstance(raw, bytes):
+                raw = str(raw).encode("utf-8")
+            b64 = base64.b64encode(raw).decode("ascii")
+
+            payload = file_content.model_dump(mode="json")
+            payload["content"] = "The file is binary. The content below is base64-encoded.\n\n" + b64
+            return self._dump_json(payload)
+
         return self._dump_json(file_content)
 
 
@@ -187,7 +184,7 @@ class GrepWorkspaceFilesTool(BaseWorkspaceTool):
     description: str = GREP_WORKSPACE_FILES_TOOL.description
     args_schema: Type[BaseModel] = GrepWorkspaceFilesInput
 
-    def execute(self, query: str, prefix: str | None = None, recursive: bool = True) -> str:
+    def execute(self, query: str, glob: str | None = None) -> str:
         workspace_id = self._get_workspace_id()
-        matches = self.workspace_service.grep_files(workspace_id, query, self.user, prefix=prefix, recursive=recursive)
+        matches = self.workspace_service.grep_files(workspace_id, query, self.user, glob=glob)
         return self._dump_json(matches)

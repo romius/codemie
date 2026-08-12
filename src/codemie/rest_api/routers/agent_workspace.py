@@ -109,12 +109,11 @@ def get_workspace_by_conversation(conversation_id: str, user: User = Depends(aut
 )
 def list_workspace_files(
     workspace_id: str,
-    prefix: Optional[str] = Query(default=None),
-    recursive: bool = Query(default=True),
+    glob: Optional[str] = Query(default=None),
     user: User = Depends(authenticate),
 ) -> list[WorkspaceFileItemResponse]:
     try:
-        return workspace_service.list_files(workspace_id, user, prefix=prefix, recursive=recursive)
+        return workspace_service.list_files(workspace_id, user, glob=glob)
     except Exception as exception:
         raise _as_http_error(exception) from exception
 
@@ -216,12 +215,11 @@ def delete_workspace_file(
 def grep_workspace_files(
     workspace_id: str,
     query: str = Query(...),
-    prefix: Optional[str] = Query(default=None),
-    recursive: bool = Query(default=True),
+    glob: Optional[str] = Query(default=None),
     user: User = Depends(authenticate),
 ) -> WorkspaceGrepResponse:
     try:
-        matches = workspace_service.grep_files(workspace_id, query, user, prefix=prefix, recursive=recursive)
+        matches = workspace_service.grep_files(workspace_id, query, user, glob=glob)
         return WorkspaceGrepResponse(matches=matches)
     except Exception as exception:
         raise _as_http_error(exception) from exception
