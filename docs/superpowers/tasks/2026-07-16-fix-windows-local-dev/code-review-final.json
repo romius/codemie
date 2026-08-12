@@ -1,0 +1,47 @@
+{
+  "decision": "request-changes",
+  "rationale": "Three MAJOR findings. CR-001: AC3 is unmet — .env.example was explicitly reverted to main (commit b4c186019), so ENV=development, MODELS_ENV=azure, and AZURE_OPENAI_URL are absent from the tracked file; fresh clones still require manual env-var setup. CR-002: the bind-mount→named-volume migration silently abandons any data in ./codemie-storage, ./codemie-repos, and ./.elasticsearch_data on upgrade; no warning or migration steps are present. CR-003: .gitattributes covers *.sh and Makefile but not Dockerfile, *.py, *.yml, or .env files — CRLF in the Dockerfile introduced by this branch would cause exec-format errors in RUN commands on Windows. Dismissed findings: Pydantic serialization alias concern (edge-case lens confirmed ConfiguredModel has populate_by_name=True and ide_tool.py only reads the attribute, not serializes it). One deferred finding: broader .gitattributes expansion beyond the three blocking file types (lower risk, separate concern). All three blocking findings are targeted, mechanical fixes.",
+  "confidence": "medium",
+  "risk_flags": [],
+  "business_review": [
+    { "criterion_id": "AC1", "status": "pass", "note": "docker-compose.yml declares named volumes elasticsearch_data and postgres_data. Elasticsearch switched from .elasticsearch_data: bind-mount to elasticsearch_data: named volume; postgres gained postgres_data:/var/lib/postgresql/data. Both persist across container removal." },
+    { "criterion_id": "AC2", "status": "pass", "note": ".gitattributes added with *.sh text eol=lf and Makefile text eol=lf — covers scripts/git-hooks/pre_commit.sh on Windows clones with core.autocrlf=true." },
+    { "criterion_id": "AC3", "status": "fail", "note": ".env.example does not contain ENV=development, MODELS_ENV=azure, or AZURE_OPENAI_URL. Commit b4c186019 explicitly reverted .env.example to origin/main, removing these defaults. Fresh clones still require manual env-var configuration." },
+    { "criterion_id": "AC4", "status": "pass", "note": "IdeToolArgument.schema renamed to nested_schema with Field(alias='schema'). ConfiguredModel has populate_by_name=True, so both the 'schema' wire key and the nested_schema Python attribute work. All param.schema references in ide_tool.py updated to param.nested_schema." },
+    { "criterion_id": "AC5", "status": "pass", "note": "codemie-storage and codemie-repos converted from NTFS bind mounts to named Docker volumes. Dockerfile pre-creates /app/codemie-storage and /app/codemie-repos as the codemie user (USER codemie is already set at line 143 before the new RUN), so Docker copies codemie ownership into empty volumes on first mount." }
+  ],
+  "standards_review": [
+    { "standard": "commit-format", "status": "pass", "notes": "All commits in range follow EPMCDME-13549: Short Description format." },
+    { "standard": "code-quality", "status": "pass", "notes": "Changed Python files (models.py, ide_tool.py) are clean — explicit Field alias, type annotations preserved, no lint violations." },
+    { "standard": "security", "status": "pass", "notes": "No secrets committed. No auth or permission surface changed." }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "triage": "patch",
+      "severity": "major",
+      "problem": ".env.example was reverted to origin/main (commit b4c186019) and does not contain ENV=development, MODELS_ENV=azure, or AZURE_OPENAI_URL=https://ai-proxy.lab.epam.com. AC3 requires these to be present on a fresh clone.",
+      "impact": "Developers performing a fresh clone must still discover and set these environment variables manually before the backend can start. The onboarding friction AC3 was meant to eliminate remains.",
+      "recommendation": "Add ENV=development, MODELS_ENV=azure, and AZURE_OPENAI_URL=https://ai-proxy.lab.epam.com to .env.example. If the revert was intentional (scope reduction), update the spec to remove AC3 or track it as a follow-up ticket.",
+      "sources": ["acceptance-lens"]
+    },
+    {
+      "id": "CR-002",
+      "triage": "patch",
+      "severity": "major",
+      "problem": "docker-compose.yml replaces bind mounts (./codemie-storage, ./codemie-repos, .elasticsearch_data) with named Docker volumes. Any existing local deployment with data in those host directories will silently get empty named volumes on the next docker-compose up. No migration instructions, warning comment, or upgrade note is included.",
+      "impact": "Developers pulling this change lose all locally cached repo clones (codemie-repos), user-uploaded files (codemie-storage), and the entire Elasticsearch index without warning. The failure mode is silent — the stack starts cleanly but all local state is gone.",
+      "recommendation": "Add a comment in docker-compose.yml (or a UPGRADING note) explaining that existing bind-mount data must be migrated manually before upgrading. Provide the one-time migration commands, e.g.: docker run --rm -v ./codemie-storage:/src -v codemie_storage:/dst alpine sh -c 'cp -a /src/. /dst/'",
+      "sources": ["blind-lens", "edge-case-lens"]
+    },
+    {
+      "id": "CR-003",
+      "triage": "patch",
+      "severity": "major",
+      "problem": ".gitattributes enforces LF only for *.sh and Makefile. Dockerfile, Python source files (*.py), YAML files (*.yml, *.yaml), TOML files (*.toml), and .env files are not covered. On Windows with the default git core.autocrlf=true these files are checked out with CRLF. This branch adds new RUN lines to the Dockerfile — CRLF in those lines causes 'exec format error' or 'missing separator' errors when the image is built on Windows.",
+      "impact": "A Windows developer cloning this branch with default git config will get a CRLF-corrupted Dockerfile. The new RUN mkdir -p line and any existing RUN commands with shell syntax will fail at docker build time, directly undermining the Windows local dev fix this branch provides.",
+      "recommendation": "Add to .gitattributes at minimum: Dockerfile text eol=lf, *.py text eol=lf, *.yml text eol=lf, *.yaml text eol=lf, *.toml text eol=lf, .env* text eol=lf. Consider a broader '* text=auto eol=lf' baseline.",
+      "sources": ["blind-lens", "edge-case-lens"]
+    }
+  ]
+}

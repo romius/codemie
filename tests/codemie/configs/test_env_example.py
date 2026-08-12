@@ -24,6 +24,8 @@ ENV_EXAMPLE = REPO_ROOT / ".env.example"
 # Kept in exact 1:1 correspondence with that file — no more, no fewer keys —
 # so .env.example doesn't drift into templating every optional Config field.
 REQUIRED_KEYS = {
+    "ENV",
+    "MODELS_ENV",
     "AZURE_OPENAI_API_KEY",
     "AZURE_OPENAI_URL",
     "AZURE_SPEECH_REGION",

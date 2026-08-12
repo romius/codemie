@@ -1,0 +1,70 @@
+{
+  "task": "Fix Windows local development experience: HOME env var placeholder in .env, docker-compose.yml INSTALL_ENTERPRISE build arg default, Makefile migrate target, .gitattributes LF enforcement for .sh and Makefile, README Running the Application section rewrite, setup-guide.md cross-platform expansion, and AGENTS.md Shell rule update.",
+  "generated": "2026-07-16T00:00:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 2,
+      "label": "S",
+      "affected": "docker-compose.yml, .env, Makefile, .gitattributes, README.md, setup-guide.md, AGENTS.md",
+      "layers": "Infrastructure, Documentation"
+    },
+    "requirements_clarity": {
+      "score": 1,
+      "label": "XS",
+      "status": "Clear",
+      "gaps": null
+    },
+    "technical_risk": {
+      "score": 1,
+      "label": "XS",
+      "risk_factors": null,
+      "mitigation": null
+    },
+    "file_change_estimate": {
+      "score": 3,
+      "label": "M",
+      "modified_files": 6,
+      "modified_file_list": [
+        "docker-compose.yml",
+        ".env",
+        "Makefile",
+        "README.md",
+        ".ai-run/guides/development/setup-guide.md",
+        "AGENTS.md"
+      ],
+      "new_files": 1,
+      "new_file_list": [".gitattributes"],
+      "affected_dirs": [".", ".ai-run"]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 2,
+      "label": "S",
+      "layers_changed": ["Infrastructure", "Documentation"],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 10,
+  "size": "S",
+  "band_range": "10-14",
+  "files_changed": 7,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "file_change_estimate",
+      "reason": "6 files modified plus 1 new file (.gitattributes), spanning 2 directories (repo root and .ai-run/guides/development/); ~260 insertions, ~40 deletions. Matches M criterion of 5-7 modified + 1-2 new files across 2 directories."
+    },
+    {
+      "dimension": "component_scope",
+      "reason": "7 files across build infrastructure (docker-compose.yml, Makefile, .gitattributes), config (.env), and developer documentation (README.md, setup-guide.md, AGENTS.md). All in the developer-tooling domain; no application component boundaries (API, Service, Repository, Workflow) crossed and zero Python source files changed."
+    }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

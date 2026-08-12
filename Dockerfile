@@ -151,6 +151,9 @@ RUN chmod 555 $VIRTUAL_ENV
 # Copy application code
 COPY --from=builder --chown=codemie:codemie /app /app
 
+# Pre-create writable directories so named volumes inherit codemie ownership on first mount
+RUN mkdir -p /app/codemie-storage /app/codemie-repos
+
 # Download cl100k_base and o200k_base encodings
 # hadolint ignore=SC2046
 RUN mkdir -p "$TIKTOKEN_CACHE_DIR" && \

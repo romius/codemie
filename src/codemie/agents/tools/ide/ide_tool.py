@@ -107,13 +107,13 @@ class IdeTool(CodeMieTool):
         if param.type in type_mapping:
             return type_mapping[param.type]
         if param.type == "array":
-            if not param.schema:
+            if not param.nested_schema:
                 return list
-            generic_type_argument = param.schema.properties["genericType"]
+            generic_type_argument = param.nested_schema.properties["genericType"]
             generic_type = cls.convert_type(generic_type_argument, name)
             return List[generic_type]
         if param.type == "object":
-            if not param.schema:
+            if not param.nested_schema:
                 return dict
-            return cls.schema_to_model(param.schema, f"{name}Arguments")
+            return cls.schema_to_model(param.nested_schema, f"{name}Arguments")
         raise ToolException(f"Invalid schema type {param.type}")

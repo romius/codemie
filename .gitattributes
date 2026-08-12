@@ -1,0 +1,2 @@
+# Enforce LF for all text files to prevent CRLF corruption on Windows clone
+* text=auto eol=lf

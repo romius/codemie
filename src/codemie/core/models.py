@@ -844,7 +844,7 @@ class TokensUsage(BaseModel):
 class IdeToolArgument(ConfiguredModel):
     description: Optional[str] = None
     type: str = Field(default="object")
-    schema: Optional["IdeToolArgsSchema"] = None
+    nested_schema: Optional["IdeToolArgsSchema"] = Field(default=None, alias="schema")
 
 
 class IdeToolArgsSchema(ConfiguredModel):

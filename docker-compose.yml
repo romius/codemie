@@ -31,9 +31,9 @@ services:
       - ./pyproject.toml:/app/pyproject.toml
       - ./.env:/app/.env
       - ./tests:/app/tests
-      - ./codemie-repos:/app/codemie-repos
+      - codemie_repos:/app/codemie-repos
       - ./config:/app/config
-      - ./codemie-storage:/app/codemie-storage
+      - codemie_storage:/app/codemie-storage
     ports:
       - 8080:8080
       - 9091:9091
@@ -48,6 +48,8 @@ services:
   postgres:
     image: pgvector/pgvector:pg17
     container_name: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=password
@@ -64,7 +66,7 @@ services:
     image: "docker.elastic.co/elasticsearch/elasticsearch:8.18.4"
     container_name: elasticsearch
     volumes:
-      - .elasticsearch_data:/usr/share/elasticsearch/data
+      - elasticsearch_data:/usr/share/elasticsearch/data
     ports:
       - 9200:9200
     restart: on-failure
@@ -181,6 +183,17 @@ services:
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
       - GF_INSTALL_PLUGINS=grafana-pyroscope-app
     restart: unless-stopped
+
+# NOTE: These named volumes replace Windows-incompatible bind mounts (./codemie-storage,
+# ./codemie-repos, .elasticsearch_data). If you had data in those host directories,
+# migrate it once before running docker compose up:
+#   docker run --rm -v ./codemie-storage:/src -v codemie_storage:/dst alpine sh -c "cp -a /src/. /dst/"
+#   docker run --rm -v ./codemie-repos:/src -v codemie_repos:/dst alpine sh -c "cp -a /src/. /dst/"
+volumes:
+  elasticsearch_data:
+  postgres_data:
+  codemie_storage:
+  codemie_repos:
 
 secrets:
   google_credentials:
