@@ -277,17 +277,6 @@ llm_models:
       output: 0.000003
       output_cost_per_image_token: 0.00006
 
-  - base_name: "deepseek-r1"
-    deployment_name: "deepseek-r1"
-    label: "DeepSeek R1"
-    multimodal: true
-    react_agent: true
-    enabled: true
-    provider: "azure_openai"
-    cost:
-      input: 0.000001
-      output: 0.000003
-
 embeddings_models:
   - base_name: "ada-002"
     deployment_name: "codemie-text-embedding-ada-002"

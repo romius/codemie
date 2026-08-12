@@ -408,20 +408,15 @@ model_list:
       base_model: bedrock/moonshotai.kimi-k2.5
       label: "Bedrock MoonshotAI Kimi K2.5"
 
-  - model_name: deepseek-r1
+  - model_name: deepseek-v4-pro
     litellm_params:
-      model: azure/deepseek-r1
-      litellm_credential_name: default_dial_credential
+      model: azure_ai/deepseek-v4-pro-2026-04-23
+      api_base: https://codemie-eastus2.services.ai.azure.com
+      litellm_credential_name: default_azure_openai_credential
     model_info:
-      id: deepseek-r1
-      input_cost_per_token: 0.000001
-      output_cost_per_token: 0.000003
-      label: "DeepSeek R1"
-      multimodal: true
-      react_agent: true
-      enabled: true
-      provider: "azure_openai"
-      mode: chat
+      id: deepseek-v4-pro-2026-04-23-eastus2
+      base_model: azure_ai/deepseek-v4-pro
+      label: "DeepSeek V4 Pro"
 
   # Embedding Models
   - model_name: codemie-text-embedding-ada-002
