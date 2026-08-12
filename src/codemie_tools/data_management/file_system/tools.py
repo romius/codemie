@@ -41,6 +41,8 @@ from codemie_tools.data_management.file_system.utils import get_relative_path, c
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_TIMEOUT = 60
+
 
 class ReadFileInput(BaseModel):
     file_path: str = Field(..., description="File path to read from file system")
@@ -129,6 +131,14 @@ class WriteFileTool(CodeMieTool):
 
 class CommandLineInput(BaseModel):
     command: str = Field(description="Command to execute in the CLI.")
+    timeout: Optional[int] = Field(
+        None,
+        description=(
+            "Timeout in seconds for this command. "
+            "When provided, overrides the tool's default timeout. "
+            f"When omitted, the default ({DEFAULT_TIMEOUT} s) is used."
+        ),
+    )
 
 
 class DiffUpdateFileToolInput(BaseModel):
@@ -146,14 +156,14 @@ class CommandLineTool(CodeMieTool):
     args_schema: Type[BaseModel] = CommandLineInput
     root_dir: Optional[str] = "."
     activate_command: Optional[str] = ""
-    timeout: int = 60
+    timeout: int = DEFAULT_TIMEOUT
 
     def __init__(self, root_dir: str = ".", activate_command: str = ""):
         super().__init__()
         self.root_dir = root_dir
         self.activate_command = activate_command
 
-    def execute(self, command: str, *args, **kwargs) -> Any:
+    def execute(self, command: str, timeout: Optional[int] = None, *args, **kwargs) -> Any:
         work_dir = Path(self.root_dir)
         work_dir.mkdir(exist_ok=True)
 
@@ -167,6 +177,8 @@ class CommandLineTool(CodeMieTool):
 
         full_command = f"{activate_command} && {command}" if activate_command else command
 
+        effective_timeout = timeout if timeout is not None else self.timeout
+
         # shell=False with explicit bash invocation avoids implicit shell wrapping while
         # preserving shell features (pipes, &&, redirections) required by agents.
         # Defense-in-depth: sanitize_command blocks the highest-risk injection vectors.
@@ -176,7 +188,7 @@ class CommandLineTool(CodeMieTool):
             shell=False,
             text=True,
             capture_output=True,
-            timeout=float(self.timeout),
+            timeout=float(effective_timeout),
         )
 
         return result.stdout, result.stderr, result.returncode, command_start_time

@@ -188,6 +188,46 @@ class TestFileSystemTools(unittest.TestCase):
         self.assertIn("source .venv/bin/activate", full_cmd)
         self.assertIn("echo test", full_cmd)
 
+    @patch('codemie_tools.data_management.file_system.tools.subprocess.run')
+    def test_execute_per_call_timeout_overrides_default(self, mock_run):
+        mock_run.return_value.stdout = "out\n"
+        mock_run.return_value.stderr = ""
+        mock_run.return_value.returncode = 0
+        self.command_line_tool.execute(command="echo hi", timeout=3600)
+        _, kwargs = mock_run.call_args
+        self.assertEqual(kwargs["timeout"], 3600.0)
+
+    @patch('codemie_tools.data_management.file_system.tools.subprocess.run')
+    def test_execute_none_timeout_falls_back_to_class_default(self, mock_run):
+        from codemie_tools.data_management.file_system.tools import DEFAULT_TIMEOUT
+
+        mock_run.return_value.stdout = "out\n"
+        mock_run.return_value.stderr = ""
+        mock_run.return_value.returncode = 0
+        self.command_line_tool.execute(command="echo hi", timeout=None)
+        _, kwargs = mock_run.call_args
+        self.assertEqual(kwargs["timeout"], float(DEFAULT_TIMEOUT))
+
+
+def test_default_timeout_constant():
+    from codemie_tools.data_management.file_system.tools import DEFAULT_TIMEOUT
+
+    assert DEFAULT_TIMEOUT == 60
+
+
+def test_command_line_input_timeout_defaults_to_none():
+    from codemie_tools.data_management.file_system.tools import CommandLineInput
+
+    inp = CommandLineInput(command="echo hi")
+    assert inp.timeout is None
+
+
+def test_command_line_input_accepts_explicit_timeout():
+    from codemie_tools.data_management.file_system.tools import CommandLineInput
+
+    inp = CommandLineInput(command="echo hi", timeout=3600)
+    assert inp.timeout == 3600
+
 
 @pytest.fixture
 def temp_file_exist():
