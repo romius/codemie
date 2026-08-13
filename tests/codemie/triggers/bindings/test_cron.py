@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
+import pytz
 from codemie.triggers.bindings.cron import Cron, CronTrigger, Job, invoke_assistant, invoke_workflow, reindex_code
 from codemie.triggers.bindings.utils import validate_datasource
 from codemie.triggers.actors.datasource import resume_stale_datasource  # noqa: F401 — imported for patch path resolution
@@ -672,3 +673,105 @@ def test_create_cron_trigger_falls_back_to_config_timezone():
     mock_trigger.assert_called_once()
     _, kwargs = mock_trigger.call_args
     assert kwargs.get("timezone") == config.TIMEZONE
+
+
+# --- day_of_week translation (EPMCDME-13782) -------------------------------------------
+# APScheduler numbers weekdays 0=Monday, standard crontab numbers them 0=Sunday. These
+# tests use a real CronTrigger and assert on the weekday actually fired, since a mocked
+# trigger cannot catch an off-by-one in the value handed to it.
+
+
+@pytest.mark.parametrize(
+    "day_of_week,expected",
+    [
+        ("0", "sun"),
+        ("1", "mon"),
+        ("4", "thu"),
+        ("6", "sat"),
+        ("7", "sun"),  # crontab accepts both 0 and 7 for Sunday
+        ("1-5", "mon,tue,wed,thu,fri"),
+        ("0,6", "sun,sat"),
+        ("0-2", "sun,mon,tue"),
+        ("5-7", "fri,sat,sun"),  # range wrapping past Saturday
+        ("6-0", "sat,sun"),
+        ("0-6", "sun,mon,tue,wed,thu,fri,sat"),
+        ("0-7", "sun,mon,tue,wed,thu,fri,sat"),  # whole week, not an empty wrap
+        ("*/2", "sun,tue,thu,sat"),
+        ("1-5/2", "mon,wed,fri"),
+        ("2/3", "tue,fri"),  # lone number with a step runs to the end of the week
+        ("1/2", "mon,wed,fri,sun"),  # ...and that end is Sunday-as-7, not Saturday
+        ("0-3/2", "sun,tue"),
+        ("*", "*"),
+        ("mon-fri", "mon,tue,wed,thu,fri"),  # names expand the same way numbers do
+        ("MON-FRI", "mon,tue,wed,thu,fri"),
+        ("mon-fri/2", "mon,wed,fri"),  # APScheduler drops the step from a named range
+        ("sun", "sun"),
+        ("4#2", "4#2"),  # nth-weekday syntax - left for CronTrigger to parse
+        ("8", "8"),  # out of range - left for CronTrigger to reject
+        ("foo", "foo"),  # unknown name - left for CronTrigger to reject
+    ],
+)
+def test_normalize_day_of_week(day_of_week, expected):
+    """Crontab weekday numbers translate to the equivalent APScheduler weekday names."""
+    assert Cron._Cron__normalize_day_of_week(day_of_week) == expected
+
+
+@pytest.mark.parametrize(
+    "cron_expression,expected_weekday",
+    [
+        ("41 * * * 0", "Sunday"),
+        ("41 * * * 1", "Monday"),
+        ("41 * * * 4", "Thursday"),  # the reported defect: fired on Friday before the fix
+        ("41 * * * 6", "Saturday"),
+        ("41 * * * 7", "Sunday"),
+        ("41 * * * sun", "Sunday"),
+    ],
+)
+def test_create_cron_trigger_fires_on_expected_weekday(cron_expression, expected_weekday):
+    """A crontab day-of-week value fires on that day, not the day after."""
+    trigger = Cron._Cron__create_cron_trigger(cron_expression, timezone="UTC")
+
+    next_fire = trigger.get_next_fire_time(None, datetime(2026, 8, 3, tzinfo=pytz.utc))
+
+    assert next_fire.strftime("%A") == expected_weekday
+    assert next_fire.minute == 41
+
+
+def test_create_cron_trigger_weekday_range_covers_working_days():
+    """'1-5' means Monday through Friday, and never fires on the weekend."""
+    trigger = Cron._Cron__create_cron_trigger("30 14 * * 1-5", timezone="UTC")
+
+    fired = set()
+    moment = datetime(2026, 8, 3, tzinfo=pytz.utc)
+    for _ in range(5):
+        moment = trigger.get_next_fire_time(None, moment)
+        fired.add(moment.strftime("%A"))
+        moment += timedelta(minutes=1)
+
+    assert fired == {"Monday", "Tuesday", "Wednesday", "Thursday", "Friday"}
+
+
+def test_create_cron_trigger_weekday_step_fires_every_other_day():
+    """'1-5/2' means every other working day - Monday, Wednesday, Friday."""
+    trigger = Cron._Cron__create_cron_trigger("30 14 * * 1-5/2", timezone="UTC")
+
+    fired = set()
+    moment = datetime(2026, 8, 3, tzinfo=pytz.utc)
+    for _ in range(3):
+        moment = trigger.get_next_fire_time(None, moment)
+        fired.add(moment.strftime("%A"))
+        moment += timedelta(minutes=1)
+
+    assert fired == {"Monday", "Wednesday", "Friday"}
+
+
+def test_create_cron_trigger_without_day_of_week_fires_daily():
+    """Expressions without a day-of-week restriction keep firing every day."""
+    trigger = Cron._Cron__create_cron_trigger("41 * * * *", timezone="UTC")
+
+    moment = datetime(2026, 8, 3, tzinfo=pytz.utc)
+    for expected_hour in range(3):
+        moment = trigger.get_next_fire_time(None, moment)
+        assert moment.hour == expected_hour
+        assert moment.minute == 41
+        moment += timedelta(minutes=1)

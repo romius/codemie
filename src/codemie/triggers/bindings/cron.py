@@ -16,6 +16,7 @@
 
 import asyncio
 import platform
+import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -67,6 +68,15 @@ from codemie.triggers.trigger_models import (
 
 # Constants
 DEFAULT_TASK_PROMPT = "Do it"
+
+# Index = crontab weekday number; crontab accepts both 0 and 7 for Sunday.
+CRONTAB_WEEKDAYS = ("sun", "mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+# One comma-separated term of a crontab day_of_week field: "4", "1-5", "*/2", "mon-fri/3".
+CRONTAB_WEEKDAY_TERM = re.compile(
+    r"(?P<start>\*|\d+|[a-z]+)(?:-(?P<end>\d+|[a-z]+))?(?:/(?P<step>\d+))?",
+    re.IGNORECASE,
+)
 
 
 class Job:
@@ -414,16 +424,76 @@ class Cron:
             logger.info("Removed job: %s", job_id)
 
     @staticmethod
-    def __normalize_day_of_week(day_of_week: str) -> str:
-        """Normalize day_of_week field for APScheduler compatibility.
+    def __weekday_number(value: str) -> Optional[int]:
+        """Return the crontab weekday number for "4" or "thu", or None if unrecognised."""
+        if value.isdigit():
+            return int(value) if int(value) <= 7 else None
+        return CRONTAB_WEEKDAYS.index(value.lower()) if value.lower() in CRONTAB_WEEKDAYS else None
 
-        Standard cron and croniter accept 7 as Sunday, but APScheduler's
-        CronTrigger only accepts 0-6. Replace standalone 7 with 0 (both
-        represent Sunday) so validation does not raise a ValueError.
+    @staticmethod
+    def __expand_weekday_term(term: str) -> Optional[list[str]]:
+        """Expand one crontab day_of_week term ("4", "1-5", "*/2") to weekday names.
+
+        Returns None if the term is not something this understands, so the caller can
+        hand the field to CronTrigger untouched.
         """
-        import re
+        match = CRONTAB_WEEKDAY_TERM.fullmatch(term)
+        if not match:
+            return None
 
-        return re.sub(r"\b7\b", "0", day_of_week)
+        start, end, step = match.group("start"), match.group("end"), match.group("step")
+        if start == "*":
+            first, last = 0, 6
+        elif end:
+            first, last = Cron.__weekday_number(start), Cron.__weekday_number(end)
+        elif step:
+            # A lone weekday with a step runs through Sunday-as-7, because crontab counts
+            # Sunday at both ends of the week: "1/2" is Mon,Wed,Fri,Sun, not Mon,Wed,Fri.
+            first, last = Cron.__weekday_number(start), 7
+        else:
+            first = last = Cron.__weekday_number(start)
+
+        if first is None or last is None:
+            return None
+
+        # Ranges wrap around the week ("5-7" is Fri-Sun, "6-0" is Sat-Sun), except for
+        # "0-7", which spans the whole week rather than being an empty wrap.
+        span = 7 if (first, last) == (0, 7) else (last - first) % 7
+        return [CRONTAB_WEEKDAYS[(first + offset) % 7] for offset in range(0, span + 1, int(step or 1))]
+
+    @staticmethod
+    def __normalize_day_of_week(day_of_week: str) -> str:
+        """Translate a crontab day_of_week field into APScheduler weekday names.
+
+        APScheduler 3.x numbers weekdays 0=Monday while standard crontab numbers them
+        0=Sunday (7 is also Sunday), so passing the field through unchanged shifts every
+        numeric weekday by a day -- "* * * * 4" fires on Friday instead of Thursday.
+
+        Rather than renumber the field and have to reason about how ranges and steps
+        survive the shift, expand it to the plain list of weekdays it means and emit
+        those as names. Names carry the same meaning in both systems, so "4" becomes
+        "thu" and "1-5/2" becomes "mon,wed,fri" with no arithmetic left to get wrong.
+
+        Weekday names are accepted too, since APScheduler drops the step from a named
+        range ("mon-fri/2" silently fires every working day); expanding them here means
+        the step is applied before APScheduler ever sees the field.
+
+        Anything this cannot read -- nth-weekday syntax, unknown names, out-of-range
+        numbers -- is returned untouched so CronTrigger keeps applying its own parsing
+        and raises its usual ValueError for invalid input.
+        """
+        if day_of_week.strip() == "*":
+            return "*"
+
+        weekdays = []
+        for term in day_of_week.split(","):
+            expanded = Cron.__expand_weekday_term(term.strip())
+            if expanded is None:
+                return day_of_week
+            weekdays.extend(expanded)
+
+        # "0-7" and overlapping terms repeat days; dict.fromkeys drops repeats in order.
+        return ",".join(dict.fromkeys(weekdays))
 
     @staticmethod
     def __create_cron_trigger(cron_expression, timezone: Optional[str] = None):
