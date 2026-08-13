@@ -18,4 +18,5 @@ paths = [
 
 stopwords = [
   "limit=self.MAX_RESULTS",  # False positive: parameter assignment, not a secret
+  "finish_reason=length",    # False positive: OpenAI API response field in test/doc strings
 ]

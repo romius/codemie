@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "task": "Add AGENT_TOKEN_LIMIT branch in extended_error() to return config.AGENT_MSG_TOKEN_LIMIT and update 7-8 test assertions plus one new extended_error path test in test_langgraph_truncation.py.",
+  "generated": "2026-08-07T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 2, "label": "S" },
+    "requirements_clarity": { "score": 1, "label": "XS" },
+    "technical_risk":       { "score": 1, "label": "XS" },
+    "file_change_estimate": { "score": 1, "label": "XS" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 1, "label": "XS" }
+  },
+  "total": 7,
+  "size": "XS",
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "extended_error() in agents/tools/agent.py is the single production component touched (Presentation layer), but correctly implementing the branch requires tracing the full ExceptionClassificationPipeline to confirm err.message holds AGENT_MSG_TOKEN_LIMIT at that point; the 7-8 test assertion updates in test_langgraph_truncation.py add deliberate reasoning overhead without crossing additional layer boundaries."
+    },
+    {
+      "dimension": "requirements_clarity",
+      "reason": "Task description is maximally specific — names the exact function (extended_error), the exact branch condition (AGENT_TOKEN_LIMIT), the exact return value (config.AGENT_MSG_TOKEN_LIMIT), the exact count of test assertion updates (7-8), and the one new test path (extended_error with AGENT_TOKEN_LIMIT). No ambiguity or open design decisions."
+    }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

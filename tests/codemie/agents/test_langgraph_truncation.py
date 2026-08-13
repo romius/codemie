@@ -71,9 +71,7 @@ class TestTruncationDetection:
         with pytest.raises(TokenLimitExceededException) as exc_info:
             agent._check_for_truncated_response(message)
 
-        assert "TOKEN LIMIT EXCEEDED" in str(exc_info.value)
-        assert "finish_reason=length" in str(exc_info.value)
-        assert "gpt-4.1" in str(exc_info.value)
+        assert exc_info.value.truncation_reason == "finish_reason=length"
 
     def test_detect_truncation_claude_stop_reason_max_tokens(self):
         """Test detection with Claude format: stop_reason='max_tokens'."""
@@ -88,8 +86,8 @@ class TestTruncationDetection:
         with pytest.raises(TokenLimitExceededException) as exc_info:
             agent._check_for_truncated_response(message)
 
-        assert "stop_reason=max_tokens" in str(exc_info.value)
-        assert "claude-3-7" in str(exc_info.value)
+        assert exc_info.value.truncation_reason == "stop_reason=max_tokens"
+        assert exc_info.value.model == "claude-3-7"
 
     def test_detect_truncation_bedrock_camelcase_stop_reason(self):
         """Test detection with Bedrock format: stopReason (camelCase)."""
@@ -105,18 +103,16 @@ class TestTruncationDetection:
         with pytest.raises(TokenLimitExceededException) as exc_info:
             agent._check_for_truncated_response(message)
 
-        assert "max_tokens" in str(exc_info.value)
+        assert exc_info.value.truncation_reason == "stop_reason=max_tokens"
 
     def test_detect_truncation_without_tool_calls(self):
-        """Test detection when truncated before tool_calls generated."""
+        """Test that truncation is detected even when no tool_calls were generated."""
         agent = create_mock_agent(llm_model="claude-3-7")
 
         message = AIMessage(content="I'll help", response_metadata={"stopReason": "max_tokens"})
 
-        with pytest.raises(TokenLimitExceededException) as exc_info:
+        with pytest.raises(TokenLimitExceededException):
             agent._check_for_truncated_response(message)
-
-        assert "before tool arguments could be generated" in str(exc_info.value)
 
     def test_no_exception_for_normal_completion(self):
         """Test no exception for finish_reason='stop'."""
@@ -150,7 +146,11 @@ class TestTruncationDetection:
         agent._check_for_truncated_response(message)
 
     def test_exception_includes_tool_names(self):
-        """Test that exception message includes tool names."""
+        """Test that tool names are NOT exposed in the user-facing message from extended_error."""
+        from codemie.agents.tools.agent import AbstractAgent
+        from codemie.core.error_constants import ErrorCategory, ErrorCode
+        from codemie.configs import config
+
         agent = create_mock_agent(llm_model="gpt-4.1")
 
         message = AIMessage(
@@ -165,20 +165,28 @@ class TestTruncationDetection:
         with pytest.raises(TokenLimitExceededException) as exc_info:
             agent._check_for_truncated_response(message)
 
-        error_msg = str(exc_info.value)
-        assert "jira_tool" in error_msg
-        assert "slack_tool" in error_msg
+        # Simulate the extended_error() path for AGENT_TOKEN_LIMIT
+        abstract_agent = AbstractAgent()
+        err_mock = Mock()
+        err_mock.error_code = ErrorCode.AGENT_TOKEN_LIMIT
+        err_mock.message = config.AGENT_MSG_TOKEN_LIMIT
+        err_mock.details = {}
+        error_response = Mock()
+        error_response.get_error.return_value = err_mock
+        error_response.category = ErrorCategory.AGENT
+
+        user_facing_msg = abstract_agent.extended_error(error_response, exc_info.value)
+        assert "jira_tool" not in user_facing_msg
+        assert "slack_tool" not in user_facing_msg
 
     def test_exception_contains_support_link(self):
-        """Test that exception message contains support link."""
+        """Test that TokenLimitExceededException is raised on finish_reason=length."""
         agent = create_mock_agent(llm_model="claude-3-7")
 
         message = AIMessage(content="", response_metadata={"finish_reason": "length"})
 
-        with pytest.raises(TokenLimitExceededException) as exc_info:
+        with pytest.raises(TokenLimitExceededException):
             agent._check_for_truncated_response(message)
-
-        assert "https://epa.ms/codemie-support" in str(exc_info.value)
 
     def test_exception_has_structured_attributes(self):
         """Test that exception has accessible attributes."""
@@ -517,3 +525,38 @@ class TestSubAssistantNameMapping:
         result = agent.get_original_sub_assistant_name(truncated_name)
 
         assert result == original_name, "Should retrieve original name after truncation mapping"
+
+
+class TestExtendedError:
+    """Tests for AbstractAgent.extended_error() with AGENT_TOKEN_LIMIT."""
+
+    def test_extended_error_returns_clean_message_for_agent_token_limit(self):
+        """AGENT_TOKEN_LIMIT must return the clean config string, not str(exception)."""
+        from codemie.agents.tools.agent import AbstractAgent
+        from codemie.core.error_constants import ErrorCategory, ErrorCode
+        from codemie.configs import config
+
+        agent = AbstractAgent()
+
+        err_mock = Mock()
+        err_mock.error_code = ErrorCode.AGENT_TOKEN_LIMIT
+        err_mock.message = config.AGENT_MSG_TOKEN_LIMIT
+        err_mock.details = {}
+
+        error_response = Mock()
+        error_response.get_error.return_value = err_mock
+        error_response.category = ErrorCategory.AGENT
+
+        raw_exception = Exception(
+            "\n⚠️ TOKEN LIMIT EXCEEDED\nAPI Response: finish_reason=length\n"
+            "Model: 'claude-sonnet-5'\n"
+            "The configured max_output_tokens limit was reached while generating tool arguments.\n"
+        )
+
+        result = agent.extended_error(error_response, raw_exception)
+
+        assert result == config.AGENT_MSG_TOKEN_LIMIT
+        assert "TOKEN LIMIT EXCEEDED" not in result
+        assert "finish_reason" not in result
+        assert "claude-sonnet-5" not in result
+        assert "max_output_tokens" not in result

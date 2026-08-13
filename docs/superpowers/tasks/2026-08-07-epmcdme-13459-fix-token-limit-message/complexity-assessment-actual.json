@@ -1,0 +1,75 @@
+{
+  "task": "Fix extended_error() in AbstractAgent to return a clean user-facing message for AGENT_TOKEN_LIMIT errors instead of falling through to the raw exception string.",
+  "generated": "2026-08-07T00:00:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 1,
+      "label": "XS",
+      "affected": "AbstractAgent.extended_error()",
+      "layers": "Agent-Tool"
+    },
+    "requirements_clarity": {
+      "score": 1,
+      "label": "XS",
+      "status": "Clear",
+      "gaps": null
+    },
+    "technical_risk": {
+      "score": 1,
+      "label": "XS",
+      "risk_factors": null,
+      "mitigation": null
+    },
+    "file_change_estimate": {
+      "score": 3,
+      "label": "M",
+      "modified_files": 7,
+      "modified_file_list": [
+        "src/codemie/agents/tools/agent.py",
+        "tests/codemie/agents/test_langgraph_truncation.py",
+        "tests/enterprise/mcp_auth/test_client_metadata_bridge.py",
+        "tests/enterprise/mcp_auth/test_oauth2_callback_bridge.py",
+        "tests/enterprise/mcp_auth/test_saml_acs_bridge.py",
+        "tests/enterprise/mcp_auth/test_saml_initiate_bridge.py",
+        "tests/enterprise/mcp_auth/test_tms_bridge.py"
+      ],
+      "new_files": 0,
+      "new_file_list": [],
+      "affected_dirs": [
+        "src/codemie/agents/tools",
+        "tests/codemie/agents",
+        "tests/enterprise/mcp_auth"
+      ]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 1,
+      "label": "XS",
+      "layers_changed": ["Agent-Tool"],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 8,
+  "size": "XS",
+  "band_range": "6-9",
+  "files_changed": 7,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "file_change_estimate",
+      "reason": "The production change is 3 lines in one file; the test update is one modified file. Approximately 5 pre-existing mcp_auth test files received housekeeping-only additions (pytest.importorskip). That brings total modified files to ~7 across 3 directories, landing at the top of the M band. All other five dimensions are XS."
+    },
+    {
+      "dimension": "component_scope",
+      "reason": "A single 3-line branch was appended to the existing if-else chain inside AbstractAgent.extended_error(). No new components, no new abstractions, no layer boundaries crossed."
+    }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

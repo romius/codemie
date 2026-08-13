@@ -1,0 +1,56 @@
+{
+  "decision": "approve",
+  "rationale": "Production change is a minimal, correct 3-line branch in extended_error() following the established per-error-code pattern. All five acceptance criteria pass. No security, correctness, or API contract issues introduced. Commit format matches EPMCDME-####: Description convention. Blind-lens major findings (None guard on err.message, support-link test removal) are pre-existing patterns consistent with the rest of the function and explicitly correct per spec. Tool-names structured-attribute gap and get_error() KeyError risk are pre-existing concerns deferred out of scope. All minor findings dropped by severity rule. Deferred: 2 (pre-existing). Dismissed: 7 (pre-existing pattern or correct per spec).",
+  "findings": [],
+  "business_review": [
+    {
+      "criterion": "Chat displays AGENT_MSG_TOKEN_LIMIT when model output limit is reached",
+      "status": "pass",
+      "notes": "3-line branch in extended_error() short-circuits before str(exception) and returns err.message, which the classifier resolves to config.AGENT_MSG_TOKEN_LIMIT. TestExtendedError verifies exact equality."
+    },
+    {
+      "criterion": "Chat does not display TOKEN LIMIT EXCEEDED, finish_reason, model name, tool names, or config instruction",
+      "status": "pass",
+      "notes": "New branch prevents all raw internals reaching the caller. TestExtendedError asserts absence of TOKEN LIMIT EXCEEDED, finish_reason, model name, and max_output_tokens. Inverted test_exception_includes_tool_names asserts tool names absent from extended_error output."
+    },
+    {
+      "criterion": "Real user-quota exhaustion continues to report correctly (separate path, untouched)",
+      "status": "na",
+      "notes": "LiteLLMErrorClassifier / LITE_LLM_CONTEXT_WINDOW_EXCEEDED_ERROR path is untouched, per spec out-of-scope declaration."
+    },
+    {
+      "criterion": "HIDE_AGENT_STREAMING_EXCEPTIONS=True path continues to work correctly (untouched)",
+      "status": "na",
+      "notes": "Hidden-streaming path is untouched, per spec out-of-scope declaration."
+    },
+    {
+      "criterion": "All existing tests pass with updated assertions; one new test covers extended_error branch for AGENT_TOKEN_LIMIT",
+      "status": "pass",
+      "notes": "43 tests pass. All 8 raw-internals assertions listed in the spec removal table are removed and replaced with structured-attribute assertions. TestExtendedError class added with complete coverage of the new branch."
+    }
+  ],
+  "standards_review": [
+    {
+      "standard": "Commit format (EPMCDME-####: Description)",
+      "status": "pass",
+      "notes": "Both commits use EPMCDME-13459: prefix with colon separator, matching the documented format."
+    },
+    {
+      "standard": "Branch naming (<TICKET-ID>_short-description)",
+      "status": "pass",
+      "notes": "Branch is EPMCDME-13459_fix-token-limit-message, matching the documented convention."
+    },
+    {
+      "standard": "Code quality (Ruff / type annotations)",
+      "status": "pass",
+      "notes": "No new public functions or type annotation changes. Existing function signature unchanged. Pattern follows established extended_error() branch style."
+    },
+    {
+      "standard": "Security",
+      "status": "pass",
+      "notes": "Change reduces information exposure by preventing raw technical internals from reaching the user-facing message. No auth, PII, injection, or secrets concerns."
+    }
+  ],
+  "risk_flags": [],
+  "confidence": "high"
+}

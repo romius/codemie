@@ -64,6 +64,9 @@ class AbstractAgent:
         if error_code == ErrorCode.LITE_LLM_BAD_REQUEST_ERROR and details.get("schema_validation_context"):
             return f"{err.message}\n{details['schema_validation_context']}"
 
+        if error_code == ErrorCode.AGENT_TOKEN_LIMIT:
+            return err.message
+
         return str(exception)
 
     def send_error_response(
