@@ -600,10 +600,13 @@ def create_svn_index_application(
             request_uuid=request_uuid,
             guardrail_assignments=create_svn_repo_request.guardrail_assignments,
         )
-        processor.process()
-        processor._create_or_update_scheduler(
-            create_svn_repo_request.cron_expression, timezone=create_svn_repo_request.timezone
-        )
+        try:
+            processor.process()
+        finally:
+            # The schedule is user configuration: store it even when indexing fails.
+            processor._create_or_update_scheduler(
+                create_svn_repo_request.cron_expression, timezone=create_svn_repo_request.timezone
+            )
 
     run_in_background(process, svn_repo.name, tasks)
 
@@ -712,13 +715,16 @@ def update_svn_index_application(
             request_uuid=request_uuid,
             guardrail_assignments=request.guardrail_assignments,
         )
-        if resume_indexing:
-            processor.resume()
-        else:
-            processor.reprocess()
-        processor._create_or_update_scheduler(
-            request.cron_expression if cron_expression_provided else None, timezone=request.timezone
-        )
+        try:
+            if resume_indexing:
+                processor.resume()
+            else:
+                processor.reprocess()
+        finally:
+            # The schedule is user configuration: store it even when the reindex fails.
+            processor._create_or_update_scheduler(
+                request.cron_expression if cron_expression_provided else None, timezone=request.timezone
+            )
 
     run_in_background(process, svn_repo.name, tasks)
 

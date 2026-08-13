@@ -694,3 +694,59 @@ class TestChunkNumberingResetsPerRun:
                 processor._load_and_process_documents(loader=loader, index=mock_index, batch_size=10)
 
         assert assigned_numbers == [1, 1]
+
+
+# ---------------------------------------------------------------------------
+# EPMCDME-13171 — the schedule must survive a failed indexing run
+# ---------------------------------------------------------------------------
+
+
+def _run_process_with_failure(processor, failure=RuntimeError("indexing blew up")):
+    """Drive process() to the point where _process() raises, and report the outcome."""
+    processor._process = MagicMock(side_effect=failure)
+    processor._create_or_update_scheduler = MagicMock()
+    processor._persist_load_stats = MagicMock(return_value=None)
+    processor._on_process_end = MagicMock()
+    processor._setup_processing_context = MagicMock()
+    processor._notify_callbacks_on_error = MagicMock()
+    processor.client = MagicMock()
+
+    with pytest.raises(type(failure)):
+        processor.process()
+
+    return processor._create_or_update_scheduler
+
+
+def test_schedule_is_persisted_even_when_indexing_fails(processor):
+    """The cron is user configuration, not a result of indexing.
+
+    It used to be written only after a fully successful run, so a datasource whose first
+    indexing failed silently lost its schedule — while the API had already returned
+    success because indexing happens in a background task.
+    """
+    processor.cron_expression = "0 2 * * *"
+
+    scheduler_call = _run_process_with_failure(processor)
+
+    scheduler_call.assert_called_once()
+
+
+def test_schedule_is_persisted_before_fetching_starts(processor):
+    """Ordering guard: the schedule must be written before anything that can fail."""
+    order = []
+    # Keep the fixture's index: _init_index() would replace it with a fresh mock.
+    processor._pre_scheduled = True
+    processor._process = MagicMock(side_effect=lambda: order.append("process"))
+    processor._create_or_update_scheduler = MagicMock(side_effect=lambda: order.append("schedule"))
+    processor._persist_load_stats = MagicMock(return_value=None)
+    processor._on_process_end = MagicMock()
+    processor._setup_processing_context = MagicMock()
+    processor._validate_indexing_result = MagicMock()
+    processor._notify_callbacks_on_complete = MagicMock()
+    processor.index.start_fetching = MagicMock(side_effect=lambda **_: order.append("start_fetching"))
+    processor.client = MagicMock()
+
+    processor.process()
+
+    assert order.index("schedule") < order.index("start_fetching")
+    assert order.index("schedule") < order.index("process")

@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 from fastapi import status
 
 from codemie.core.exceptions import ExtendedHTTPException
-from codemie.rest_api.models.settings import SettingRequest
+from codemie.rest_api.models.settings import CredentialValues, SettingRequest
 from codemie.service.settings.scheduler_settings_service import (
     _validate_minimum_hourly_frequency,
     INVALID_CRON_EXPRESSION_MESSAGE,
@@ -41,16 +41,19 @@ GIT_AUTH_HELP_MESSAGE = (
     "'pat' for Personal Access Token or 'github_app' for GitHub App authentication."
 )
 
+# SharePoint is intentionally absent: the trigger engine dispatches it (see
+# Cron.__schedule_datasource_job and triggers.bindings.utils.validate_datasource), and the
+# datasource page has been creating SharePoint schedules all along. Only this validator,
+# used by the Integration path, still rejected them.
 UNSUPPORTED_SCHEDULER_DATASOURCE_TYPES: frozenset[str] = frozenset(
     [
-        "knowledge_base_file",  # user-visible name: "file"
-        "knowledge_base_sharepoint",  # user-visible name: "sharepoint"
+        "knowledge_base_file",  # user-visible name: "file" — no reindex path exists
     ]
 )
 UNSUPPORTED_SCHEDULER_DATASOURCE_TYPES_HELP_MESSAGE = (
-    "The following datasource types do not support triggering by schedule: "
-    "file, sharepoint. "
-    "Please select a datasource of a supported type (e.g., git/code, summary, chunk-summary, confluence, jira)."
+    "The following datasource types do not support triggering by schedule: file. "
+    "Please select a datasource of a supported type "
+    "(e.g., git/code, summary, chunk-summary, confluence, jira, sharepoint)."
 )
 
 UNSUPPORTED_WEBHOOK_DATASOURCE_TYPES: frozenset[str] = frozenset(
@@ -210,6 +213,20 @@ def validate_scheduler_request(request: SettingRequest) -> None:
 
     # Validate timezone (optional credential)
     validate_timezone_value(request)
+
+    # Store an explicit is_enabled so the trigger engine never has to guess
+    normalize_is_enabled(request)
+
+
+def normalize_is_enabled(request: SettingRequest) -> None:
+    """Default `is_enabled` to true when the client omits it.
+
+    The trigger engine treats a schedule as disabled unless the flag says otherwise, so a
+    request without it used to be accepted with 200 OK and then never run. Nobody creates
+    a schedule in order for it not to run, and the datasource page already hard-codes true.
+    """
+    if not any(cred.key == "is_enabled" for cred in request.credential_values):
+        request.credential_values.append(CredentialValues(key="is_enabled", value=True))
 
 
 def validate_datasource_type_for_scheduler(datasource: IndexInfo) -> None:

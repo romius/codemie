@@ -69,17 +69,50 @@ class LeaderLockContext:
 
     ADVISORY_LOCK_ID = 987654321  # Unique ID for conversation analysis lock
 
-    def __init__(self, lock_id: int | None = None):
+    def __init__(self, lock_id: int | None = None, *, lock_key: tuple[int, int] | None = None, engine=None):
         """
         Initialize leader lock context.
 
         Args:
-            lock_id: PostgreSQL advisory lock ID (defaults to class constant)
+            lock_id: PostgreSQL advisory lock ID for the single-argument lock form
+                (defaults to class constant).
+            lock_key: A (key1, key2) pair for the two-argument lock form. PostgreSQL
+                keeps the one- and two-argument advisory lock spaces separate, so a
+                lock_key can never collide with any lock_id. Both halves must fit in
+                int4. Mutually exclusive with lock_id.
+            engine: SQLAlchemy engine to take the lock connection from. Defaults to the
+                shared application engine. Callers that hold a lock for the lifetime of
+                a long task should pass a dedicated engine, since the connection stays
+                checked out for as long as the lock is held.
         """
-        self.lock_id = lock_id or self.ADVISORY_LOCK_ID
+        if lock_key is not None and lock_id is not None:
+            raise ValueError("Pass either lock_id or lock_key, not both")
+        if lock_key is not None and not all(isinstance(part, int) for part in lock_key):
+            raise TypeError("lock_key must be a pair of ints")
+        if lock_id is not None and not isinstance(lock_id, int):
+            raise TypeError("lock_id must be an int")
+
+        self.lock_key = lock_key
+        self.lock_id = None if lock_key is not None else (lock_id or self.ADVISORY_LOCK_ID)
         self.session: Session | None = None
         self.acquired: bool = False
         self._connection = None
+        self._engine = engine
+
+    @property
+    def _label(self) -> str:
+        """Human-readable lock identity for logs."""
+        return str(self.lock_key) if self.lock_key is not None else str(self.lock_id)
+
+    def _statement(self, function: str) -> str:
+        """Build the lock/unlock statement.
+
+        Both forms interpolate integers that are validated in __init__, never
+        caller-supplied strings, so there is no injection surface here.
+        """
+        if self.lock_key is not None:
+            return f"SELECT {function}({self.lock_key[0]}, {self.lock_key[1]})"
+        return f"SELECT {function}({self.lock_id})"
 
     def __enter__(self) -> LeaderLockContext:
         """
@@ -94,7 +127,7 @@ class LeaderLockContext:
         Raises:
             Exception: If lock acquisition fails due to database error
         """
-        engine = PostgresClient.get_engine()
+        engine = self._engine if self._engine is not None else PostgresClient.get_engine()
 
         # Get connection from pool and keep it alive
         self._connection = engine.connect()
@@ -104,17 +137,17 @@ class LeaderLockContext:
 
         try:
             # Try to acquire advisory lock (non-blocking)
-            result = self.session.execute(text(f"SELECT pg_try_advisory_lock({self.lock_id})")).scalar()
+            result = self.session.execute(text(self._statement("pg_try_advisory_lock"))).scalar()
 
             self.acquired = bool(result)
 
             if self.acquired:
-                logger.info(f"Advisory lock {self.lock_id} acquired successfully (connection: {id(self._connection)})")
+                logger.info(f"Advisory lock {self._label} acquired successfully (connection: {id(self._connection)})")
             else:
-                logger.info(f"Advisory lock {self.lock_id} already held by another process")
+                logger.info(f"Advisory lock {self._label} already held by another process")
 
         except Exception as e:
-            logger.error(f"Failed to acquire advisory lock {self.lock_id}: {e}", exc_info=True)
+            logger.error(f"Failed to acquire advisory lock {self._label}: {e}", exc_info=True)
             self.acquired = False
             # Clean up connection if acquisition fails
             self._cleanup()
@@ -141,24 +174,44 @@ class LeaderLockContext:
         try:
             if self.acquired and self.session:
                 # Release lock on same connection that acquired it
-                result = self.session.execute(text(f"SELECT pg_advisory_unlock({self.lock_id})")).scalar()
+                result = self.session.execute(text(self._statement("pg_advisory_unlock"))).scalar()
 
                 if result:
                     logger.info(
-                        f"Advisory lock {self.lock_id} released successfully (connection: {id(self._connection)})"
+                        f"Advisory lock {self._label} released successfully (connection: {id(self._connection)})"
                     )
                 else:
                     logger.warning(
-                        f"Advisory lock {self.lock_id} was not held during release "
+                        f"Advisory lock {self._label} was not held during release "
                         f"(connection: {id(self._connection)}). This may indicate a bug."
                     )
         except Exception as e:
-            logger.error(f"Failed to release advisory lock {self.lock_id}: {e}", exc_info=True)
+            logger.error(f"Failed to release advisory lock {self._label}: {e}", exc_info=True)
         finally:
             self._cleanup()
 
         # Don't suppress exceptions from the with block
         return False
+
+    def is_alive(self) -> bool:
+        """Report whether this context still holds a usable lock.
+
+        PostgreSQL releases a session-level advisory lock only on explicit unlock or when
+        the session ends, so the liveness of the connection is the whole question. A
+        holder that parks on an idle connection for the lifetime of a long task cannot
+        rely on ``pool_pre_ping``, which only validates connections as they are checked
+        out of the pool — this connection was checked out once and never returned. The
+        round trip forces the dead-connection case to surface.
+        """
+        if not self.acquired or self.session is None:
+            return False
+
+        try:
+            self.session.execute(text("SELECT 1")).scalar()
+            return True
+        except Exception as e:
+            logger.warning(f"Advisory lock {self._label} connection is no longer usable: {e}")
+            return False
 
     def _cleanup(self):
         """
@@ -185,6 +238,30 @@ class LeaderLockContext:
 
 
 @asynccontextmanager
+async def async_leader_lock_context(lock_id: int):
+    """Async wrapper around LeaderLockContext yielding the context itself.
+
+    Use this instead of `async_leader_lock` when the leader holds the lock across a long
+    running task and needs to keep checking that it still holds it — see
+    `LeaderLockContext.is_alive`.
+
+    Usage:
+        async with async_leader_lock_context(MY_LOCK_ID) as lock:
+            if not lock.acquired:
+                return
+            while working:
+                if not await asyncio.to_thread(lock.is_alive):
+                    break  # step down, a standby can take over
+    """
+    lock = LeaderLockContext(lock_id=lock_id)
+    await asyncio.to_thread(lock.__enter__)
+    try:
+        yield lock
+    finally:
+        await asyncio.to_thread(lock.__exit__, None, None, None)
+
+
+@asynccontextmanager
 async def async_leader_lock(lock_id: int):
     """Async wrapper around LeaderLockContext for use in asyncio code.
 
@@ -198,9 +275,5 @@ async def async_leader_lock(lock_id: int):
                 return
             # Do leader work here
     """
-    lock = LeaderLockContext(lock_id=lock_id)
-    await asyncio.to_thread(lock.__enter__)
-    try:
+    async with async_leader_lock_context(lock_id) as lock:
         yield lock.acquired
-    finally:
-        await asyncio.to_thread(lock.__exit__, None, None, None)

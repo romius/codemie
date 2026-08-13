@@ -675,6 +675,214 @@ def test_create_cron_trigger_falls_back_to_config_timezone():
     assert kwargs.get("timezone") == config.TIMEZONE
 
 
+# ---------------------------------------------------------------------------
+# EPMCDME-13171 — scheduler reliability
+# ---------------------------------------------------------------------------
+
+
+def _setting(setting_id="s1", creds=None):
+    setting = MagicMock()
+    setting.id = setting_id
+    setting.update_date = datetime.now()
+    setting.user_id = "user_123"
+    setting.credential_values = creds or []
+    return setting
+
+
+def test_absent_is_enabled_is_treated_as_enabled(cron_instance):
+    """A scheduler setting saved without the is_enabled key must still run.
+
+    Rows created through the Integration page may omit the flag entirely; treating that
+    as 'disabled' left them permanently inert with no feedback to the user.
+    """
+    setting = _setting(
+        creds=[
+            MagicMock(key="resource_type", value="assistant"),
+            MagicMock(key="schedule", value="0 12 * * 1"),
+            MagicMock(key="resource_id", value="resource_123"),
+        ]
+    )
+    with (
+        patch.object(cron_instance, '_Cron__updated_setting', return_value=True),
+        patch.object(cron_instance, '_Cron__valid_schedule', return_value=True),
+        patch('codemie.triggers.bindings.cron.validate_assistant') as mock_validate,
+    ):
+        mock_validate.return_value = MagicMock(name="assistant")
+        result = cron_instance._Cron__valid_setting(setting)
+
+    assert result["is_enabled"] is True
+
+
+def test_explicit_false_is_enabled_still_disables(cron_instance):
+    """An explicit false must keep disabling the schedule — only absence defaults to true."""
+    setting = _setting(
+        creds=[
+            MagicMock(key="is_enabled", value=False),
+            MagicMock(key="resource_type", value="assistant"),
+            MagicMock(key="schedule", value="0 12 * * 1"),
+            MagicMock(key="resource_id", value="resource_123"),
+        ]
+    )
+    with (
+        patch.object(cron_instance, '_Cron__updated_setting', return_value=True),
+        patch.object(cron_instance, '_Cron__valid_schedule', return_value=True),
+        patch('codemie.triggers.bindings.cron.validate_assistant') as mock_validate,
+    ):
+        mock_validate.return_value = MagicMock(name="assistant")
+        result = cron_instance._Cron__valid_setting(setting)
+
+    assert result["is_enabled"] is False
+
+
+def test_malformed_setting_does_not_abort_the_pass(cron_instance):
+    """One row that explodes while being scheduled must not starve the rows after it.
+
+    The exception used to escape __watch_settings, so every setting after the bad one
+    went unprocessed — on that pass and on every pass thereafter.
+    """
+    settings = [_setting("bad"), _setting("good_1"), _setting("good_2")]
+    processed = []
+
+    def actualize(**kwargs):
+        if kwargs["job_id"] == "bad":
+            raise ValueError("not enough values to unpack (expected 5)")
+        processed.append(kwargs["job_id"])
+
+    with (
+        patch.object(cron_instance, '_Cron__valid_setting', side_effect=lambda s: {"schedule": "0 1 * * *"}),
+        patch.object(cron_instance, '_Cron__actualize_cron_job', side_effect=actualize),
+        patch('codemie.triggers.bindings.cron.logger'),
+    ):
+        cron_instance._Cron__actualize_jobs(settings=settings)
+
+    assert processed == ["good_1", "good_2"]
+
+
+def test_remove_job_tolerates_missing_job(cron_instance):
+    """A job the scheduler no longer knows about must not kill the watcher pass."""
+    from apscheduler.jobstores.base import JobLookupError
+
+    cron_instance.scheduler = MagicMock()
+    cron_instance.scheduler.remove_job.side_effect = JobLookupError("gone")
+    cron_instance.jobs = {"orphan": MagicMock()}
+
+    with patch('codemie.triggers.bindings.cron.logger'):
+        cron_instance.remove_jobs_for_deleted_settings([])  # no settings -> remove everything
+
+    assert cron_instance.jobs == {}
+
+
+def test_jobs_fire_at_the_requested_time_without_jitter(cron_instance):
+    """Bursts are absorbed by the executor queue, never by moving the fire time.
+
+    CronTrigger.jitter picks the next slot *after* the previous jittered run, so a jitter
+    window wider than the schedule period silently drops runs: at 3h an hourly datasource
+    fires 82 times a week instead of 168. Concurrency is controlled by
+    CRON_SCHEDULER_MAX_WORKERS; spreading fire times does not help throughput.
+    """
+    trigger = cron_instance._Cron__create_cron_trigger("0 * * * *", timezone="UTC")
+
+    assert trigger.jitter is None
+
+
+def test_datasource_and_assistant_triggers_are_built_alike(cron_instance):
+    """No resource type gets its fire time rewritten."""
+    cron_instance.scheduler = MagicMock()
+    captured = {}
+
+    def fake_trigger(cron_expression, timezone=None):
+        captured[cron_expression] = timezone
+        return MagicMock()
+
+    with (
+        patch.object(cron_instance, '_Cron__create_cron_trigger', side_effect=fake_trigger),
+        patch.object(cron_instance, '_Cron__schedule_job_by_type', return_value=None),
+    ):
+        cron_instance._Cron__actualize_cron_job(
+            cron_expression="0 0 * * *",
+            resource_id="r1",
+            resource_type="datasource",
+            job_id="j1",
+            is_enabled=True,
+            user_id="u1",
+        )
+        cron_instance._Cron__actualize_cron_job(
+            cron_expression="0 9 * * *",
+            resource_id="r2",
+            resource_type="assistant",
+            job_id="j2",
+            is_enabled=True,
+            user_id="u1",
+        )
+
+    assert set(captured) == {"0 0 * * *", "0 9 * * *"}
+
+
+@pytest.mark.asyncio
+async def test_scheduler_configured_with_misfire_grace(cron_instance):
+    """Late jobs must run late rather than be discarded.
+
+    misfire_grace_time=None tells APScheduler never to discard a queued job — it runs
+    late instead of being silently dropped. A separate datasource executor is not needed:
+    all jobs share 'default', sized by CRON_SCHEDULER_MAX_WORKERS.
+    """
+    with (
+        patch('codemie.triggers.bindings.cron.AsyncIOScheduler') as mock_scheduler,
+        patch('codemie.triggers.bindings.cron.logger'),
+    ):
+        await cron_instance.start_async()
+
+    _, kwargs = mock_scheduler.call_args
+    assert kwargs["job_defaults"]["misfire_grace_time"] is None
+    assert kwargs["job_defaults"]["coalesce"] is True
+    assert kwargs["job_defaults"]["max_instances"] == 1
+    assert "datasource" not in kwargs["executors"]
+
+
+@pytest.mark.asyncio
+async def test_missed_and_failed_runs_are_logged(cron_instance):
+    """A dropped run must leave a trace — it used to be indistinguishable from success."""
+    from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_MAX_INSTANCES, EVENT_JOB_MISSED
+
+    with (
+        patch('codemie.triggers.bindings.cron.AsyncIOScheduler'),
+        patch('codemie.triggers.bindings.cron.logger') as mock_logger,
+    ):
+        await cron_instance.start_async()
+        listener = cron_instance.scheduler.add_listener.call_args[0][0]
+
+        listener(MagicMock(code=EVENT_JOB_MISSED, job_id="j1", scheduled_run_time="00:00"))
+        assert "MISSED" in mock_logger.warning.call_args[0][0]
+
+        listener(MagicMock(code=EVENT_JOB_MAX_INSTANCES, job_id="j2"))
+        assert "SKIPPED" in mock_logger.warning.call_args[0][0]
+
+        listener(MagicMock(code=EVENT_JOB_ERROR, job_id="j3", scheduled_run_time="00:00", exception=ValueError("x")))
+        assert "FAILED" in mock_logger.error.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_start_async_returns_while_scheduler_is_running(cron_instance):
+    """start_async() must return while the APScheduler is still running.
+
+    NodeController.start() holds the advisory lock by polling
+    cron_instance.scheduler.running after start_async() returns. If start_async()
+    blocked indefinitely the holding loop would never run; if it shut the scheduler
+    down before returning the hold would be useless. This is the regression guard
+    that would have caught the bug where NodeController tore down the scheduler
+    immediately after starting it.
+    """
+    with patch('codemie.triggers.bindings.cron.AsyncIOScheduler') as mock_aps:
+        mock_scheduler = MagicMock()
+        mock_scheduler.running = True
+        mock_aps.return_value = mock_scheduler
+        with patch('codemie.triggers.bindings.cron.logger'):
+            await cron_instance.start_async()
+
+    assert cron_instance.scheduler is mock_scheduler, "scheduler must be set after start_async"
+    assert cron_instance.scheduler.running is True, "scheduler must still be running when start_async returns"
+
+
 # --- day_of_week translation (EPMCDME-13782) -------------------------------------------
 # APScheduler numbers weekdays 0=Monday, standard crontab numbers them 0=Sunday. These
 # tests use a real CronTrigger and assert on the weekday actually fired, since a mocked

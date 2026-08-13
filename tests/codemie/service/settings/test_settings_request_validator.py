@@ -41,7 +41,6 @@ def _make_datasource(index_type: str, ds_id: str = "ds-123") -> Mock:
     "index_type",
     [
         "knowledge_base_file",
-        "knowledge_base_sharepoint",
     ],
 )
 def test_validate_datasource_type_for_scheduler_rejects_unsupported(index_type):
@@ -68,6 +67,9 @@ def test_validate_datasource_type_for_scheduler_rejects_unsupported(index_type):
         "knowledge_base_azure_devops_wiki",
         "knowledge_base_azure_devops_work_item",
         "llm_routing_google",
+        # The trigger engine dispatches SharePoint reindexes and the datasource page has
+        # always allowed scheduling them; only this validator used to reject them.
+        "knowledge_base_sharepoint",
     ],
 )
 def test_validate_datasource_type_for_scheduler_accepts_supported(index_type):
@@ -84,12 +86,16 @@ def test_unsupported_scheduler_datasource_types_is_frozenset():
     "index_type",
     [
         "knowledge_base_file",
-        "knowledge_base_sharepoint",
     ],
 )
 def test_unsupported_scheduler_datasource_types_contains(index_type):
     """Each unsupported type must be present in the constant."""
     assert index_type in UNSUPPORTED_SCHEDULER_DATASOURCE_TYPES
+
+
+def test_sharepoint_is_schedulable():
+    """SharePoint must stay schedulable: the engine supports it and users depend on it."""
+    assert "knowledge_base_sharepoint" not in UNSUPPORTED_SCHEDULER_DATASOURCE_TYPES
 
 
 def _make_request_with_timezone(tz_value):
@@ -121,3 +127,58 @@ def test_validate_timezone_value_invalid(tz):
     with pytest.raises(ExtendedHTTPException) as exc_info:
         validate_timezone_value(_make_request_with_timezone(tz))
     assert exc_info.value.code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+
+# ---------------------------------------------------------------------------
+# EPMCDME-13171 — a scheduler setting must never be stored without is_enabled
+# ---------------------------------------------------------------------------
+
+
+def _scheduler_request(creds):
+    from codemie_tools.base.models import CredentialTypes
+
+    return SettingRequest(
+        project_name="proj",
+        alias="my-schedule",
+        credential_type=CredentialTypes.SCHEDULER,
+        credential_values=creds,
+    )
+
+
+def test_normalize_is_enabled_defaults_missing_flag_to_true():
+    """A request omitting the flag used to be accepted and then never run."""
+    from codemie.rest_api.models.settings import CredentialValues
+    from codemie.service.settings.settings_request_validator import normalize_is_enabled
+
+    request = _scheduler_request(
+        [
+            CredentialValues(key="resource_type", value="datasource"),
+            CredentialValues(key="resource_id", value="ds-1"),
+            CredentialValues(key="schedule", value="0 2 * * *"),
+        ]
+    )
+
+    normalize_is_enabled(request)
+
+    assert {c.key: c.value for c in request.credential_values}["is_enabled"] is True
+
+
+def test_normalize_is_enabled_preserves_explicit_false():
+    """Deliberately disabling a schedule must keep working."""
+    from codemie.rest_api.models.settings import CredentialValues
+    from codemie.service.settings.settings_request_validator import normalize_is_enabled
+
+    request = _scheduler_request(
+        [
+            CredentialValues(key="resource_type", value="datasource"),
+            CredentialValues(key="resource_id", value="ds-1"),
+            CredentialValues(key="schedule", value="0 2 * * *"),
+            CredentialValues(key="is_enabled", value=False),
+        ]
+    )
+
+    normalize_is_enabled(request)
+
+    values = [c for c in request.credential_values if c.key == "is_enabled"]
+    assert len(values) == 1
+    assert values[0].value is False

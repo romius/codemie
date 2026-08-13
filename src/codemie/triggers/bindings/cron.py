@@ -22,8 +22,10 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Dict, Optional
 from croniter import croniter
+from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_MAX_INSTANCES, EVENT_JOB_MISSED
 from apscheduler.executors.asyncio import AsyncIOExecutor
 from apscheduler.executors.pool import ThreadPoolExecutor as APSThreadPoolExecutor
+from apscheduler.jobstores.base import JobLookupError
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -118,13 +120,60 @@ class Cron:
             executors={
                 "default": APSThreadPoolExecutor(max_workers=config.CRON_SCHEDULER_MAX_WORKERS),
                 "asyncio": AsyncIOExecutor(),
-            }
+            },
+            job_defaults={
+                # APScheduler defaults misfire_grace_time to 1 second and evaluates it in
+                # the worker thread when the job is picked up, so every job that waited for
+                # a free thread was discarded instead of run late. None means never discard —
+                # run late rather than skip.
+                "misfire_grace_time": None,
+                # Collapse a backlog into a single run rather than firing repeatedly, and
+                # never run two instances of the same reindex concurrently.
+                "coalesce": True,
+                "max_instances": 1,
+            },
+        )
+        self.scheduler.add_listener(
+            self.__on_job_event,
+            EVENT_JOB_MISSED | EVENT_JOB_ERROR | EVENT_JOB_MAX_INSTANCES,
         )
         self.scheduler.start()
         logger.info("Trigger Engine Cron binding started on %s", platform.uname().node)
         self.scheduler.add_job(self.__watch_settings, "interval", seconds=10, executor="asyncio")
         if config.STALE_INDEXING_WATCHDOG_ENABLED:
             self.scheduler.add_job(self.__watch_stale_indexing, "interval", seconds=60)
+
+    @staticmethod
+    def __on_job_event(event):
+        """Report scheduled runs that did not happen.
+
+        Without this, a run dropped because the pool was busy looked exactly like the
+        feature being broken: nothing was written to the datasource record, the UI, or any
+        metric. Successful runs are deliberately not logged — they are the overwhelming
+        majority and the actors already log them.
+        """
+        if event.code == EVENT_JOB_MISSED:
+            logger.warning(
+                "Scheduled job MISSED - dropped without running: job_id=%s scheduled_for=%s",
+                event.job_id,
+                event.scheduled_run_time,
+            )
+        elif event.code == EVENT_JOB_MAX_INSTANCES:
+            logger.warning(
+                "Scheduled job SKIPPED - previous run still in progress: job_id=%s",
+                event.job_id,
+            )
+        elif event.code == EVENT_JOB_ERROR:
+            # Deliberately no exc_info: LogFormatter replaces the message with the
+            # traceback whenever it is set (configs/logger.py), which would hide the
+            # job id — and this line exists to make the job id visible. The exception
+            # text is interpolated instead; the actor logs its own traceback.
+            logger.error(
+                "Scheduled job FAILED: job_id=%s scheduled_for=%s error=%r",
+                event.job_id,
+                event.scheduled_run_time,
+                event.exception,
+            )
 
     def shutdown(self):
         """Shutdown the trigger engine and cleanup resources"""
@@ -243,37 +292,42 @@ class Cron:
         for job_id in list(self.jobs.keys()):
             if job_id not in setting_ids:
                 logger.info("Removed scheduled job since no settings found: %s", job_id)
-                self.scheduler.remove_job(job_id)
+                self.__remove_job_safely(job_id)
                 del self.jobs[job_id]
 
     def __actualize_jobs(self, settings):
         """Actualize triggers"""
         for setting in settings:
+            # Scheduling must be inside the guard as well as validation: an exception from
+            # __actualize_cron_job used to escape __watch_settings and kill the whole pass,
+            # leaving every setting after this one unprocessed on every subsequent tick.
             try:
                 valid_setting = self.__valid_setting(setting)
+                if valid_setting:
+                    self.__actualize_cron_job(
+                        cron_expression=valid_setting.get("schedule"),
+                        resource_id=valid_setting.get("resource_id"),
+                        is_enabled=valid_setting.get("is_enabled"),
+                        resource_type=valid_setting.get("resource_type"),
+                        job_id=setting.id,
+                        user_id=setting.user_id,
+                        resource_name=valid_setting.get("resource_name"),
+                        project_name=valid_setting.get("project_name"),
+                        index_type=valid_setting.get("index_type"),
+                        jql=valid_setting.get("jql"),
+                        prompt=valid_setting.get("prompt"),
+                        timezone=valid_setting.get("timezone"),
+                    )
             except Exception as exc:
+                # No exc_info here either: with it set, LogFormatter swaps the message
+                # for the traceback and the setting id — the one thing needed to find
+                # the offending row — never reaches the log.
                 logger.error(
-                    "Unexpected error validating setting id=%s, skipping: %s",
+                    "Unexpected error processing setting id=%s, skipping: %r",
                     setting.id,
                     exc,
-                    exc_info=True,
                 )
                 continue
-            if valid_setting:
-                self.__actualize_cron_job(
-                    cron_expression=valid_setting.get("schedule"),
-                    resource_id=valid_setting.get("resource_id"),
-                    is_enabled=valid_setting.get("is_enabled"),
-                    resource_type=valid_setting.get("resource_type"),
-                    job_id=setting.id,
-                    user_id=setting.user_id,
-                    resource_name=valid_setting.get("resource_name"),
-                    project_name=valid_setting.get("project_name"),
-                    index_type=valid_setting.get("index_type"),
-                    jql=valid_setting.get("jql"),
-                    prompt=valid_setting.get("prompt"),
-                    timezone=valid_setting.get("timezone"),
-                )
 
     def __updated_setting(self, setting):
         """Check if setting has been updated"""
@@ -347,6 +401,11 @@ class Cron:
             return False
 
         is_enabled = self.__get_cred_value(setting, "is_enabled")
+        if is_enabled is None:
+            # An absent key is not the same as an explicit `false`. Scheduler settings
+            # created through the Integration page may omit it entirely, and treating
+            # those as disabled left them permanently inert with no feedback.
+            is_enabled = True
         resource_type = self.__get_cred_value(setting, "resource_type")
 
         schedule = self.__get_cred_value(setting, "schedule")
@@ -419,9 +478,20 @@ class Cron:
     def __remove_disabled_job(self, job_id):
         """Remove disabled job from scheduler"""
         if job_id in self.jobs:
-            self.scheduler.remove_job(job_id)
+            self.__remove_job_safely(job_id)
             del self.jobs[job_id]
             logger.info("Removed job: %s", job_id)
+
+    def __remove_job_safely(self, job_id):
+        """Remove a job, tolerating one that the scheduler no longer knows about.
+
+        An unguarded remove_job raises JobLookupError, which would propagate out of the
+        watcher pass and stop every remaining setting from being processed.
+        """
+        try:
+            self.scheduler.remove_job(job_id)
+        except JobLookupError:
+            logger.debug("Job %s was already removed from the scheduler", job_id)
 
     @staticmethod
     def __weekday_number(value: str) -> Optional[int]:
@@ -497,7 +567,13 @@ class Cron:
 
     @staticmethod
     def __create_cron_trigger(cron_expression, timezone: Optional[str] = None):
-        """Create cron trigger from expression"""
+        """Create cron trigger from expression
+
+        Jobs fire at exactly the time the user asked for. Bursts of schedules sharing one
+        expression are absorbed by the executor queue, not by spreading the fire times:
+        CronTrigger's jitter picks the next slot after the previous jittered run, so a
+        window wider than the schedule period silently skips runs.
+        """
         minute, hour, day_of_month, month, day_of_week = cron_expression.split()
         day_of_week = Cron.__normalize_day_of_week(day_of_week)
         return CronTrigger(

@@ -145,6 +145,33 @@ class PostgresClient:
             engine.dispose()
 
     @classmethod
+    def create_dedicated_engine(cls, pool_size: int):
+        """
+        Create an isolated engine with its own connection pool.
+
+        For callers that keep a connection checked out for the whole duration of a long
+        running task — a session-level advisory lock held across a datasource reindex,
+        for example. Such a caller must not draw from the shared application pool: it
+        would pin connections for minutes and starve ordinary queries.
+
+        The pool is capped (`max_overflow=0`) so this engine can never grow past the
+        concurrency it was sized for.
+        """
+        engine = create_engine(
+            url=cls._get_connection_string(),
+            echo=False,
+            pool_pre_ping=True,
+            pool_size=pool_size,
+            max_overflow=0,
+            json_serializer=lambda v: json.dumps(v, default=pydantic_encoder),
+            connect_args={"options": f"-c search_path={config.DEFAULT_DB_SCHEMA},public"},
+        )
+        if config.PG_IAM_AUTH_PROVIDER:
+            _register_iam_token_event(engine)
+        atexit.register(engine.dispose)
+        return engine
+
+    @classmethod
     def get_async_engine(cls):
         """
         Get or create async engine for the current process.

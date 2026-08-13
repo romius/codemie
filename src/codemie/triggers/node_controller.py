@@ -1,4 +1,4 @@
-# Copyright 2026 EPAM Systems, Inc. (“EPAM”)
+# Copyright 2026 EPAM Systems, Inc. ("EPAM")
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,114 +14,88 @@
 
 """Module for triggers core service"""
 
-import platform
 import asyncio
-from elasticsearch.exceptions import NotFoundError, ConflictError, ApiError
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+import platform
 
 from codemie.configs import logger
-from codemie.triggers.state import TransactionElasticSupport
 from codemie.triggers.bindings.cron import Cron
+from codemie.utils.leader_lock import async_leader_lock_context
 
-
-class State(TransactionElasticSupport):
-    _index: str = "trigger_engine_node"
-    id: str = platform.uname().node
-    is_active: bool = False
-
-    def active_node(self):
-        """Active node lock"""
-        previous_state = self.is_active
-        self.__invalidate_lock_by_timeout()
-
-        try:
-            if self.elastic_client.count(index=self._index)["count"] == 0:
-                if not previous_state:
-                    logger.debug(
-                        "Trigger controller node lock does not exist, creating lock for %s",
-                        self.id,
-                    )
-                self.save()
-                self.is_active = True
-            elif self.get_by_id(self.id):
-                if not previous_state:
-                    logger.debug("Trigger controller node lock acquired, active node: %s", self.id)
-                self.update()
-                self.is_active = True
-        except NotFoundError:
-            if previous_state:
-                logger.warning("Trigger controller node lock lost, switched %s to inactive", self.id)
-            self.is_active = False
-
-    def __invalidate_lock_by_timeout(self):
-        """Invalidate node by timeout"""
-        try:
-            self.elastic_client.delete_by_query(
-                index=self._index,
-                body={"query": {"range": {"update_date": {"lt": "now-30s"}}}},
-            )
-        except ConflictError as e:
-            logger.warning("ConflictError while invalidating lock by timeout: %s", e)
-        except ApiError as e:
-            logger.warning("ApiError while invalidating lock by timeout: %s", e)
-
-    def enable_trigger_active_node_index(self):
-        """Create trigger active node index if not exists"""
-        if self.elastic_client.indices.exists(index=self._index):
-            logger.info("Trigger active node index exists, skipping creation. Node: %s", self.id)
-        else:
-            logger.info("Creating trigger active node index. Node: %s", self.id)
-            self.elastic_client.indices.create(index=self._index)
+# Unique advisory lock ID for the trigger engine leader election.
+# Must not collide with other pg_advisory_lock IDs in the codebase.
+TRIGGER_ENGINE_LOCK_ID = 1_357_924_680
 
 
 class NodeController:
-    """Trigger engine active node controller"""
+    """Trigger engine active node controller.
 
-    start_delay = 10
+    Uses a PostgreSQL session-level advisory lock for leader election. Only the
+    pod that holds the lock runs the Cron binding. When that pod dies the TCP
+    connection closes and PostgreSQL automatically releases the lock, so a standby
+    pod acquires it within RETRY_INTERVAL_SECONDS seconds — no heartbeat renewal
+    or stale-document cleanup required.
+
+    The leader does verify that its lock connection is still alive on each tick. That
+    is the one guarantee an advisory lock does not give for free: a connection killed
+    while idle releases the lock server-side without the holder noticing.
+    """
+
+    RETRY_INTERVAL_SECONDS = 10
 
     def __init__(self):
-        """Initialize NodeController"""
-        self.state = State()
-        self.engine_task = None
         self.cron_instance = Cron()
-        self.scheduler = None
-        self.node_watcher = None
-        self.tg = None
 
     async def start(self):
-        """Start the trigger engine"""
-        self.state.enable_trigger_active_node_index()
-        self.scheduler = AsyncIOScheduler()
-        self.scheduler.start()
-        self.node_watcher = self.scheduler.add_job(self.state.active_node, "interval", seconds=self.start_delay)
-
-        await asyncio.sleep(self.start_delay)
-
-        async with asyncio.TaskGroup() as tg:
-            self.tg = tg
-            await self.__engine_watchdog()
-
-    async def __engine_watchdog(self):
-        """Start the trigger engine"""
-        logger.info("Trigger Engine Node Controller Watchdog started on node: %s", self.state.id)
+        """Compete for the advisory lock and run the trigger engine while holding it."""
+        node = platform.uname().node
         while True:
-            if self.state.is_active and not self.engine_task:
-                # Reuse the same Cron instance instead of creating a new one
-                self.engine_task = self.tg.create_task(self.cron_instance.start_async())
-                logger.info("Trigger Engine started on node: %s", self.state.id)
-            elif not self.state.is_active and self.engine_task:
-                # Properly shutdown the Cron instance before cancelling the task
-                try:
-                    self.cron_instance.shutdown()
-                    logger.info("Trigger Engine shutdown completed on node: %s", self.state.id)
-                except Exception as e:
-                    logger.error("Error during Cron shutdown on node %s: %s", self.state.id, e, exc_info=True)
-                finally:
-                    self.engine_task.cancel()
-                    try:
-                        await self.engine_task
-                    except asyncio.CancelledError:
-                        logger.debug("Engine task cancelled successfully")
-                    self.engine_task = None
-                    logger.info("Trigger Engine stopped on node: %s", self.state.id)
-            await asyncio.sleep(3)
+            async with async_leader_lock_context(TRIGGER_ENGINE_LOCK_ID) as lock:
+                if lock.acquired:
+                    await self._lead(lock, node)
+                else:
+                    logger.debug(
+                        "Trigger engine lock held by another node, retrying in %ss",
+                        self.RETRY_INTERVAL_SECONDS,
+                    )
+            await asyncio.sleep(self.RETRY_INTERVAL_SECONDS)
+
+    async def _lead(self, lock, node: str) -> None:
+        """Run the engine for as long as this node holds the lock, then shut it down.
+
+        The shutdown belongs here rather than at the call site: the lock is released when
+        the caller's context manager exits, so the scheduler has to be stopped first or a
+        standby could start a second engine while this one is still running.
+        """
+        logger.info("Trigger engine leader lock acquired on node: %s", node)
+        try:
+            await self.cron_instance.start_async()
+            await self._hold_while_running(lock, node)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error("Trigger engine crashed on node %s: %r", node, exc)
+        finally:
+            self.cron_instance.shutdown()
+
+    async def _hold_while_running(self, lock, node: str) -> None:
+        """Park for the scheduler's lifetime, stepping down if the lock is lost.
+
+        start_async() starts APScheduler and returns immediately; the scheduler then runs
+        in the background. Without this loop the caller's finally block tears the scheduler
+        down microseconds after it starts. Returning releases the lock, so a standby pod
+        can take over whenever the scheduler stops.
+        """
+        while self.cron_instance.scheduler and self.cron_instance.scheduler.running:
+            await asyncio.sleep(self.RETRY_INTERVAL_SECONDS)
+
+            # scheduler.running is a local flag: it stays true even after PostgreSQL has
+            # dropped our lock along with a connection that was killed while sitting idle
+            # (failover, pgbouncer or load balancer idle reaping). Without this probe a
+            # standby would take the lock and start a second engine while this one kept
+            # running, and nothing would end that state short of a pod restart.
+            if not await asyncio.to_thread(lock.is_alive):
+                logger.warning(
+                    "Trigger engine lock lost on node %s - stepping down so a standby can take over",
+                    node,
+                )
+                return

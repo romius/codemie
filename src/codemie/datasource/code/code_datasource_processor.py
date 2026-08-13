@@ -193,10 +193,12 @@ def index_code_datasource_in_background(
             request_uuid=request_uuid,
             guardrail_assignments=guardrail_assignments,
         )
-        datasource_processor.process()
-
-        # Create scheduler if cron_expression was provided
-        datasource_processor._create_or_update_scheduler(cron_expression, timezone=timezone)
+        try:
+            datasource_processor.process()
+        finally:
+            # The schedule is user configuration: it must be stored even when the
+            # indexing run that accompanied it fails.
+            datasource_processor._create_or_update_scheduler(cron_expression, timezone=timezone)
 
     run_in_background(process, git_repo.name, background_tasks)
 
@@ -222,12 +224,13 @@ def update_code_datasource_in_background(
             request_uuid=request_uuid,
             guardrail_assignments=guardrail_assignments,
         )
-        if resume_indexing:
-            datasource_processor.resume()
-        else:
-            datasource_processor.reprocess()
-
-        # Update scheduler if cron_expression was provided in the update request
-        datasource_processor._create_or_update_scheduler(cron_expression, timezone=timezone)
+        try:
+            if resume_indexing:
+                datasource_processor.resume()
+            else:
+                datasource_processor.reprocess()
+        finally:
+            # Update the schedule even when the reindex fails — see above.
+            datasource_processor._create_or_update_scheduler(cron_expression, timezone=timezone)
 
     run_in_background(process, git_repo.name, background_tasks)

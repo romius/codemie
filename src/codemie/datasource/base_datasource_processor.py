@@ -148,12 +148,13 @@ class BaseDatasourceProcessor(ABC):
         This method performs the following steps:
         1. Calls the `_on_process_start` method to perform any required initialization.
         2. Appends a `DatasourceMonitoringCallback` to the `callbacks` list.
-        3. Starts fetching data for the given index.
-        4. Initializes the loader by calling the `_init_loader` method.
-        5. Processes the data by calling the `_process` method.
-        6. Completes the progress by calling the `complete_progress` method on the index.
-        7. Calls the `on_complete` method on each callback with the result of the `_process` method.
-        8. Calls the `_on_process_end` method to perform any required cleanup.
+        3. Persists the cron schedule, if one was provided, before any work that can fail.
+        4. Starts fetching data for the given index.
+        5. Initializes the loader by calling the `_init_loader` method.
+        6. Processes the data by calling the `_process` method.
+        7. Completes the progress by calling the `complete_progress` method on the index.
+        8. Calls the `on_complete` method on each callback with the result of the `_process` method.
+        9. Calls the `_on_process_end` method to perform any required cleanup.
 
         If an `IndexDeletedException` occurs, it logs the error, calls the `on_error` method on each callback,
         and stops the process.
@@ -182,6 +183,12 @@ class BaseDatasourceProcessor(ABC):
                 if not self._pre_scheduled:
                     self._init_index()
                 self._setup_processing_context()
+
+                # The schedule is user configuration, not a result of indexing. Persist it
+                # here, before anything can fail, so a failed run cannot silently discard it
+                # while the API has already returned success to the user.
+                self._create_or_update_scheduler()
+
                 self.index.start_fetching(is_incremental=self.is_incremental_reindex)
                 self.loader = self._init_loader()
                 self._on_process_start()
@@ -216,9 +223,6 @@ class BaseDatasourceProcessor(ABC):
                 self._validate_indexing_result()
                 self.index.last_reindex_triggered_at = datetime.now()
                 self.index.complete_progress(self.index.current_state)
-
-                # Create scheduler if cron_expression was provided
-                self._create_or_update_scheduler()
 
                 self._notify_callbacks_on_complete(result)
             except IndexDeletedException as ex:
@@ -333,9 +337,9 @@ class BaseDatasourceProcessor(ABC):
         """
         Create, update, or delete scheduler setting for automatic datasource reindexing.
 
-        This method is called after successful datasource processing to set up
-        automatic reindexing on a schedule defined by the cron expression.
-        If cron_expression is empty, deletes existing schedule.
+        This method is called before indexing starts (and from a `finally` block in the
+        callers that drive processing themselves), so that the schedule survives a failed
+        indexing run. If cron_expression is empty, deletes existing schedule.
 
         Args:
             cron_expression: Optional cron expression. If not provided, uses self.cron_expression.

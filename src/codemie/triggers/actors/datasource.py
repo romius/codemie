@@ -44,6 +44,7 @@ from codemie.datasource.sharepoint.sharepoint_datasource_processor import (
 from codemie.rest_api.models.settings import SharePointCredentials
 from codemie.datasource.xray.xray_datasource_processor import XrayDatasourceProcessor
 from codemie.service.settings.settings import SettingsService
+from codemie.triggers.job_lock import with_datasource_job_lock
 from codemie.triggers.trigger_models import (
     AzureDevOpsWikiReindexTask,
     AzureDevOpsWorkItemReindexTask,
@@ -65,6 +66,7 @@ REINDEX_SUCCESS_MSG = (
 )
 
 
+@with_datasource_job_lock
 def reindex_code(payload: CodeReindexTask):
     """
     Initiates the reindexing process for a code datasource.
@@ -116,6 +118,7 @@ def reindex_code(payload: CodeReindexTask):
     )
 
 
+@with_datasource_job_lock
 def reindex_svn(payload: SVNReindexTask):
     """
     Initiates the reindexing process for an SVN datasource.
@@ -164,6 +167,7 @@ def reindex_svn(payload: SVNReindexTask):
     )
 
 
+@with_datasource_job_lock
 def reindex_jira(payload: JiraReindexTask):
     """
     Initiates the reindexing process for a Jira datasource.
@@ -223,6 +227,7 @@ def reindex_jira(payload: JiraReindexTask):
     )
 
 
+@with_datasource_job_lock
 def reindex_confluence(payload: ConfluenceReindexTask):
     """
     Initiates the reindexing process for a Confluence datasource.
@@ -300,6 +305,7 @@ def reindex_confluence(payload: ConfluenceReindexTask):
     )
 
 
+@with_datasource_job_lock
 def reindex_google(payload: GoogleReindexTask):
     """
     Initiates the reindexing process for a Google Docs datasource.
@@ -357,6 +363,7 @@ def reindex_google(payload: GoogleReindexTask):
     )
 
 
+@with_datasource_job_lock
 def reindex_azure_devops_wiki(payload: AzureDevOpsWikiReindexTask):
     """
     Initiates the reindexing process for an Azure DevOps Wiki datasource.
@@ -433,6 +440,7 @@ def reindex_azure_devops_wiki(payload: AzureDevOpsWikiReindexTask):
     )
 
 
+@with_datasource_job_lock
 def reindex_azure_devops_work_item(payload: AzureDevOpsWorkItemReindexTask):
     """
     Initiates the reindexing process for an Azure DevOps Work Items datasource.
@@ -506,6 +514,7 @@ def reindex_azure_devops_work_item(payload: AzureDevOpsWorkItemReindexTask):
     )
 
 
+@with_datasource_job_lock
 def reindex_xray(payload: XrayReindexTask):
     """Initiates the reindexing process for an Xray datasource."""
     IndexInfo.stamp_reindex_triggered_at(payload.index_info.id)
@@ -559,6 +568,7 @@ def reindex_xray(payload: XrayReindexTask):
     )
 
 
+@with_datasource_job_lock
 def reindex_sharepoint(payload: SharePointReindexTask):
     """Initiates the reindexing process for a SharePoint datasource."""
     IndexInfo.stamp_reindex_triggered_at(payload.index_info.id)
@@ -921,6 +931,7 @@ _RESUME_DISPATCH: dict = {
 }
 
 
+@with_datasource_job_lock
 def resume_stale_datasource(index_info: IndexInfo) -> None:
     """Resume a stuck in-progress datasource index job detected by the watchdog."""
 

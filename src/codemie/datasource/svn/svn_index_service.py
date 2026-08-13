@@ -85,10 +85,13 @@ class SVNIndexService:
                 request_uuid=request_uuid,
                 guardrail_assignments=guardrail_assignments,
             )
-            if resume_indexing:
-                processor.resume()
-            else:
-                processor.reprocess()
-            processor._create_or_update_scheduler(cron_expression, timezone=timezone)
+            try:
+                if resume_indexing:
+                    processor.resume()
+                else:
+                    processor.reprocess()
+            finally:
+                # The schedule is user configuration: store it even when the reindex fails.
+                processor._create_or_update_scheduler(cron_expression, timezone=timezone)
 
         run_in_background(process, svn_repo.name, background_tasks)
