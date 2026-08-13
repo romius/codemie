@@ -459,7 +459,13 @@ litellm_settings:
   vertex_project: os.environ/VERTEX_PROJECT
   vertex_location: "us-central1"
   include_cost_in_streaming_usage: true
-  callbacks: ["litellm_custom_callbacks.proxy_handler_instance"]
+  # Process-local bounded response cache. Cache entries are not shared between
+  # proxy replicas; CodeMie excludes whole-response cache hits from token/cost usage.
+  cache: true
+  cache_params:
+    type: local
+    ttl: 800
+    max_size: 200
 
 general_settings:
   proxy_batch_write_at: 60

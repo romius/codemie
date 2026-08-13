@@ -116,27 +116,17 @@ def test_on_llm_end_error_handling(mock_logger_error, callback):
 
 
 def test_on_llm_end_with_empty_generations(callback):
-    """Test on_llm_end with empty generations"""
+    """Test on_llm_end with empty generations skips update (no tokens to track)."""
     empty_result = LLMResult(generations=[])
 
     with (
-        patch('codemie.agents.callbacks.tokens_callback.llm_service.get_model_cost') as mock_get_model_cost,
+        patch('codemie.agents.callbacks.tokens_callback.llm_service.get_model_cost'),
         patch('codemie.agents.callbacks.tokens_callback.request_summary_manager.update_llm_run') as mock_update_llm_run,
-        patch('codemie.agents.callbacks.tokens_callback.calculate_token_cost') as mock_calculate_token_cost,
+        patch('codemie.agents.callbacks.tokens_callback.calculate_token_cost'),
     ):
-        mock_get_model_cost.return_value = CostConfig(input=0.001, output=0.002)
-        mock_calculate_token_cost.return_value = (0.0, 0.0, 0.0)
-
         callback.on_llm_end(response=empty_result, run_id=UUID('12345678-1234-5678-1234-567812345678'))
 
-        # Verify that update_llm_run was called
-        mock_update_llm_run.assert_called_once()
-        call_args = mock_update_llm_run.call_args[1]
-        assert call_args['llm_run'].input_tokens == 0
-        assert call_args['llm_run'].output_tokens == 0
-        assert call_args['llm_run'].money_spent == 0.0
-        assert call_args['llm_run'].cached_tokens_money_spent == 0.0
-        assert call_args['llm_run'].cached_tokens_creation_cost == 0.0
+        mock_update_llm_run.assert_not_called()
 
 
 @patch('codemie.agents.callbacks.tokens_callback.llm_service.get_model_cost')
@@ -559,3 +549,49 @@ def test_on_llm_end_ignores_proxy_cost_when_gate_disabled(
     mock_calculate_token_cost.assert_called_once()
     call_args = mock_update_llm_run.call_args[1]
     assert call_args['llm_run'].money_spent == 0.01
+
+
+@patch('codemie.agents.callbacks.tokens_callback.logger.debug')
+@patch('codemie.agents.callbacks.tokens_callback.request_summary_manager.update_llm_run')
+def test_on_llm_end_skips_litellm_whole_response_cache_hit(mock_update_llm_run, mock_logger_debug, callback):
+    """LiteLLM whole-response cache hits must not create usage summaries."""
+    message = BaseMessage(
+        type="",
+        content="Cached response",
+        usage_metadata={"input_tokens": 10, "output_tokens": 20},
+        response_metadata={"cache_hit": True},
+    )
+    result = LLMResult(generations=[[ChatGeneration(text="Cached response", message=message)]])
+
+    callback.on_llm_end(response=result, run_id=UUID('12345678-1234-5678-1234-567812345678'))
+
+    mock_update_llm_run.assert_not_called()
+    mock_logger_debug.assert_any_call(
+        "Skipping LangGraph usage tracking for LiteLLM cache hit: "
+        "request_id=test_request_id model=gpt-4.1-mini estimated_spend_skipped=unknown"
+    )
+
+
+@patch('codemie.agents.callbacks.tokens_callback.logger.debug')
+@patch('codemie.agents.callbacks.tokens_callback.request_summary_manager.update_llm_run')
+def test_on_llm_end_skips_litellm_proxy_lru_cache_hit(mock_update_llm_run, mock_logger_debug, callback):
+    """LiteLLM proxy x-litellm-cache-hit header must suppress usage tracking."""
+    message = BaseMessage(
+        type="",
+        content="Cached response",
+        usage_metadata={"input_tokens": 10, "output_tokens": 20},
+    )
+    generation = ChatGeneration(
+        text="Cached response",
+        message=message,
+        generation_info={"headers": {"x-litellm-cache-key": "some-cache-key-hash"}},
+    )
+    result = LLMResult(generations=[[generation]])
+
+    callback.on_llm_end(response=result, run_id=UUID('12345678-1234-5678-1234-567812345678'))
+
+    mock_update_llm_run.assert_not_called()
+    mock_logger_debug.assert_any_call(
+        "Skipping LangGraph usage tracking for LiteLLM proxy cache hit (x-litellm-cache-key): "
+        "request_id=test_request_id model=gpt-4.1-mini"
+    )

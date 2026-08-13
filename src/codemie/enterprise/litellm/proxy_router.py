@@ -62,6 +62,7 @@ from codemie.core.constants import (
 )
 from codemie.core.dependecies import litellm_context
 from codemie.core.utils import calculate_token_cost
+from codemie.core.llm_cache import is_llm_cache_hit
 from codemie.rest_api.security.authentication import BEARER_AUTHORIZATION_HEADER, authenticate
 from codemie.rest_api.security.user import User
 from codemie.enterprise.litellm.dependencies import check_user_budget
@@ -95,6 +96,8 @@ from ..loader import inject_user_into_body, parse_usage_from_response
 
 
 LITELLM_CUSTOMER_ID_HEADER = "x-litellm-customer-id"
+CODEMIE_CACHE_HIT_HEADER = "x-codemie-litellm-cache-hit"
+LITELLM_CACHE_KEY_HEADER = "x-litellm-cache-key"
 UNKNOWN = "unknown"
 
 # HTTP headers that should NOT be forwarded between proxies (hop-by-hop headers)
@@ -883,7 +886,7 @@ async def _parse_usage_with_cost(
         cost_config = {}
 
     # Call pure enterprise business logic with codemie callback
-    return parse_usage_from_response(
+    usage_data = parse_usage_from_response(
         response_content=response_content,
         is_streaming=is_streaming,
         cost_config=cost_config,
@@ -891,6 +894,13 @@ async def _parse_usage_with_cost(
         llm_model=llm_model,
         response_headers=response_headers,
     )
+    response_headers = response_headers or {}
+    usage_data["cache_hit"] = is_llm_cache_hit(response_content) or bool(
+        response_headers.get(LITELLM_CACHE_KEY_HEADER)
+        or response_headers.get(CODEMIE_CACHE_HIT_HEADER, "").lower() == "true"
+        or response_headers.get("x-litellm-cache-hit", "").lower() == "true"
+    )
+    return usage_data
 
 
 def handle_agent_exception(exc: Exception) -> ErrorResponse:
@@ -1020,9 +1030,9 @@ async def _streaming_response_with_usage_tracking(
         content_type = downstream_response.headers.get("content-type", "")
         is_streaming = "text/event-stream" in content_type or "stream" in content_type
 
-        # Pass response headers only for non-streaming responses — the enterprise layer reads
-        # x-litellm-response-cost from them.  SSE streaming responses don't carry that header.
-        response_headers = None if is_streaming else dict(downstream_response.headers)
+        # Preserve internal upstream headers for cache-hit detection. The enterprise
+        # usage parser only reads x-litellm-response-cost for non-streaming responses.
+        response_headers = dict(downstream_response.headers)
 
         logger.debug(
             f"[USAGE-PARSE-START] session={session_id}, request={request_id}, "
@@ -1044,7 +1054,7 @@ async def _streaming_response_with_usage_tracking(
         )
 
         # Track usage if valid
-        if usage_data["input_tokens"] > 0 or usage_data["output_tokens"] > 0:
+        if not usage_data.get("cache_hit") and (usage_data["input_tokens"] > 0 or usage_data["output_tokens"] > 0):
             logger.debug(f"[USAGE-TRACK] session={session_id}, request={request_id}, queuing task")
             background_tasks.add_task(
                 LLMProxyMonitoringService.track_usage,
@@ -1059,6 +1069,12 @@ async def _streaming_response_with_usage_tracking(
                 money_spent=usage_data["money_spent"],
                 cached_tokens_money_spent=usage_data["cached_tokens_money_spent"],
                 status_code=downstream_response.status_code,
+            )
+        elif usage_data.get("cache_hit"):
+            logger.debug(
+                f"[USAGE-SKIP-CACHE-HIT] session={session_id}, request={request_id}, model={llm_model}, "
+                f"input={usage_data['input_tokens']}, output={usage_data['output_tokens']}, "
+                f"cached={usage_data['cached_tokens']}, cost=${usage_data['money_spent']:.6f}"
             )
         else:
             logger.debug(f"[USAGE-SKIP] session={session_id}, request={request_id}, no tokens")
@@ -1371,7 +1387,11 @@ async def _proxy_to_llm_proxy(
     response_headers = {
         k: v
         for k, v in downstream_response.headers.items()
-        if k.lower() not in PROXY_RESPONSE_HOP_BY_HOP_HEADERS and not k.lower().startswith("x-litellm-")
+        if (
+            k.lower() not in PROXY_RESPONSE_HOP_BY_HOP_HEADERS
+            and not k.lower().startswith("x-litellm-")
+            and k.lower() != CODEMIE_CACHE_HIT_HEADER
+        )
     }
 
     # Return streaming response with optional usage tracking

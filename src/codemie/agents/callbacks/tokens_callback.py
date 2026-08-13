@@ -23,6 +23,7 @@ from langchain_core.messages.ai import UsageMetadata
 from langchain_core.outputs import LLMResult
 
 from codemie.configs import config, logger
+from codemie.core.llm_cache import is_litellm_proxy_cache_hit, is_llm_cache_hit
 from codemie.core.utils import calculate_token_cost
 from codemie.service.request_summary_manager import request_summary_manager, LLMRun
 from codemie.service.llm_service.llm_service import llm_service
@@ -50,6 +51,31 @@ class TokensCalculationCallback(AsyncCallbackHandler):
                 return float(cost_str)
         return None
 
+    @staticmethod
+    def _iter_gen_results(response: LLMResult):
+        for gen in response.generations:
+            yield from gen
+
+    def _calculate_cost(
+        self,
+        proxy_cost: Optional[float],
+        input_tokens: int,
+        output_tokens: int,
+        cached_tokens: int,
+        cache_creation_tokens: int,
+    ) -> tuple[float, float, float]:
+        if proxy_cost is not None:
+            return proxy_cost, 0.0, 0.0
+        model_costs = llm_service.get_model_cost(self.llm_model)
+        return calculate_token_cost(
+            llm_model=self.llm_model,
+            cost_config=model_costs,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cached_tokens=cached_tokens,
+            cache_creation_tokens=cache_creation_tokens,
+        )
+
     def on_llm_end(
         self,
         response: LLMResult,
@@ -60,42 +86,45 @@ class TokensCalculationCallback(AsyncCallbackHandler):
     ) -> None:
         """Run when LLM ends running."""
         try:
+            if is_llm_cache_hit(response):
+                logger.debug(
+                    "Skipping LangGraph usage tracking for LiteLLM cache hit: "
+                    f"request_id={self.request_id} model={self.llm_model} estimated_spend_skipped=unknown"
+                )
+                return
             input_tokens = 0
             output_tokens = 0
             cached_tokens = 0
             cache_creation_tokens = 0
             proxy_cost: Optional[float] = None
-            for gen in response.generations:
-                for gen_result in gen:
-                    if gen_result.message and gen_result.message.usage_metadata:
-                        usage_metadata: UsageMetadata = gen_result.message.usage_metadata
-                        input_tokens += usage_metadata.get("input_tokens", 0)
-                        output_tokens += usage_metadata.get("output_tokens", 0)
-                        cached_tokens += usage_metadata.get("input_token_details", {}).get("cache_read", 0)
-                        cache_creation_tokens += usage_metadata.get("input_token_details", {}).get("cache_creation", 0)
-                        logger.debug(f"On LLM End. Usage metadata: {usage_metadata}")
-                    if (
-                        proxy_cost is None
-                        and gen_result.generation_info
-                        and config.LLM_PROXY_ENABLED
-                        and config.LLM_PROXY_TRACK_USAGE
-                    ):
-                        proxy_cost = self._extract_proxy_cost(gen_result.generation_info)
+            for gen_result in self._iter_gen_results(response):
+                if gen_result.generation_info and is_litellm_proxy_cache_hit(gen_result.generation_info):
+                    logger.debug(
+                        "Skipping LangGraph usage tracking for LiteLLM proxy cache hit (x-litellm-cache-key): "
+                        f"request_id={self.request_id} model={self.llm_model}"
+                    )
+                    continue
+                if gen_result.message and gen_result.message.usage_metadata:
+                    usage_metadata: UsageMetadata = gen_result.message.usage_metadata
+                    input_tokens += usage_metadata.get("input_tokens", 0)
+                    output_tokens += usage_metadata.get("output_tokens", 0)
+                    cached_tokens += usage_metadata.get("input_token_details", {}).get("cache_read", 0)
+                    cache_creation_tokens += usage_metadata.get("input_token_details", {}).get("cache_creation", 0)
+                    logger.debug(f"On LLM End. Usage metadata: {usage_metadata}")
+                if (
+                    proxy_cost is None
+                    and gen_result.generation_info
+                    and config.LLM_PROXY_ENABLED
+                    and config.LLM_PROXY_TRACK_USAGE
+                ):
+                    proxy_cost = self._extract_proxy_cost(gen_result.generation_info)
 
-            if proxy_cost is not None:
-                money_spent = proxy_cost
-                cached_tokens_money_spent = 0.0
-                cached_tokens_creation_cost = 0.0
-            else:
-                model_costs = llm_service.get_model_cost(self.llm_model)
-                money_spent, cached_tokens_money_spent, cached_tokens_creation_cost = calculate_token_cost(
-                    llm_model=self.llm_model,
-                    cost_config=model_costs,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                    cached_tokens=cached_tokens,
-                    cache_creation_tokens=cache_creation_tokens,
-                )
+            if not (input_tokens or output_tokens) and proxy_cost is None:
+                return
+
+            money_spent, cached_tokens_money_spent, cached_tokens_creation_cost = self._calculate_cost(
+                proxy_cost, input_tokens, output_tokens, cached_tokens, cache_creation_tokens
+            )
 
             llm_run = LLMRun(
                 run_id=str(run_id),
@@ -126,19 +155,30 @@ class TokensCalculationCallback(AsyncCallbackHandler):
             response: Optional[LLMResult] = kwargs.get("response")
             if response is None:
                 return
+            if is_llm_cache_hit(response):
+                logger.debug(
+                    "Skipping LangGraph error usage tracking for LiteLLM cache hit: "
+                    f"request_id={self.request_id} model={self.llm_model} estimated_spend_skipped=unknown"
+                )
+                return
 
             input_tokens = 0
             output_tokens = 0
             cached_tokens = 0
             cache_creation_tokens = 0
-            for gen in response.generations:
-                for gen_result in gen:
-                    if gen_result.message and gen_result.message.usage_metadata:
-                        usage_metadata: UsageMetadata = gen_result.message.usage_metadata
-                        input_tokens += usage_metadata.get("input_tokens", 0)
-                        output_tokens += usage_metadata.get("output_tokens", 0)
-                        cached_tokens += usage_metadata.get("input_token_details", {}).get("cache_read", 0)
-                        cache_creation_tokens += usage_metadata.get("input_token_details", {}).get("cache_creation", 0)
+            for gen_result in self._iter_gen_results(response):
+                if gen_result.generation_info and is_litellm_proxy_cache_hit(gen_result.generation_info):
+                    logger.debug(
+                        "Skipping LangGraph error usage tracking for LiteLLM proxy cache hit"
+                        f" (x-litellm-cache-key): request_id={self.request_id} model={self.llm_model}"
+                    )
+                    continue
+                if gen_result.message and gen_result.message.usage_metadata:
+                    usage_metadata: UsageMetadata = gen_result.message.usage_metadata
+                    input_tokens += usage_metadata.get("input_tokens", 0)
+                    output_tokens += usage_metadata.get("output_tokens", 0)
+                    cached_tokens += usage_metadata.get("input_token_details", {}).get("cache_read", 0)
+                    cache_creation_tokens += usage_metadata.get("input_token_details", {}).get("cache_creation", 0)
 
             if not (input_tokens or output_tokens):
                 return

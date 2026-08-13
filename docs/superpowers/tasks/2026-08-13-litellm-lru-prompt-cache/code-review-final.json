@@ -1,0 +1,109 @@
+{
+  "decision": "request-changes",
+  "rationale": "Three lenses ran (blind, edge-case, acceptance). Six major findings: early return in on_llm_end loop silently drops accumulated tokens from earlier non-cached generations in multi-gen batches; on_llm_error lacks the per-generation proxy cache check present in on_llm_end; is_llm_cache_hit performs unbounded recursive descent with false-positive and RecursionError risk; is_litellm_proxy_cache_hit uses bool(headers.get()) which misses empty-string header; debug log message names wrong header (x-litellm-cache-hit vs x-litellm-cache-key); litellm_config.yaml missing max_size and supported_call_types. All patch-triage. Task 1 functionally complete pending fixes; Task 2 partial (missing cache_params fields); Task 3 and 4 partial (in working tree, quality gates not confirmed).",
+  "follow_ups": [
+    "CR-001: return -> continue in on_llm_end loop + add empty-token guard after loop",
+    "CR-002: add per-generation is_litellm_proxy_cache_hit guard to on_llm_error",
+    "CR-003: restrict is_llm_cache_hit to known LiteLLM containers; remove unbounded recursion",
+    "CR-004: replace bool(headers.get('x-litellm-cache-key')) with key-in-headers presence check",
+    "CR-005: fix debug log message to reference x-litellm-cache-key not x-litellm-cache-hit",
+    "CR-006: add max_size and supported_call_types to litellm_config.yaml cache_params"
+  ],
+  "confidence": "medium",
+  "risk_flags": [],
+  "source": "subagent",
+  "business_review": [
+    {
+      "criterion": "Task 1 – cache metadata detection utility and LangGraph callback filtering",
+      "status": "partial",
+      "notes": "llm_cache.py created with both helpers; on_llm_end and on_llm_error updated with cache-hit guards; 20/20 tests pass. Blocked by CR-001 through CR-005."
+    },
+    {
+      "criterion": "Task 2 – enable bounded LiteLLM local response caching",
+      "status": "partial",
+      "notes": "cache: true, type: local, ttl: 800 present. Missing max_size and supported_call_types (CR-006)."
+    },
+    {
+      "criterion": "Task 3 – detect proxy cache hits and suppress proxy usage tracking",
+      "status": "partial",
+      "notes": "proxy_router.py changes present in working tree but not included in the reviewed commit."
+    },
+    {
+      "criterion": "Task 4 – run focused validation and reconcile artifacts",
+      "status": "partial",
+      "notes": "Callback tests pass (20/20). make ruff / make build / make license-check / make test not confirmed run."
+    }
+  ],
+  "standards_review": [
+    {
+      "standard": "Commit format (EPMCDME-####: Description)",
+      "status": "pass",
+      "notes": "Commit 'EPMCDME-14104: Skip spend tracking on LiteLLM LRU prompt cache hits' matches pattern."
+    },
+    {
+      "standard": "License headers (Apache 2.0)",
+      "status": "pass",
+      "notes": "New llm_cache.py has correct Apache 2.0 header."
+    },
+    {
+      "standard": "Type annotations (new code)",
+      "status": "pass",
+      "notes": "New functions in llm_cache.py have explicit type annotations; from __future__ import annotations present."
+    },
+    {
+      "standard": "Security patterns",
+      "status": "pass",
+      "notes": "No auth, secrets, or injection concerns."
+    }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "problem": "return inside on_llm_end generation loop discards accumulated tokens from earlier non-cached generations in multi-gen batches",
+      "impact": "In n>1 generation batches where any generation has x-litellm-cache-key, all token counts from previously-processed generations are silently dropped and never reported. Systematic cost under-reporting for batch LLM calls.",
+      "recommendation": "Replace return with continue. Add empty-token guard after loop to handle the all-cached case.",
+      "severity": "major",
+      "triage": "patch"
+    },
+    {
+      "id": "CR-002",
+      "problem": "on_llm_error lacks the per-generation is_litellm_proxy_cache_hit guard present in on_llm_end",
+      "impact": "Proxy-cached responses with x-litellm-cache-key in generation_info bypass per-generation cache detection in on_llm_error. Asymmetric behavior between the two handlers for the same response shape.",
+      "recommendation": "Add the same per-generation is_litellm_proxy_cache_hit check in on_llm_error loop with continue.",
+      "severity": "major",
+      "triage": "patch"
+    },
+    {
+      "id": "CR-003",
+      "problem": "is_llm_cache_hit performs unbounded recursive descent through all nested Mappings with no depth guard",
+      "impact": "Any provider response where response_metadata contains a nested cache_hit: True unrelated to LiteLLM silently suppresses all token tracking. Deep or large structures risk RecursionError.",
+      "recommendation": "Restrict search to known LiteLLM containers: LLMResult.llm_output, generation.generation_info, message._hidden_params, message.response_metadata.",
+      "severity": "major",
+      "triage": "patch"
+    },
+    {
+      "id": "CR-004",
+      "problem": "is_litellm_proxy_cache_hit uses bool(headers.get('x-litellm-cache-key')) which returns False for empty-string header values",
+      "impact": "Response with 'x-litellm-cache-key: ' treated as cache miss, causing double-counting of costs.",
+      "recommendation": "Replace with 'x-litellm-cache-key' in headers for presence-based semantics.",
+      "severity": "major",
+      "triage": "patch"
+    },
+    {
+      "id": "CR-005",
+      "problem": "Debug log in on_llm_end reads '(x-litellm-cache-hit)' but the predicate checks x-litellm-cache-key",
+      "impact": "Engineers debugging skipped usage tracking will search for x-litellm-cache-hit and find nothing. Cache-miss misclassifications become nearly impossible to trace.",
+      "recommendation": "Update log message to reference x-litellm-cache-key.",
+      "severity": "major",
+      "triage": "patch"
+    },
+    {
+      "id": "CR-006",
+      "problem": "litellm_config.yaml cache_params missing max_size and supported_call_types",
+      "impact": "Without max_size the LRU cache is unbounded in entry count, risking unbounded memory growth. Without supported_call_types it is undefined which call types are cached.",
+      "recommendation": "Add max_size: 200 and supported_call_types: [completion, acompletion] to cache_params.",
+      "severity": "major",
+      "triage": "patch"
+    }
+  ]
+}

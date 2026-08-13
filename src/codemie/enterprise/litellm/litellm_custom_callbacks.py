@@ -58,6 +58,3 @@ class BedrockCostModelFixLogger(CustomLogger):
             request_data["model"] = deployment
         async for chunk in response:
             yield chunk
-
-
-proxy_handler_instance = BedrockCostModelFixLogger()
