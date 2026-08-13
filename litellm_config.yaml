@@ -455,6 +455,7 @@ litellm_settings:
   set_verbose: False
   json_logs: true
   drop_params: true
+  modify_params: true
   vertex_project: os.environ/VERTEX_PROJECT
   vertex_location: "us-central1"
   include_cost_in_streaming_usage: true
