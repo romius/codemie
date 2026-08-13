@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any
+
 from pydantic import BaseModel, Field, computed_field, model_validator
 
 from codemie.core.constants import Environment, DEMO_PROJECT
@@ -48,6 +50,7 @@ class User(BaseModel):
     project_limit: int | None = Field(default=None)  # NULL = unlimited (admins); set from DB when flag ON
     auth_token: str | None = Field(None, exclude=True)
     tenant_id: str | None = Field(None, exclude=True)
+    extra_attributes: dict[str, Any] | None = None
 
     @model_validator(mode='after')
     def resolve_is_admin(self) -> 'User':
@@ -137,6 +140,7 @@ class UserContext(BaseModel):
     admin_project_names: list[str] | None = None
     knowledge_bases: list[str] | None = None
     picture: str | None = None
+    extra_attributes: dict[str, Any] | None = None
 
     @classmethod
     def from_user(cls, user: "User") -> "UserContext":
@@ -153,4 +157,5 @@ class UserContext(BaseModel):
             admin_project_names=user.admin_project_names,
             knowledge_bases=user.knowledge_bases,
             picture=user.picture,
+            extra_attributes=user.extra_attributes,
         )

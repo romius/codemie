@@ -141,7 +141,7 @@ def test_built_execute_method(
     assert invocation_request.parameters == {"param1": "test_param1", "param2": 42}
     # UserContext assertions: fixture user is User(id="tool_user", auth_token="123")
     fixture_user = tool_params["user"]
-    expected_user_context = UserContext.from_user(fixture_user).model_dump()
+    expected_user_context = UserContext.from_user(fixture_user).model_dump(exclude_none=True)
     assert invocation_request.user_context == expected_user_context
     assert invocation_request.user_context["id"] == "tool_user"
     assert "auth_token" not in invocation_request.user_context

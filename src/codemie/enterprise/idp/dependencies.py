@@ -24,6 +24,9 @@ from codemie.configs.logger import logger
 from codemie.enterprise.loader import HAS_IDP
 
 
+_JWT_METADATA_CLAIMS = frozenset({"exp", "iss", "aud", "iat", "nbf", "jti", "sub"})
+
+
 def is_enterprise_idp_available() -> bool:
     """Check if enterprise IDP providers are available."""
     return HAS_IDP
@@ -60,6 +63,22 @@ def _wrap_enterprise_idp(enterprise_provider_class, provider_name: str):
         def get_session_cookie(self) -> str:
             return self._provider.get_session_cookie()
 
+        def _get_extra_attributes(self, idp_user) -> dict | None:
+            """Extract and filter extra JWT claims from the enterprise IdpUser.
+
+            Drops non-dict values (buggy IDP) and strips JWT metadata claims.
+            Returns None when nothing survives the filter.
+            """
+            raw_extra_attrs = getattr(idp_user, "extra_attributes", None)
+            if raw_extra_attrs is not None and not isinstance(raw_extra_attrs, dict):
+                logger.error(
+                    f"{provider_name} extra_attributes is not a dict (got {type(raw_extra_attrs).__name__}); dropping"
+                )
+                return None
+            if not raw_extra_attrs:
+                return None
+            return {k: v for k, v in raw_extra_attrs.items() if k not in _JWT_METADATA_CLAIMS} or None
+
         async def authenticate(self, request: Request) -> User:
             """Authenticate via enterprise provider and map to core User.
 
@@ -76,7 +95,6 @@ def _wrap_enterprise_idp(enterprise_provider_class, provider_name: str):
                 headers = dict(request.headers)
                 idp_user = self._provider.authenticate(headers)
 
-                # Map enterprise IdpUser → codemie User
                 return User(
                     id=idp_user.id,
                     username=idp_user.username,
@@ -89,6 +107,7 @@ def _wrap_enterprise_idp(enterprise_provider_class, provider_name: str):
                     picture=idp_user.picture,
                     user_type=idp_user.user_type,
                     auth_token=idp_user.auth_token,
+                    extra_attributes=self._get_extra_attributes(idp_user),
                 )
             except InvalidUserTypeError as e:
                 logger.error(f"{provider_name} user type validation failed: {e}", exc_info=True)

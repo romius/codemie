@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "task": "Add extra_attributes passthrough field to User and UserContext, forward it through EnterpriseIdpWrapper.authenticate() with JWT denylist filter, update from_user(), and write tests for the adapter bridge.",
+  "generated": "2026-08-11T10:37:00Z",
+  "assessment_mode": "actual",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 2, "label": "S" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 14,
+  "size": "S",
+  "delta_from_initial": 0,
+  "key_reasoning": [
+    {
+      "dimension": "technical_risk",
+      "reason": "L/4 validated by two real challenges: (1) SQLAlchemy 'Table budgets is already defined' test isolation failure — patch.dict(sys.modules) removes newly-imported modules on exit, causing codemie.enterprise.__init__ re-import that re-registered the Budget table; fix required module-level import of _wrap_enterprise_idp to anchor the module in sys.modules. (2) CR-001: initial isinstance guard was missing — truthiness check `if _raw_extra else None` did not protect against truthy non-dict types (e.g. list), which would raise AttributeError silently absorbed as 401. Both were real auth-boundary correctness issues, consistent with the auth red-flag justification."
+    },
+    {
+      "dimension": "component_scope",
+      "reason": "Exactly 3 in-repo components modified: User and UserContext (user.py) plus EnterpriseIdpWrapper.authenticate() (dependencies.py). No scope creep. Call sites in toolkit_service.py and provider_tool_factory.py required no changes — extra_attributes flows through automatically via optional field with None default, as predicted."
+    }
+  ],
+  "red_flags_applied": [
+    "Technical Risk L/4 maintained: actual implementation validated the auth red-flag — two real correctness issues in the authentication pipeline required debugging and a code-review fix cycle."
+  ],
+  "files_actually_changed": [
+    "src/codemie/rest_api/security/user.py",
+    "tests/codemie/rest_api/security/test_user_context.py",
+    "src/codemie/enterprise/idp/dependencies.py",
+    "tests/enterprise/idp/test_enterprise_idp_wrapper.py",
+    "tests/enterprise/idp/__init__.py"
+  ],
+  "commits": [
+    "954fe139d — Task 1: extend User and UserContext with extra_attributes",
+    "959cc8c41 — Task 2: EnterpriseIdpWrapper denylist filter",
+    "1611366f5 — CR-001 fix: isinstance guard + test"
+  ]
+}

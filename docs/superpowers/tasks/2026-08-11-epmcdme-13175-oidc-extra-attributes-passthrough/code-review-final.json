@@ -1,0 +1,83 @@
+{
+  "decision": "request-changes",
+  "rationale": "All 8 acceptance criteria pass and the implementation is correct for the intended inputs. One major patch finding: the truthiness guard `if _raw_extra else None` before `.items()` does not protect against a truthy non-dict type (e.g. a list returned by a misbehaving enterprise IDP plugin); the resulting AttributeError is silently absorbed by the broad except-Exception handler in authenticate() and returned as a 401, masking the real cause. Two deferred design notes (not blocking): `sub` is intentionally in the denylist per spec — noted for future reference if a deployment needs it forwarded; JWT values are inherently JSON-serializable by definition so the dict[str,Any] annotation is acceptable. Three findings dismissed as incorrect (test isolation — lazy imports ARE inside the patch.dict scope; denylist test — test_extra_attributes_denylist_strips_jwt_metadata exists; User.extra_attributes not excluded — intentional per AC2).",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    {
+      "id": "AC1",
+      "text": "extra_attributes: dict[str, Any] | None = None (NOT {}) on both User and UserContext",
+      "status": "pass",
+      "notes": "Both User and UserContext declare the field with None default; no dict default anywhere."
+    },
+    {
+      "id": "AC2",
+      "text": "Field must NOT use Field(exclude=True) — must serialize and propagate",
+      "status": "pass",
+      "notes": "No Field() wrapper used; test_extra_attributes_absent_from_dump_when_none confirms correct exclude_none behaviour."
+    },
+    {
+      "id": "AC3",
+      "text": "_JWT_METADATA_CLAIMS = frozenset({exp, iss, aud, iat, nbf, jti, sub}) at module level",
+      "status": "pass",
+      "notes": "Constant present at module level in dependencies.py with all 7 required members."
+    },
+    {
+      "id": "AC4",
+      "text": "getattr(idp_user, extra_attributes, None) guard for backward compatibility",
+      "status": "pass",
+      "notes": "getattr guard present; old enterprise packages without the field degrade to None gracefully."
+    },
+    {
+      "id": "AC5",
+      "text": "Empty dict after filtering collapses to None via `or None`",
+      "status": "pass",
+      "notes": "Acceptance lens verified all 4 logic paths including all-filtered and empty-input cases; expression parses as (dictcomp or None) if _raw_extra else None."
+    },
+    {
+      "id": "AC6",
+      "text": "Tests cover all 4 cases: happy path, denylist, empty-dict-to-None, absent-field-to-None",
+      "status": "pass",
+      "notes": "All 4 cases present in test_enterprise_idp_wrapper.py with exact name matches."
+    },
+    {
+      "id": "AC7",
+      "text": "No database changes, no API endpoint changes, no migration",
+      "status": "pass",
+      "notes": "Diff touches only user.py, dependencies.py, and two test files; no schema or routing changes."
+    },
+    {
+      "id": "AC8",
+      "text": "extra_attributes must NOT reach remote MCP-Connect (EPMCDME-13546 exclusion undisturbed)",
+      "status": "pass",
+      "notes": "No changes to MCP-Connect serialization; to_request_fields() exclusion unchanged."
+    }
+  ],
+  "standards_review": [
+    {
+      "standard": "git_workflow",
+      "status": "pass",
+      "notes": "Both commits follow EPMCDME-####: description format as required."
+    },
+    {
+      "standard": "code_quality",
+      "status": "pass",
+      "notes": "Uses modern dict[str, Any] | None union syntax, frozenset constant, proper Pydantic field definitions; no Ruff violations expected."
+    },
+    {
+      "standard": "security",
+      "status": "pass",
+      "notes": "No credential exposure; auth_token remains excluded; denylist strips JWT metadata claims before propagation."
+    }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "major",
+      "triage": "patch",
+      "problem": "The guard `if _raw_extra else None` before `_raw_extra.items()` protects only against falsy values (None, empty dict), not against truthy non-dict types such as a list or string returned by a misbehaving enterprise IDP plugin.",
+      "impact": "Any truthy non-dict value raises AttributeError inside authenticate(), which is caught by the broad `except Exception` handler at line 125 and returned as a 401 'Authentication failed' — masking the real root cause and making the bug extremely hard to diagnose in production. No test covers this input class.",
+      "recommendation": "Replace `if _raw_extra else None` with `if isinstance(_raw_extra, dict) else None`; add a logger.warning (or logger.error) for the non-dict case at the authentication boundary so the failure surface is visible rather than absorbed."
+    }
+  ]
+}

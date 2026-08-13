@@ -23,7 +23,7 @@ class TestUserContext:
     """Test cases for UserContext model"""
 
     def test_from_user_maps_all_fields(self):
-        """from_user() maps all 12 non-sensitive fields from a fully-populated User."""
+        """from_user() maps all 13 non-sensitive fields from a fully-populated User."""
         user = User(
             id="u-001",
             username="jdoe",
@@ -55,6 +55,21 @@ class TestUserContext:
         assert ctx.admin_project_names == user.admin_project_names
         assert ctx.knowledge_bases == user.knowledge_bases
         assert ctx.picture == user.picture
+        assert ctx.extra_attributes == user.extra_attributes
+
+    def test_extra_attributes_absent_from_dump_when_none(self):
+        """extra_attributes=None must not appear in model_dump(exclude_none=True)."""
+        user = User(id="u-no-extra")
+        ctx = UserContext.from_user(user)
+        dumped = ctx.model_dump(exclude_none=True)
+        assert "extra_attributes" not in dumped
+
+    def test_extra_attributes_propagates_through_from_user(self):
+        """extra_attributes dict is copied verbatim by from_user()."""
+        attrs = {"department": "eng", "team_id": "backend"}
+        user = User(id="u-with-extra", extra_attributes=attrs)
+        ctx = UserContext.from_user(user)
+        assert ctx.extra_attributes == attrs
 
     def test_sensitive_fields_excluded_from_model_dump(self):
         """auth_token, tenant_id, project_limit must not appear in model_dump()."""

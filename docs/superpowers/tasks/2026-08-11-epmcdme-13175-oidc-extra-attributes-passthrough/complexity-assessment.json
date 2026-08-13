@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "task": "Add extra_attributes passthrough field to User and UserContext, forward it through EnterpriseIdpWrapper.authenticate(), update from_user(), and write new tests for the adapter bridge in dependencies.py.",
+  "generated": "2026-08-11T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 2, "label": "S" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 14,
+  "size": "S",
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "technical_risk",
+      "reason": "Change is in the authentication pipeline (User, UserContext, EnterpriseIdpWrapper). No existing extra_attributes or dict-passthrough precedent in the codebase — genuinely new pattern. Two-repo deployment ordering risk: codemie_enterprise must ship first; codemie side compiles but extra_attributes is None at runtime until both repos are deployed. EnterpriseIdpWrapper has zero existing tests; new tests must be written from scratch with no prior mock patterns for this class. Auth red flag applied: bumped from M (3) to L (4)."
+    },
+    {
+      "dimension": "component_scope",
+      "reason": "Three in-repo components modified: User model and UserContext model (both in user.py, including from_user() update) and EnterpriseIdpWrapper.authenticate() in dependencies.py. Two architectural layers: auth/security model layer and enterprise adapter layer. Call sites in toolkit_service.py and provider_tool_factory.py require no explicit code changes — extra_attributes flows through automatically via optional field with None default."
+    }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from M (3) to L (4): change directly modifies authentication pipeline classes (User, UserContext, EnterpriseIdpWrapper) — 'affects authentication or authorization' red flag triggered."
+  ],
+  "split_recommendation": null
+}
