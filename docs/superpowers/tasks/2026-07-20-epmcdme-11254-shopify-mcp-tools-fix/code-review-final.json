@@ -1,0 +1,19 @@
+{
+  "verdict": "approve",
+  "confidence": "high",
+  "findings": [],
+  "business_review": {
+    "summary": "Both root causes from the spec are addressed. The connection test now correctly reports failure when zero tools are returned, and the tool-listing call now bypasses the bridge process cache by passing mcp_server_single_usage=True. Acceptance criteria 1-4 are all met.",
+    "risks": []
+  },
+  "standards_review": {
+    "summary": "Changes are minimal and surgical. Patch matches existing code style and logging patterns. License header present in new test file. Ruff passed clean.",
+    "findings": []
+  },
+  "test_review": {
+    "summary": "12 tests pass (6 new in test_mcp_tester.py, 3 new in test_mcp_tools_info_service.py, 3 pre-existing). RED/GREEN cycle confirmed in transcript. Test structure mirrors existing patterns. _PATCH_TARGET constant avoids repetition across 6 uses.",
+    "findings": []
+  },
+  "diff_stat": "4 files changed, 163 insertions(+), 0 deletions(-). 2 production files touched (1 guard insertion, 1 kwarg addition). 2 test files added/extended.",
+  "reviewed_at": "2026-07-20"
+}

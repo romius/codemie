@@ -40,7 +40,7 @@ class TestMCPToolsInfoServiceBrokerAuth:
     """Verify BrokerAuthRequiredException is not swallowed by get_mcp_toolkit_info."""
 
     def test_broker_auth_required_propagates_unchanged(self, mock_user, mcp_server_config):
-        """BrokerAuthRequiredException must not be re-wrapped as MCPToolsInfoServiceError."""
+        """BrokerAuthRequiredException must propagate as-is with all original attributes intact."""
         exc = BrokerAuthRequiredException(
             message="Broker token exchange failed with HTTP 502",
             auth_location="https://auth.example.com/login",
@@ -58,25 +58,6 @@ class TestMCPToolsInfoServiceBrokerAuth:
                 )
 
         assert exc_info.value is exc
-
-    def test_broker_auth_required_auth_location_preserved(self, mock_user, mcp_server_config):
-        """auth_location on the re-raised exception must be intact."""
-        exc = BrokerAuthRequiredException(
-            message="Broker token exchange failed with HTTP 502",
-            auth_location="https://auth.example.com/login",
-            details="HTTP 502",
-        )
-
-        with patch(
-            "codemie.service.mcp.toolkit_service.MCPToolkitService.get_mcp_server_tools",
-            side_effect=exc,
-        ):
-            with pytest.raises(BrokerAuthRequiredException) as exc_info:
-                MCPToolsInfoService.get_mcp_toolkit_info(
-                    mcp_server_config=mcp_server_config,
-                    user=mock_user,
-                )
-
         assert exc_info.value.auth_location == "https://auth.example.com/login"
         assert exc_info.value.message == "Broker token exchange failed with HTTP 502"
 
@@ -94,3 +75,53 @@ class TestMCPToolsInfoServiceBrokerAuth:
 
         assert "Test MCP" in exc_info.value.message
         assert "connection refused" in exc_info.value.details
+
+
+class TestMCPToolsInfoServiceSingleUsageMode:
+    """Verify get_mcp_toolkit_info uses mcp_server_single_usage=True."""
+
+    def test_get_mcp_server_tools_called_with_single_usage_true(self, mock_user, mcp_server_config):
+        mock_tool = Mock()
+        mock_tool.name = "test_tool"
+        mock_tool.description = "A test tool"
+
+        with patch(
+            "codemie.service.mcp.toolkit_service.MCPToolkitService.get_mcp_server_tools",
+            return_value=[mock_tool],
+        ) as mock_get_tools:
+            MCPToolsInfoService.get_mcp_toolkit_info(
+                mcp_server_config=mcp_server_config,
+                user=mock_user,
+            )
+
+        assert mock_get_tools.call_args.kwargs.get("mcp_server_single_usage") is True
+
+    def test_success_path_returns_toolkit_dict(self, mock_user, mcp_server_config):
+        mock_tool = Mock()
+        mock_tool.name = "test_tool"
+        mock_tool.description = "A test tool"
+
+        with patch(
+            "codemie.service.mcp.toolkit_service.MCPToolkitService.get_mcp_server_tools",
+            return_value=[mock_tool],
+        ):
+            result = MCPToolsInfoService.get_mcp_toolkit_info(
+                mcp_server_config=mcp_server_config,
+                user=mock_user,
+            )
+
+        assert result["toolkit"] == "MCP"
+        assert "tools" in result
+        assert len(result["tools"]) == 1
+        assert result["tools"][0]["name"] == "test_tool"
+
+    def test_empty_tools_raises_service_error(self, mock_user, mcp_server_config):
+        with patch(
+            "codemie.service.mcp.toolkit_service.MCPToolkitService.get_mcp_server_tools",
+            return_value=[],
+        ):
+            with pytest.raises(MCPToolsInfoServiceError):
+                MCPToolsInfoService.get_mcp_toolkit_info(
+                    mcp_server_config=mcp_server_config,
+                    user=mock_user,
+                )

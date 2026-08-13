@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Tuple
-
 from codemie.configs import logger
 from codemie.core.exceptions import MCPAuthenticationRequiredException
 from codemie.rest_api.models.assistant import MCPServerDetails, MCPServerCheckRequest
@@ -29,20 +27,24 @@ class MCPServerTester:
         self.mcp_server = request.mcp_server
         self.user = user
 
-    def test(self) -> Tuple[bool, str]:
-        # Get the MCP toolkit service singleton
-
+    def test(self) -> tuple[bool, str]:
         try:
             tools = MCPToolkitService.get_mcp_server_tools(
                 mcp_servers=[self.mcp_server], user_id=self.user.id, mcp_server_single_usage=True
             )
 
-            logger.info(f"Testing passed for MCP tools from {self.mcp_server.name} server. Tools count={len(tools)}")
+            if not tools:
+                logger.warning("Connection to '%s' succeeded but no tools were retrieved.", self.mcp_server.name)
+                return False, (
+                    f"Connected to '{self.mcp_server.name}' but no tools were retrieved. "
+                    "Please check that the MCP server is running and has tools configured."
+                )
+
+            logger.info("Testing passed for MCP tools from %s server. Tools count=%d", self.mcp_server.name, len(tools))
             return True, 'Success'
         except BrokerAuthRequiredException:
             raise
         except MCPAuthenticationRequiredException:
             raise
         except Exception as e:
-            # Log error but continue with other MCP servers if this one fails
-            return False, f"{str(e)}.\nPlease, check the configuration."
+            return False, f"{e}.\nPlease, check the configuration."

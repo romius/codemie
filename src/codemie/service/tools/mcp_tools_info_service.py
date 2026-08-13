@@ -59,12 +59,13 @@ class MCPToolsInfoService:
                 mcp_servers=[mcp_server_config],
                 user_id=user.id,
                 project_name=project_name,
+                mcp_server_single_usage=True,
             )
 
             if not tools:
                 logger.info(
-                    f"No MCP tools found for server '{mcp_server_config.name}'. "
-                    f"MCP server may not have tools configured or may be unreachable."
+                    "No MCP tools found for server '%s'. MCP server may not have tools configured or may be unreachable.",
+                    mcp_server_config.name,
                 )
                 raise MCPToolsInfoServiceError(
                     f"No MCP tools found for server '{mcp_server_config.name}'",
@@ -85,7 +86,7 @@ class MCPToolsInfoService:
                     }
                 )
 
-            logger.info(f"Retrieved {len(tools_info)} MCP tools from server '{mcp_server_config.name}'")
+            logger.info("Retrieved %d MCP tools from server '%s'", len(tools_info), mcp_server_config.name)
 
             return {"toolkit": "MCP", "label": f"{mcp_server_config.name} Tools", "tools": tools_info}
 
@@ -98,21 +99,8 @@ class MCPToolsInfoService:
         except Exception as e:
             error_msg = str(e)
             logger.error(
-                f"Error retrieving MCP toolkit info from '{mcp_server_config.name}': {error_msg}", exc_info=True
+                "Error retrieving MCP toolkit info from '%s': %s", mcp_server_config.name, error_msg, exc_info=True
             )
             raise MCPToolsInfoServiceError(
                 f"Could not retrieve MCP tools from '{mcp_server_config.name}'", error_msg
             ) from e
-
-    @staticmethod
-    def _get_empty_toolkit(server_name: str) -> dict:
-        """
-        Return empty toolkit structure for MCP.
-
-        Args:
-            server_name: Name of the MCP server
-
-        Returns:
-            Empty toolkit dict
-        """
-        return {"toolkit": "MCP", "label": f"{server_name} Tools", "tools": []}

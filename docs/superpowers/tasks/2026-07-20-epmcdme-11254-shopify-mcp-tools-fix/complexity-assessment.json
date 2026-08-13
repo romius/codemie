@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "task": "Add empty-tools guard to MCPServerTester.test() and add mcp_server_single_usage=True to MCPToolsInfoService.get_mcp_toolkit_info() to fix Shopify Dev MCP tools not retrieved after successful connection test.",
+  "generated": "2026-07-20T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 2, "label": "S" },
+    "requirements_clarity": { "score": 1, "label": "XS" },
+    "technical_risk":       { "score": 1, "label": "XS" },
+    "file_change_estimate": { "score": 2, "label": "S" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 1, "label": "XS" }
+  },
+  "total": 8,
+  "size": "XS",
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Two service-layer classes touched: MCPServerTester (mcp_tester.py) and MCPToolsInfoService (mcp_tools_info_service.py). Both live in the Service layer only; no router, repository, model, or infrastructure changes."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "Two production files modified plus one new test file (tests/codemie/service/mcp/test_mcp_tester.py) and one new test case added to tests/codemie/service/tools/test_mcp_tools_info_service.py — approximately 3 files total, within the S (3–4 files) range."
+    }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}
