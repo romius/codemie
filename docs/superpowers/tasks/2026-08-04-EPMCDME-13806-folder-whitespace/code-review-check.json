@@ -1,0 +1,28 @@
+{
+  "decision": "approve",
+  "rationale": "Targeted re-check of the 8 blocking findings from code-review-final.json against the fix-up diff (24fba6516..0280bf3d0). All 8 findings are resolved: the migration now locks only the current batch's row ids (not the whole table), dry-run uses a non-locking SELECT and warns on 1000-group truncation, 'Default'-named groups are excluded, array binds carry explicit ARRAY types, delete_conversation_folder and validate_fields both normalize whitespace in place, and the 3 previously-untested write paths plus the migration's locking/exclusion/apply-mode branches now have passing regression tests (41 tests across the touched files, all green).",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    {"criterion": "All 5 write paths trim folder name", "status": "satisfied"},
+    {"criterion": "Empty-after-trim rejected (required) / normalized to None (optional)", "status": "satisfied"},
+    {"criterion": "Uniqueness checks trim-aware", "status": "satisfied"},
+    {"criterion": "Read-side normalization on 4 named surfaces", "status": "satisfied"},
+    {"criterion": "Migration dry-run default, gated apply, two-table consistency, earliest-date-wins merge, no-op downgrade", "status": "satisfied"},
+    {"criterion": "Testing: all 5 write paths asserted at service layer", "status": "satisfied", "reason": "create_conversation, _create_conversation_with_history, update_conversation, update_conversation_folder, and delete_conversation_folder all now have trim regression tests."},
+    {"criterion": "Testing: migration script-level harness against a seeded test DB", "status": "partial", "reason": "Repo-wide test convention (tests/conftest.py::mock_database_engine, autouse) mocks the DB engine for every test, so a live-Postgres execution test isn't available in this repo's existing infra. Added dialect-level compilation checks (sqlalchemy.dialects.postgresql) for every raw statement including the typed ARRAY binds, which is the strongest check achievable without adding new test infrastructure — that gap is now explicitly documented in the test file rather than silently absent."},
+    {"criterion": "Testing: apply-mode assertion for both colliding and non-colliding groups", "status": "satisfied"}
+  ],
+  "standards_review": [],
+  "findings": [],
+  "finding_status": [
+    {"id": "CR-001", "status": "resolved", "note": "Locking is now scoped to the current batch's row ids via a bounded FOR UPDATE SKIP LOCKED on SELECT id FROM conversation_folders WHERE id = ANY(:ids), not the whole table."},
+    {"id": "CR-002", "status": "resolved", "note": "Dry-run now executes only the non-locking _DETECT_GROUPS_SQL (no FOR UPDATE clause); apply-mode locking is a separate, later statement."},
+    {"id": "CR-003", "status": "resolved", "note": "Dry-run prints an explicit 'truncated at 1000 groups' warning when len(groups) == 1000; covered by test_upgrade_dry_run_warns_when_truncated_at_1000_groups."},
+    {"id": "CR-004", "status": "resolved", "note": "All array-valued bind params (ids, original_names, losing_ids) now carry explicit bindparam(..., type_=ARRAY(String)) typing; added dialect-compilation tests for every raw statement. Full live-driver execution remains infeasible given the repo's autouse DB-engine mock, documented in the test file."},
+    {"id": "CR-005", "status": "resolved", "note": "delete_conversation_folder now trims its folder parameter before both the Conversation lookup and ConversationFolder.delete_by_folder call; covered by test_delete_conversation_folder_trims_folder_name_for_lookup."},
+    {"id": "CR-006", "status": "resolved", "note": "validate_fields now assigns self.folder_name = self.folder_name.strip() in place before the uniqueness/forbidden-name checks, so any construction path is normalized before persistence; covered by test_validate_fields_mutates_folder_name_in_place_for_callers_bypassing_create_folder."},
+    {"id": "CR-007", "status": "resolved", "note": "Detection query now excludes trimmed_name = 'Default' via a WHERE clause, so no group can rename an existing folder into the reserved name; covered by test_upgrade_dry_run_excludes_default_folder_name."},
+    {"id": "CR-008", "status": "resolved", "note": "Added service-layer trim tests for create_conversation, _create_conversation_with_history, and update_conversation (the 3 previously-uncovered write paths), plus migration tests for the batching/locking behavior and both apply-mode branches (collision and non-collision)."}
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "task": "Trim whitespace from folder names across 5 backend write paths and read-side serialization, and migrate existing data with collision-merge logic.",
+  "generated": "2026-08-04",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 6, "label": "XXL" },
+    "file_change_estimate": { "score": 5, "label": "XL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 24,
+  "size": "L",
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "technical_risk", "reason": "Trim mechanism itself is low-risk (existing StringConstraints idiom used twice already), but the migration's collision-merge logic (earliest-date-wins, repoint conversations.folder across two tables) has no precedent in the codebase, needs concurrent-write-safe design, and is an irreversible data migration once deployed." },
+    { "dimension": "file_change_estimate", "reason": "4-6 source files (request DTOs, conversation_folder.py, conversation_service.py) plus 1 new Alembic migration, plus net-new test files across at least 2 sparse test modules (4 of 5 write-path methods and all ConversationFolder mutation methods currently have zero coverage)." },
+    { "dimension": "component_scope", "reason": "Touches 5 distinct service-layer write paths (create, bulk-import upsert, rename, move-chat-to-folder, folder-clear) plus read-side serialization, across API DTO / service / model / migration layers." },
+    { "dimension": "affected_layers", "reason": "API request DTOs, service layer, model/data layer, and a one-off Alembic data migration — 4 layers including persistence." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from XL to XXL: requires data migration (irreversible once deployed, collision-merge logic with no established precedent)",
+    "File Change Estimate bumped from L to XL: requires data migration touching two tables plus net-new test authoring"
+  ],
+  "split_recommendation": null
+}

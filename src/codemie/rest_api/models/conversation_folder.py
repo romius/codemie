@@ -51,10 +51,12 @@ class ConversationFolder(BaseModelWithSQLSupport, Owned, table=True):
         return False
 
     def validate_fields(self) -> Optional[str]:
-        folder = self.get_by_fields({FOLDER_NAME_KEYWORD: self.folder_name, USER_ID_KEYWORD: self.user_id})
+        self.folder_name = self.folder_name.strip()
+        trimmed_name = self.folder_name
+        folder = self.get_by_fields({FOLDER_NAME_KEYWORD: trimmed_name, USER_ID_KEYWORD: self.user_id})
         if folder and folder.id != self.id:
             return 'Folder name should be unique'
-        if self.folder_name == "Default":
+        if trimmed_name == "Default":
             return 'This folder name is forbidden'
         return ""
 
@@ -86,7 +88,7 @@ class ConversationFolder(BaseModelWithSQLSupport, Owned, table=True):
             The created ConversationFolder instance
         """
         folder_record = cls(
-            folder_name=folder_name,
+            folder_name=folder_name.strip(),
             user_id=user_id,
         )
         folder_record.save(refresh=True)
@@ -102,11 +104,11 @@ class ConversationFolder(BaseModelWithSQLSupport, Owned, table=True):
             folder_name: Name of the folder to update
             user_id: ID of the user who owns the folder
         """
-        if not folder_name:
+        if not folder_name or not folder_name.strip():
             # Skip for conversations without a folder
             return
 
-        folder = cls.get_by_folder(folder_name, user_id)
+        folder = cls.get_by_folder(folder_name.strip(), user_id)
         if folder:
             folder.update_date = datetime.now(timezone.utc)
             folder.update(refresh=False)

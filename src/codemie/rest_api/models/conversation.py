@@ -16,10 +16,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import List, Literal, Optional
+from typing import Annotated, List, Literal, Optional
 
 from codemie_tools.base.models import Tool
-from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_serializer, model_validator
 
 from codemie.chains.base import Thought
 from codemie.core.interactive import InteractiveRequest, InteractiveResponse
@@ -164,8 +164,15 @@ class UpsertHistoryRequest(BaseModel):
     """
 
     assistant_id: str = Field(description="Assistant ID (can be placeholder for imports)")
-    folder: Optional[str] = Field(default=None, description="Folder for organizing conversations")
+    folder: Optional[Annotated[str, StringConstraints(strip_whitespace=True)]] = Field(
+        default=None, description="Folder for organizing conversations"
+    )
     history: List[GeneratedMessage] = Field(description="List of conversation messages to upsert")
+
+    @field_validator("folder")
+    @classmethod
+    def _empty_folder_to_none(cls, value: Optional[str]) -> Optional[str]:
+        return value or None
 
 
 class UpsertHistoryResponse(BaseModel):
@@ -725,6 +732,12 @@ class Conversation(BaseModelWithSQLSupport, Owned, table=True):
         return result
 
 
+def _trim_folder(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    return value.strip()
+
+
 class ConversationListItem(BaseModel):
     id: str
     name: Optional[str] = None
@@ -747,6 +760,11 @@ class ConversationListItem(BaseModel):
     # Assistant display fields
     assistant_icon: Optional[str] = None
     assistant_names: Optional[List[str]] = Field(default_factory=list)
+
+    @field_validator("folder")
+    @classmethod
+    def _trim_folder_field(cls, value: Optional[str]) -> Optional[str]:
+        return _trim_folder(value)
 
 
 class ConversationResponse(BaseModel):
@@ -790,6 +808,11 @@ class ConversationResponse(BaseModel):
 
     pagination: Optional[ConversationHistoryPaginationData] = None
 
+    @field_validator("folder")
+    @classmethod
+    def _trim_folder_field(cls, value: Optional[str]) -> Optional[str]:
+        return _trim_folder(value)
+
     @model_serializer(mode="wrap")
     def _exclude_null_pagination(self, handler):
         """Supports backward compatibility with request
@@ -822,6 +845,11 @@ class SearchResultItem(BaseModel):
     updated_at: datetime  # Last update timestamp
     type: Literal['chat', 'folder']  # Discriminator
     folder: Optional[str] = None  # Parent folder (for chats only)
+
+    @field_validator("folder")
+    @classmethod
+    def _trim_folder_field(cls, value: Optional[str]) -> Optional[str]:
+        return _trim_folder(value)
 
 
 class ConversationSearchResponse(BaseModel):

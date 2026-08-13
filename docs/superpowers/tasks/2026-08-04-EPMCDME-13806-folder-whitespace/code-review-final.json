@@ -1,0 +1,91 @@
+{
+  "decision": "request-changes",
+  "rationale": "Three lenses (blind, edge-case, acceptance) ran successfully with full diff coverage. Acceptance found the core trim/normalize behavior satisfies nearly all spec criteria, but flagged 3 partial criteria (test coverage gaps). Edge-case and blind independently converged on real defects in the new migration (unbounded row locking that defeats the stated batching purpose, dry-run silently truncating at 1000 groups, untested array-bind SQL against the real driver) plus a real inconsistency (delete_conversation_folder left untrimmed while its sibling update_conversation_folder was fixed). 8 blocking findings after triage/dedup; dismissed minor style/duplication notes.",
+  "confidence": "high",
+  "risk_flags": ["migration-untested-against-real-db", "concurrency"],
+  "business_review": [
+    {"criterion": "All 5 write paths trim folder name", "status": "satisfied"},
+    {"criterion": "Empty-after-trim rejected (required) / normalized to None (optional)", "status": "satisfied"},
+    {"criterion": "Uniqueness checks trim-aware", "status": "satisfied"},
+    {"criterion": "Read-side normalization on 4 named surfaces", "status": "satisfied"},
+    {"criterion": "Migration dry-run default, gated apply, two-table consistency, earliest-date-wins merge, no-op downgrade", "status": "satisfied"},
+    {"criterion": "Testing: all 5 write paths asserted at service layer", "status": "partial", "reason": "Only rename path got a new service-layer test; create_conversation, _create_conversation_with_history, update_conversation have no new service-layer trim assertions."},
+    {"criterion": "Testing: migration script-level harness against a seeded test DB", "status": "partial", "reason": "Tests fully mock op/connection; the raw SQL never executes against a real database."},
+    {"criterion": "Testing: apply-mode assertion for both colliding and non-colliding groups", "status": "partial", "reason": "Only the collision case is exercised in apply mode."}
+  ],
+  "standards_review": [],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "critical",
+      "triage": "patch",
+      "problem": "The FOR UPDATE SKIP LOCKED clause is inside the `normalized` CTE with no LIMIT; only the aggregated `candidate_groups` output is limited to 1000. Every loop iteration locks all not-yet-locked rows in the entire conversation_folders table, not a bounded batch.",
+      "impact": "On a production-sized table this defeats the batching's stated purpose — concurrent folder create/rename/delete requests block for the full migration run, not just per-batch, contradicting the docstring's claim of following the 234f8f339638 batching precedent.",
+      "file": "src/external/alembic/versions/d46339b96e47_normalize_folder_whitespace.py",
+      "recommendation": "Bound the locked set before FOR UPDATE — e.g. lock only rows pre-selected by a LIMIT-bounded subquery — matching how 234f8f339638 puts LIMIT inside the same locking CTE."
+    },
+    {
+      "id": "CR-002",
+      "severity": "major",
+      "triage": "patch",
+      "problem": "Dry-run mode still executes the SELECT ... FOR UPDATE SKIP LOCKED and holds those locks for the transaction duration purely to print a report.",
+      "impact": "Dry-run is meant to be side-effect-free/safe, but it still blocks concurrent folder writes for other users while the migration transaction is open.",
+      "file": "src/external/alembic/versions/d46339b96e47_normalize_folder_whitespace.py",
+      "recommendation": "Use a plain non-locking SELECT for detection in dry-run mode; only take FOR UPDATE SKIP LOCKED in apply mode, immediately before a write."
+    },
+    {
+      "id": "CR-003",
+      "severity": "major",
+      "triage": "patch",
+      "problem": "Dry-run always breaks after the first LIMIT 1000 batch with no signal that more groups may exist beyond that.",
+      "impact": "On a dataset with >1000 affected groups, the operator's pre-flight review is silently incomplete, risking an under-scoped go/no-go decision before flipping EPMCDME_13806_APPLY_FOLDER_MERGE=true on an irreversible operation.",
+      "file": "src/external/alembic/versions/d46339b96e47_normalize_folder_whitespace.py",
+      "recommendation": "Print an explicit truncation warning when len(groups) == 1000 in dry-run mode (e.g. 'truncated at 1000 groups, more may exist')."
+    },
+    {
+      "id": "CR-004",
+      "severity": "critical",
+      "triage": "patch",
+      "problem": "List-valued bind parameters (original_names, losing_ids) are passed to .bindparams() for use with = ANY(:param) with no explicit array type, and the migration's tests fully mock connection.execute — the SQL has never run against a real database/driver.",
+      "impact": "Depending on the DBAPI backing the alembic connection, this could fail outright at migration run time with a type error, discovered only when the (irreversible, data-mutating) apply mode is actually run.",
+      "file": "src/external/alembic/versions/d46339b96e47_normalize_folder_whitespace.py",
+      "recommendation": "Verify the driver behavior or add an explicit ARRAY bind type, and add at least one test that runs the migration's SQL against a real (test) Postgres/sqlite database rather than mocks, per the spec's explicit testing requirement."
+    },
+    {
+      "id": "CR-005",
+      "severity": "major",
+      "triage": "patch",
+      "problem": "delete_conversation_folder (conversation_service.py) was not updated to trim the incoming folder parameter, while its sibling update_conversation_folder was fixed in this diff. delete_by_folder does an exact-match lookup.",
+      "impact": "After this ticket ships, create_folder/touch_folder always persist trimmed names. A delete request arriving with incidental whitespace (e.g. from a pre-migration stored value, or a client bypassing the popup) will fail the exact match and silently no-op, leaving the folder undeleted while the caller believes it succeeded.",
+      "file": "src/codemie/service/conversation_service.py",
+      "recommendation": "Trim `folder` in delete_conversation_folder the same way update_conversation_folder was fixed, for consistency across all folder-mutating service methods."
+    },
+    {
+      "id": "CR-006",
+      "severity": "major",
+      "triage": "patch",
+      "problem": "ConversationFolder.validate_fields computes a local trimmed_name for its uniqueness/forbidden-name check but does not normalize self.folder_name itself; only create_folder() trims before construction.",
+      "impact": "Any future or existing caller that constructs ConversationFolder(...) directly and calls .save()/.validate_fields() without routing through create_folder would pass validation against the trimmed name but persist the untrimmed value — reintroducing the exact whitespace-variant rows this ticket exists to eliminate.",
+      "file": "src/codemie/rest_api/models/conversation_folder.py",
+      "recommendation": "Trim self.folder_name in place (e.g. at the start of validate_fields, or via a model_validator) so every construction path is normalized before persistence, not only the create_folder classmethod."
+    },
+    {
+      "id": "CR-007",
+      "severity": "major",
+      "triage": "patch",
+      "problem": "The migration's raw SQL sets conversation_folders.folder_name directly and never re-checks the 'Default' forbidden-name rule that ConversationFolder.validate_fields() enforces at the application layer.",
+      "impact": "A pre-existing folder literally named 'Default ' (trailing space) would be silently renamed by the migration to the reserved 'Default' string, which the API layer treats specially — a data-integrity inconsistency introduced by a migration that bypasses model-level validation.",
+      "file": "src/external/alembic/versions/d46339b96e47_normalize_folder_whitespace.py",
+      "recommendation": "Have the migration skip (and report, in both dry-run and apply mode) any group whose trimmed_name equals 'Default', or otherwise document why bypassing that guard is acceptable."
+    },
+    {
+      "id": "CR-008",
+      "severity": "major",
+      "triage": "patch",
+      "problem": "Test coverage does not match the spec's explicit testing section: only 1 of 5 write paths (rename) has a new service-layer trim assertion; the migration test harness fully mocks the connection instead of running against a seeded test DB; and no apply-mode test covers the non-colliding whitespace-only-name case.",
+      "impact": "Regressions in create_conversation, _create_conversation_with_history, or update_conversation re-introducing whitespace would go undetected; a syntax/logic bug in the migration's actual SQL (see CR-004) would not be caught by the current mocked tests; the untested apply-mode branch (non-collision trim) could ship with a latent bug.",
+      "file": "tests/codemie/service/test_conversation_service.py, tests/external/alembic/test_d46339b96e47_normalize_folder_whitespace.py",
+      "recommendation": "Add service-layer passthrough assertions for the 3 untested write paths; add a real-DB-backed migration test (or at minimum a non-mocked SQL execution test) covering both the collision and non-collision apply-mode branches."
+    }
+  ]
+}
