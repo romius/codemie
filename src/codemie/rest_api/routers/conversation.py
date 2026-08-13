@@ -168,13 +168,12 @@ def get_conversation_template(
         is_workflow: If true, treat initial_assistant_id as a WorkflowConfig id. Optional.
         folder: Chat folder name. Optional.
     """
-    trimmed_folder = folder.strip() if folder else None
 
     template = ConversationService.build_new_conversation(
         user=user,
         initial_assistant_id=initial_assistant_id,
         is_workflow=bool(is_workflow),
-        folder=trimmed_folder or None,
+        folder=folder,
     )
 
     response = ConversationResponse.model_validate(template)
@@ -622,10 +621,7 @@ def get_conversation_folder_list(user: User = Depends(authenticate)) -> List[Bas
     """
     Get a list if all user folders
     """
-    folders = ConversationFolder.get_all_by_fields({"user_id.keyword": user.id})
-    for folder in folders or []:
-        folder.folder_name = folder.folder_name.strip()
-    return folders
+    return ConversationFolder.get_all_by_fields({"user_id.keyword": user.id})
 
 
 @router.delete(

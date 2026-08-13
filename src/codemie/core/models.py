@@ -686,33 +686,23 @@ class AssistantEvaluationRequest(BaseModel):
 
 class CreateConversationRequest(ConfiguredModel):
     initial_assistant_id: Optional[str] = None
-    folder: Optional[Annotated[str, StringConstraints(strip_whitespace=True)]] = None
+    folder: Optional[str] = None
     mcp_server_single_usage: Optional[bool] = False
     is_workflow: Optional[bool] = None
 
-    @field_validator("folder")
-    @classmethod
-    def _empty_folder_to_none(cls, value: Optional[str]) -> Optional[str]:
-        return value or None
-
 
 class UpdateConversationFolderRequest(ConfiguredModel):
-    folder: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+    folder: str
 
 
 class UpdateConversationRequest(ConfiguredModel):
-    folder: Optional[Annotated[str, StringConstraints(strip_whitespace=True)]] = None
+    folder: Optional[str] = None
     pinned: Optional[bool] = None
     name: Optional[str] = None
     active_assistant_id: Optional[str] = None
     llm_model: Optional[str] = None
     enable_image_generation: Optional[bool] = None
     image_generation_model: Optional[str] = None
-
-    @field_validator("folder")
-    @classmethod
-    def _empty_folder_to_none(cls, value: Optional[str]) -> Optional[str]:
-        return value or None
 
 
 class UpdateAiMessageRequest(ConfiguredModel):

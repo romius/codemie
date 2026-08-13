@@ -466,7 +466,6 @@ class ConversationService:
         """
         first_msg = (request.history[0].message or "") if request.history else ""
         conversation_name = cls._truncate_name(first_msg)
-        folder = request.folder.strip() if request.folder else request.folder
         return Conversation(
             id=conversation_id,
             conversation_id=conversation_id,
@@ -475,7 +474,7 @@ class ConversationService:
             history=request.history,
             assistant_ids=[request.assistant_id],
             initial_assistant_id=request.assistant_id,
-            folder=folder,
+            folder=request.folder,
             conversation_name=conversation_name,
         )
 
@@ -617,7 +616,6 @@ class ConversationService:
         is_workflow_conversation: bool = False,
     ):
         conversation_id = str(uuid.uuid4())
-        folder = folder.strip() if folder else folder
         initial_image_settings = {"enable_image_generation": None, "image_generation_model": None}
 
         if initial_assistant_id and not is_workflow_conversation:
@@ -744,7 +742,6 @@ class ConversationService:
 
     @classmethod
     def delete_conversation_folder(cls, user: User, folder: str, remove_conversations: bool = False):
-        folder = folder.strip()
         folder_conversations = (
             Conversation.get_all_by_fields(
                 {
@@ -769,8 +766,7 @@ class ConversationService:
     @classmethod
     def update_conversation_folder(cls, user: User, folder: str, new_folder: str):
         """Rename a conversation folder."""
-        old_folder = folder.strip()
-        ConversationFolder.delete_by_folder(old_folder, user.id)
+        ConversationFolder.delete_by_folder(folder, user.id)
         # Create new folder using model method
         ConversationFolder.create_folder(new_folder, user.id)
 
@@ -778,7 +774,7 @@ class ConversationService:
         folder_conversations = (
             Conversation.get_all_by_fields(
                 {
-                    CATEGORY_FIELD_KEY: old_folder,
+                    CATEGORY_FIELD_KEY: folder,
                     USER_FIELD_KEY: user.id,
                 }
             )
@@ -805,7 +801,7 @@ class ConversationService:
         if request.pinned is not None:
             conversation.pinned = request.pinned
         if request.folder is not None:
-            conversation.folder = request.folder.strip()
+            conversation.folder = request.folder
         if request.active_assistant_id and request.active_assistant_id in conversation.assistant_ids:
             # Make active_assistant_id to be the first in assistant_ids array
             assistant_ids = list(conversation.assistant_ids)
@@ -815,9 +811,9 @@ class ConversationService:
         conversation.update()
 
         # Update folder timestamps when conversation is moved between folders
-        if request.folder is not None and old_folder != conversation.folder and conversation.folder:
+        if request.folder is not None and old_folder != request.folder and request.folder:
             # Update new folder timestamp
-            ConversationFolder.touch_folder(conversation.folder, conversation.user_id)
+            ConversationFolder.touch_folder(request.folder, conversation.user_id)
 
         return conversation
 

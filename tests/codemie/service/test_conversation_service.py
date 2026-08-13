@@ -177,26 +177,6 @@ def test_conversation_service_update_ai_message(
     assert conversation.history[3].message == "New Message"
 
 
-@patch("codemie.service.conversation_service.Conversation.get_all_by_fields")
-@patch("codemie.rest_api.models.conversation_folder.ConversationFolder.create_folder")
-@patch("codemie.rest_api.models.conversation_folder.ConversationFolder.delete_by_folder")
-def test_update_conversation_folder_trims_old_folder_name_for_lookup(
-    mock_delete_by_folder,
-    mock_create_folder,
-    mock_get_all_by_fields,
-    mock_user,
-):
-    mock_get_all_by_fields.return_value = []
-
-    ConversationService.update_conversation_folder(
-        user=mock_user,
-        folder="  FAQ  ",
-        new_folder="FAQ Renamed",
-    )
-
-    mock_delete_by_folder.assert_called_once_with("FAQ", mock_user.id)
-
-
 @patch("codemie.rest_api.models.conversation.ConversationMetrics.calculate_metrics")
 @patch("codemie.rest_api.models.conversation_folder.ConversationFolder.get_by_folder")
 @patch("codemie.rest_api.models.conversation.ConversationMetrics.get_by_conversation_id")
@@ -221,71 +201,6 @@ def test_conversation_service_create(
 
     mock_metrics_save.assert_called()
     mock_conv_save.assert_called()
-
-
-@patch("codemie.rest_api.models.conversation_folder.ConversationFolder.save")
-@patch("codemie.rest_api.models.conversation.ConversationMetrics.calculate_metrics")
-@patch("codemie.rest_api.models.conversation_folder.ConversationFolder.get_by_folder")
-@patch("codemie.rest_api.models.conversation.ConversationMetrics.get_by_conversation_id")
-@patch("codemie.rest_api.models.conversation.ConversationMetrics.save")
-@patch("codemie.rest_api.models.conversation.Conversation.save")
-def test_conversation_service_create_trims_folder_name(
-    mock_conv_save,
-    mock_metrics_save,
-    mock_metrics_get,
-    mock_folder_get,
-    mock_calculate_metrics,
-    mock_folder_save,
-    mock_user,
-):
-    mock_metrics_get.side_effect = KeyError("Metrics not found")
-    mock_folder_get.return_value = None
-    mock_folder_save.return_value = None
-
-    conversation = ConversationService.create_conversation(mock_user, "123", folder="  FAQ  ")
-
-    assert conversation.folder == "FAQ"
-
-
-def test_create_conversation_with_history_trims_folder_name():
-    from codemie.rest_api.models.conversation import UpsertHistoryRequest
-
-    request = UpsertHistoryRequest(assistant_id="123", folder="  FAQ  ", history=[])
-    user = MagicMock()
-    user.id = "u1"
-    user.name = "user"
-
-    conversation = ConversationService._create_conversation_with_history(
-        conversation_id="conv-1", user=user, request=request
-    )
-
-    assert conversation.folder == "FAQ"
-
-
-@patch("codemie.service.conversation_service.Conversation.update")
-def test_update_conversation_trims_folder_name(mock_update, mock_conversation):
-    mock_update.return_value = True
-    request = UpdateConversationRequest(folder="  FAQ  ")
-
-    conversation = ConversationService.update_conversation(mock_conversation, request=request)
-
-    assert conversation.folder == "FAQ"
-
-
-@patch("codemie.service.conversation_service.ConversationFolder.delete_by_folder")
-@patch("codemie.service.conversation_service.Conversation.get_all_by_fields")
-def test_delete_conversation_folder_trims_folder_name_for_lookup(
-    mock_get_all_by_fields, mock_delete_by_folder, mock_user
-):
-    mock_get_all_by_fields.return_value = []
-
-    ConversationService.delete_conversation_folder(user=mock_user, folder="  FAQ  ")
-
-    mock_delete_by_folder.assert_called_once_with("FAQ", mock_user.id)
-    mock_get_all_by_fields.assert_called_once()
-    _, kwargs = mock_get_all_by_fields.call_args
-    called_fields = mock_get_all_by_fields.call_args[0][0]
-    assert called_fields["folder.keyword"] == "FAQ"
 
 
 @patch("codemie.rest_api.models.conversation.ConversationMetrics.calculate_metrics")
