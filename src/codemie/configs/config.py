@@ -732,6 +732,9 @@ class Config(BaseSettings):
     LEADERBOARD_KEEP_ROLLING_SNAPSHOTS: int = 30  # Number of rolling snapshots to retain
     LEADERBOARD_KEEP_ADHOC_SNAPSHOTS: int = 10  # Number of non-final adhoc/manual snapshots to retain
 
+    # Metrics Index Rotation Configuration
+    METRICS_ROTATION_ENABLED: bool = False  # Enables quarterly ES index rotation for codemie_metrics_logs
+
     # LiteLLM Spend Collector Configuration
     LITELLM_SPEND_COLLECTOR_ENABLED: bool = False  # Enables the spend collector APScheduler job
     LITELLM_SPEND_COLLECTOR_SCHEDULE: str = (

@@ -98,7 +98,7 @@ class TestGetAssistantsChats:
         # the structure by looking at what _parse_assistants_chats_result expects
 
         # This test would verify the query contains required elements:
-        # - FROM codemie_metrics_logs
+        # - FROM codemie_metrics_logs*
         # - WHERE metric_name.keyword == "conversation_assistant_usage"
         # - STATS BY (2-stage aggregation)
         # - First STATS groups by assistant + conversation_id

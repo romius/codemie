@@ -505,6 +505,20 @@ def _setup_activity_events_retention_scheduler(app: FastAPI):
     )
 
 
+def _setup_metrics_rotation_scheduler(app: FastAPI):
+    """Setup quarterly metrics index rotation scheduler."""
+    if not config.METRICS_ROTATION_ENABLED:
+        return
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+    from codemie.service.metrics_rotation.scheduler import MetricsRotationScheduler
+
+    rotation_scheduler_instance = AsyncIOScheduler()
+    rotation_scheduler = MetricsRotationScheduler(scheduler=rotation_scheduler_instance)
+    rotation_scheduler.start()
+    app.state.metrics_rotation_scheduler = rotation_scheduler
+    logger.info("Metrics rotation scheduler started successfully")
+
+
 def _initialize_jwt_keys():
     """Auto-generate RSA keys for local auth if not present (EPMCDME-10160)"""
     if config.IDP_PROVIDER == "local" and config.ENABLE_USER_MANAGEMENT:
@@ -600,6 +614,11 @@ async def _shutdown_services(app: FastAPI, tasks: list):
     if activity_events_retention_scheduler is not None:
         activity_events_retention_scheduler.shutdown()
         logger.info("Activity events retention scheduler shutdown complete")
+
+    metrics_rotation_scheduler = getattr(app.state, 'metrics_rotation_scheduler', None)
+    if metrics_rotation_scheduler is not None:
+        metrics_rotation_scheduler.stop()
+        logger.info("Metrics rotation scheduler shutdown complete")
 
     await close_llm_proxy_client()
     logger.info("LLM Proxy HTTP client closed")
@@ -731,6 +750,8 @@ async def lifespan(app: FastAPI):
     _setup_leaderboard_scheduler(app)
     _setup_stale_datasource_scheduler(app)
     _setup_activity_events_retention_scheduler(app)
+
+    _setup_metrics_rotation_scheduler(app)
     _schedule_budget_reconciliation(app, tasks)
 
     yield

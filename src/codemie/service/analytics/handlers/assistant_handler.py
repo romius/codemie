@@ -77,7 +77,7 @@ class AssistantHandler:
 
         # Build ES|QL query with 2-stage aggregation for accurate metrics
         esql_query = """
-FROM codemie_metrics_logs
+FROM codemie_metrics_logs*
 | WHERE metric_name.keyword == \"conversation_assistant_usage\"
 | STATS
     messages_per_conv = COUNT(*),
