@@ -412,7 +412,13 @@ class Config(BaseSettings):
     # Requires Redis. Disabled by default to avoid breaking OSS deployments without Redis.
     SHAREPOINT_PKCE_ENABLED: bool = False
     SHAREPOINT_OAUTH_CLIENT_ID: str = ""
-    SHAREPOINT_OAUTH_SCOPES: str = "Sites.Read.All Files.Read.All offline_access User.Read"
+    # Directory (tenant) ID of the app above. "common" only works for multi-tenant app
+    # registrations; single-tenant ones must use a tenant-specific endpoint (AADSTS50194).
+    SHAREPOINT_OAUTH_TENANT_ID: str = "common"
+    # ReadWrite is required by the SharePoint agent tool, which creates and edits site content.
+    # Delegated scopes are bounded by the signed-in user's own SharePoint permissions, so this
+    # grants no access the user does not already have. Requires admin consent once per tenant.
+    SHAREPOINT_OAUTH_SCOPES: str = "Sites.ReadWrite.All Files.ReadWrite.All offline_access User.Read"
 
     MCP_AUTH_ENABLED: bool = False
     MCP_AUTH_HMAC_SECRET: str = ""

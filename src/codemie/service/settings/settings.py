@@ -32,6 +32,7 @@ from codemie_tools.azure_devops.wiki.models import AzureDevOpsWikiConfig
 from codemie_tools.azure_devops.work_item.models import AzureDevOpsWorkItemConfig
 from codemie_tools.azure_devops.test_plan.models import AzureDevOpsTestPlanConfig
 from codemie_tools.data_management.elastic.models import ElasticConfig
+from codemie_tools.data_management.sharepoint.models import SharePointConfig
 from codemie_tools.data_management.sql.models import SQLConfig
 from codemie_tools.itsm.servicenow.models import ServiceNowConfig
 from codemie_tools.notification.email.models import EmailToolConfig
@@ -247,6 +248,7 @@ class SettingsService(BaseSettingsService):
         ElasticConfig: CredentialTypes.ELASTIC,
         SQLConfig: CredentialTypes.SQL,
         SonarConfig: CredentialTypes.SONAR,
+        SharePointConfig: CredentialTypes.SHAREPOINT,
     }
 
     @classmethod
@@ -387,6 +389,9 @@ class SettingsService(BaseSettingsService):
             oauth_service = GoogleOAuthSettingsService()
             request.credential_values = oauth_service.populate_credentials_from_flow(request.oauth_state, user_id)
 
+        if request.credential_type == CredentialTypes.SHAREPOINT:
+            request.credential_values = cls._sharepoint_credential_values(request, user_id)
+
         prepared_creds = cls._prepare_cred_values(request.credential_type, request.credential_values)
         prepared_creds = cls._filter_empty_sensitive_fields(prepared_creds)
 
@@ -480,6 +485,9 @@ class SettingsService(BaseSettingsService):
 
             request.credential_values = new_credentials
 
+        if request.credential_type == CredentialTypes.SHAREPOINT:
+            request.credential_values = cls._sharepoint_credential_values(request, user_id or user_setting.user_id)
+
         prepared_creds = cls._prepare_cred_values(request.credential_type, request.credential_values)
 
         prepared_creds = cls._filter_empty_sensitive_fields(prepared_creds)
@@ -506,12 +514,7 @@ class SettingsService(BaseSettingsService):
         existing_creds_dict = {cred.key: cred for cred in user_setting.credential_values}
 
         force_all = request.credential_type == CredentialTypes.ENVIRONMENT_VARS
-        # --- Set setting_hash for PLUGIN ---
-        if request.credential_type == CredentialTypes.PLUGIN:
-            plugin_key_value = next((cred.value for cred in prepared_creds if cred.key == cls.PLUGIN_KEY), None)
-            if plugin_key_value != cls.MASKED_VALUE:
-                user_setting.setting_hash = hash_string(str(plugin_key_value))
-        # -----------------------------------
+        cls._apply_plugin_setting_hash(request, user_setting, prepared_creds)
         cls._handle_new_creds(existing_creds_dict, force_all, prepared_creds, user_setting)
         if settings_type == SettingType.PROJECT:
             user_setting.setting_type = SettingType.PROJECT
@@ -561,6 +564,13 @@ class SettingsService(BaseSettingsService):
         from codemie.enterprise.litellm.credentials import clear_litellm_user_credentials_cache
 
         clear_litellm_user_credentials_cache(user_id)
+
+    @classmethod
+    def _apply_plugin_setting_hash(cls, request, user_setting, prepared_creds) -> None:
+        if request.credential_type == CredentialTypes.PLUGIN:
+            plugin_key_value = next((cred.value for cred in prepared_creds if cred.key == cls.PLUGIN_KEY), None)
+            if plugin_key_value != cls.MASKED_VALUE:
+                user_setting.setting_hash = hash_string(str(plugin_key_value))
 
     @classmethod
     def _handle_new_creds(cls, existing_creds_dict, force_all, prepared_creds, user_setting):
@@ -732,19 +742,12 @@ class SettingsService(BaseSettingsService):
 
         def _get_config(repo_link: str = None) -> T:
             # Otherwise retrieve from settings
-            search_fields_dict = {
-                SearchFields.CREDENTIAL_TYPE: credential_type,
-                SearchFields.PROJECT_NAME: project_name,
-            }
-            if user_id:
-                search_fields_dict[SearchFields.USER_ID] = user_id
-            else:  # If user_id is not provided, means getting project setting type
-                search_fields_dict[SearchFields.SETTING_TYPE] = SettingType.PROJECT.value
-
-            if repo_link:  # Handle git credentials
-                search_fields_dict[SearchFields.CREDENTIAL_VALUES_KEY] = cls.URL
-                search_fields_dict[SearchFields.CREDENTIAL_VALUES_VALUE] = repo_link
-                logger.debug(f"Retrieve git creds for {repo_link}. Search fields: {search_fields_dict}")
+            search_fields_dict = cls._build_setting_search_fields(
+                credential_type=credential_type,
+                project_name=project_name,
+                user_id=user_id,
+                repo_link=repo_link,
+            )
             return cls.retrieve_setting(search_fields_dict, assistant_id, integration_id)
 
         setting = _get_config(**kwargs)
@@ -755,15 +758,60 @@ class SettingsService(BaseSettingsService):
                     user_id=user_id,
                     credential_type=credential_type,
                 )
-            # Handle git creds by root url match if repo_link is passed
-            if (repo_base_url := kwargs.get("repo_link")) and repo_base_url.count("/") > 2:
-                repo_base_url = get_url_domain(repo_base_url)
-                setting = _get_config(repo_link=repo_base_url)
-                if not setting:
-                    return None
-            else:
+            setting = cls._retrieve_setting_by_repo_root(kwargs.get("repo_link"), _get_config)
+            if not setting:
                 return None
-        return config_class(**setting.normalize_values())
+
+        return cls._build_config(config_class, setting)
+
+    @classmethod
+    def _build_setting_search_fields(
+        cls,
+        credential_type: CredentialTypes,
+        project_name: Optional[str],
+        user_id: Optional[str],
+        repo_link: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Build the search fields used to locate a stored setting."""
+        search_fields_dict = {
+            SearchFields.CREDENTIAL_TYPE: credential_type,
+            SearchFields.PROJECT_NAME: project_name,
+        }
+        if user_id:
+            search_fields_dict[SearchFields.USER_ID] = user_id
+        else:  # If user_id is not provided, means getting project setting type
+            search_fields_dict[SearchFields.SETTING_TYPE] = SettingType.PROJECT.value
+
+        if repo_link:  # Handle git credentials
+            search_fields_dict[SearchFields.CREDENTIAL_VALUES_KEY] = cls.URL
+            search_fields_dict[SearchFields.CREDENTIAL_VALUES_VALUE] = repo_link
+            logger.debug(f"Retrieve git creds for {repo_link}. Search fields: {search_fields_dict}")
+        return search_fields_dict
+
+    @staticmethod
+    def _retrieve_setting_by_repo_root(repo_link: Optional[str], retrieve: callable):
+        """Second-chance lookup for git credentials stored against the repository root URL.
+
+        Returns None for anything that is not a repository URL, so non-git configs simply
+        fall through to "no setting found".
+        """
+        if not repo_link or repo_link.count("/") <= 2:
+            return None
+        return retrieve(repo_link=get_url_domain(repo_link))
+
+    @staticmethod
+    def _build_config[T](config_class: Type[T], setting) -> T:
+        """Instantiate a tool config from a stored setting."""
+        config = config_class(**setting.normalize_values())
+        # A delegated SharePoint token is refreshed here, before any tool sees it: the
+        # tool can reach neither the app registration nor this record to renew it.
+        if setting.credential_type == CredentialTypes.SHAREPOINT:
+            from codemie.service.sharepoint_pkce_service import get_valid_access_token
+
+            access_token = get_valid_access_token(setting)
+            if access_token:
+                config.access_token = access_token
+        return config
 
     @classmethod
     def get_credentials(
@@ -1491,6 +1539,55 @@ class SettingsService(BaseSettingsService):
             expires_at=expires_at,
             username=_get(cls.USERNAME),
         )
+
+    # Written by the delegated sign-in; meaningless once an integration uses app auth.
+    SHAREPOINT_DELEGATED_KEYS = ("access_token", "refresh_token", "expires_at", "username")
+
+    @classmethod
+    def _drop_sharepoint_delegated_credentials(cls, request) -> List[CredentialValues]:
+        """Strip delegated tokens from a SharePoint setting that is saved as app auth.
+
+        The mirror of `_sharepoint_oauth_credentials`: switching to an app registration
+        must not leave a usable sign-in behind, or the tool would keep acting as the
+        previously signed-in user instead of as the configured application.
+        """
+        values = request.credential_values or []
+        if next((cred.value for cred in values if cred.key == "auth_type"), "app") != "app":
+            return values
+        return [cred for cred in values if cred.key not in cls.SHAREPOINT_DELEGATED_KEYS]
+
+    @classmethod
+    def _sharepoint_credential_values(cls, request, user_id: str) -> List[CredentialValues]:
+        """Pick the credential values a SharePoint setting is saved with.
+
+        An `oauth_state` means the user just completed a sign-in, so the tokens come from
+        that flow. Anything else is an app-registration save, which must not keep a
+        previous sign-in behind or the tool would still act as that user.
+        """
+        if request.oauth_state:
+            return cls._sharepoint_oauth_credentials(request, user_id)
+        return cls._drop_sharepoint_delegated_credentials(request)
+
+    @classmethod
+    def _sharepoint_oauth_credentials(cls, request, user_id: str) -> List[CredentialValues]:
+        """Merge delegated sign-in tokens into the submitted SharePoint credential values.
+
+        App-auth fields are dropped on purpose: a delegated integration must not keep stale
+        tenant/client/secret values, or it would be ambiguous which identity the tool acts as.
+        Non-auth values the user typed (notably `url`) are preserved.
+        """
+        from codemie.service.sharepoint_pkce_service import SharePointPKCEService
+
+        oauth_values = SharePointPKCEService().populate_credentials_from_flow(request.oauth_state, user_id)
+        replaced_keys = {cred.key for cred in oauth_values}
+        app_auth_keys = {cls.TENANT_ID, cls.CLIENT_ID, cls.CLIENT_SECRET}
+
+        preserved = [
+            cred
+            for cred in (request.credential_values or [])
+            if cred.key not in replaced_keys and cred.key not in app_auth_keys
+        ]
+        return preserved + oauth_values
 
     @classmethod
     def update_sharepoint_oauth_tokens(

@@ -793,11 +793,7 @@ class ToolkitService:
             logger.info(f"Skipping tool: '{assistant_tool.name}'. No config found in database.")
             return None
 
-        from codemie_tools.base.models import FileConfigMixin
-
-        if isinstance(stored_config, FileConfigMixin) and file_objects:
-            stored_config.input_files = file_objects
-            logger.debug("Adding input files: %s", len(file_objects))
+        cls._inject_runtime_dependencies(stored_config, file_objects)
 
         # Pass chat_model at construction time for tools that declare it.
         # Use a multimodal LLM (needed for image/OCR), falling back to the main model.
@@ -817,6 +813,18 @@ class ToolkitService:
                 logger.debug(f"Failed to inject chat_model into '{assistant_tool.name}': {e}")
 
         return tool_definition.tool_class(config=stored_config)
+
+    @staticmethod
+    def _inject_runtime_dependencies(stored_config: Any, file_objects: Optional[List[FileObject]]) -> None:
+        """Attach request-scoped dependencies a tool cannot obtain for itself.
+
+        Both are opt-in per config class, so configs that declare neither mixin are untouched.
+        """
+        from codemie_tools.base.models import FileConfigMixin
+
+        if isinstance(stored_config, FileConfigMixin) and file_objects:
+            stored_config.input_files = file_objects
+            logger.debug("Adding input files: %s", len(file_objects))
 
     @classmethod
     def _tool_reporting_the_missing_integration(

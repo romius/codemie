@@ -118,12 +118,17 @@ _DEVICE_CODE_ERROR_DESCRIPTIONS = {
 }
 
 
+def _effective_tenant(tenant_id: Optional[str]) -> str:
+    # "common" only works for multi-tenant app registrations (AADSTS50194).
+    return tenant_id or config.SHAREPOINT_OAUTH_TENANT_ID or "common"
+
+
 def _device_url(tenant_id: Optional[str]) -> str:
-    return _MS_BASE.format(tenant=tenant_id or "common") + "/devicecode"
+    return _MS_BASE.format(tenant=_effective_tenant(tenant_id)) + "/devicecode"
 
 
 def _token_url(tenant_id: Optional[str]) -> str:
-    return _MS_BASE.format(tenant=tenant_id or "common") + "/token"
+    return _MS_BASE.format(tenant=_effective_tenant(tenant_id)) + "/token"
 
 
 def _sanitize_device_error(error: str) -> str:

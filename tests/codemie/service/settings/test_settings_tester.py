@@ -354,3 +354,75 @@ def test_test_sonar_fail(mock_tool_class):
 
     assert result == (False, "Some Error occurred")
     mock_tool.healthcheck.assert_called_once()
+
+
+def _sharepoint_request(**overrides):
+    values = {
+        'url': 'https://contoso.sharepoint.com',
+        'auth_type': 'app',
+        'tenant_id': 'tenant-id',
+        'client_id': 'client-id',
+        'client_secret': 'client-secret',
+    }
+    values.update(overrides)
+    return TestSettingRequest(
+        credential_type=CredentialTypes.SHAREPOINT,
+        credential_values=[CredentialValues(key=key, value=value) for key, value in values.items()],
+    )
+
+
+@patch('codemie.service.settings.settings_tester.SharePointTool')
+def test_sharepoint_handler_is_registered(mock_tool_class):
+    """Regression: SharePoint had no handler, so POST /settings/test/ returned HTTP 422."""
+    mock_tool = MagicMock()
+    mock_tool.healthcheck.return_value = (True, '')
+    mock_tool_class.return_value = mock_tool
+
+    instance = SettingsTester(_sharepoint_request())
+
+    assert instance.handlers[CredentialTypes.SHAREPOINT] == SettingsTester._test_sharepoint
+    assert instance.test() == (True, '')
+
+
+@patch('codemie.service.settings.settings_tester.SharePointTool')
+def test_test_sharepoint_success(mock_tool_class):
+    mock_tool = MagicMock()
+    mock_tool.healthcheck.return_value = (True, '')
+    mock_tool_class.return_value = mock_tool
+
+    instance = SettingsTester(_sharepoint_request())
+
+    result = instance._test_sharepoint()
+
+    assert result == (True, '')
+    mock_tool.healthcheck.assert_called_once()
+
+
+@patch('codemie.service.settings.settings_tester.SharePointTool')
+def test_test_sharepoint_fail(mock_tool_class):
+    mock_tool = MagicMock()
+    mock_tool.healthcheck.return_value = (False, "Some Error occurred")
+    mock_tool_class.return_value = mock_tool
+
+    instance = SettingsTester(_sharepoint_request())
+
+    result = instance._test_sharepoint()
+
+    assert result == (False, "Some Error occurred")
+    mock_tool.healthcheck.assert_called_once()
+
+
+def test_test_sharepoint_ignores_stored_delegated_tokens():
+    """Stored SharePoint settings may still carry datasource OAuth keys; they must not break config building."""
+    instance = SettingsTester(
+        _sharepoint_request(access_token='stale', refresh_token='stale', username='someone@contoso.com')
+    )
+
+    with patch('codemie.service.settings.settings_tester.SharePointTool') as mock_tool_class:
+        mock_tool_class.return_value.healthcheck.return_value = (True, '')
+
+        assert instance._test_sharepoint() == (True, '')
+
+    config = mock_tool_class.call_args.kwargs['config']
+    assert config.tenant_id == 'tenant-id'
+    assert config.client_secret == 'client-secret'

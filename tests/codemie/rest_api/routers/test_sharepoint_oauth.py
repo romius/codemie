@@ -24,9 +24,21 @@ from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
 import codemie.rest_api.routers.sharepoint_oauth as sharepoint_oauth
+from codemie.configs import config
 from codemie.core.exceptions import ExtendedHTTPException
 from codemie.rest_api.security.user import User
 from codemie.utils.oauth_html_utils import html_error_page
+
+
+@pytest.fixture(autouse=True)
+def _default_tenant(monkeypatch):
+    """Pin the tenant so these tests do not depend on a developer's local .env.
+
+    SHAREPOINT_OAUTH_TENANT_ID selects the Microsoft endpoint; without this the
+    expected /common URLs below silently stop matching when it is configured.
+    """
+    monkeypatch.setattr(config, "SHAREPOINT_OAUTH_TENANT_ID", "common")
+
 
 _TEST_USER = User(
     id="test_user_id",
@@ -287,11 +299,15 @@ def test_status_pending():
     mock_redis.delete.assert_not_called()
 
 
-def test_status_success_consumes_token():
+def test_status_success_returns_token_and_retains_result():
+    """The result is kept (until its TTL) so saving an integration can still read the tokens.
+
+    Polling for status and saving the integration are two separate requests; deleting on
+    read would leave the save with nothing to store.
+    """
     mock_redis = MagicMock()
     result = {"status": "success", "access_token": "tok-xyz", "username": "user@example.com", "user_id": "test_user_id"}
     mock_redis.get.return_value = json.dumps(result).encode()
-    mock_redis.delete.return_value = 1
 
     with patch.object(sharepoint_oauth._pkce_service, "_redis", mock_redis):
         response = client.get("/v1/sharepoint/oauth/status/success-state")
@@ -302,14 +318,32 @@ def test_status_success_consumes_token():
     assert data["access_token"] == "tok-xyz"
     assert data["username"] == "user@example.com"
     assert "user_id" not in data
-    mock_redis.delete.assert_called_once_with("codemie:sp_pkce:result:success-state")
+    mock_redis.delete.assert_not_called()
 
 
-def test_status_error_consumes():
+def test_status_never_returns_the_refresh_token():
+    """The refresh token is long-lived and must stay server-side."""
+    mock_redis = MagicMock()
+    result = {
+        "status": "success",
+        "access_token": "tok-xyz",
+        "refresh_token": "refresh-xyz",
+        "username": "user@example.com",
+        "user_id": "test_user_id",
+    }
+    mock_redis.get.return_value = json.dumps(result).encode()
+
+    with patch.object(sharepoint_oauth._pkce_service, "_redis", mock_redis):
+        response = client.get("/v1/sharepoint/oauth/status/success-state")
+
+    assert "refresh-xyz" not in response.text
+    assert "refresh_token" not in response.json()
+
+
+def test_status_error_is_reported():
     mock_redis = MagicMock()
     result = {"status": "error", "message": "Authorization was declined. Please try again.", "user_id": "test_user_id"}
     mock_redis.get.return_value = json.dumps(result).encode()
-    mock_redis.delete.return_value = 1
 
     with patch.object(sharepoint_oauth._pkce_service, "_redis", mock_redis):
         response = client.get("/v1/sharepoint/oauth/status/error-state")
@@ -318,7 +352,7 @@ def test_status_error_consumes():
     data = response.json()
     assert data["status"] == "error"
     assert data["message"]
-    mock_redis.delete.assert_called_once_with("codemie:sp_pkce:result:error-state")
+    mock_redis.delete.assert_not_called()
 
 
 def test_initiate_encrypts_state_in_redis():

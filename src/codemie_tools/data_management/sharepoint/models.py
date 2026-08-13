@@ -19,12 +19,13 @@ from pydantic import Field
 from codemie_tools.base.models import (
     CodeMieToolConfig,
     CredentialTypes,
+    FileConfigMixin,
     RequiredField,
     get_tool_default,
 )
 
 
-class SharePointConfig(CodeMieToolConfig):
+class SharePointConfig(CodeMieToolConfig, FileConfigMixin):
     TOOL_NAME: ClassVar[str] = "sharepoint"
 
     credential_type: CredentialTypes = Field(default=CredentialTypes.SHAREPOINT, exclude=True, frozen=True)
@@ -32,4 +33,31 @@ class SharePointConfig(CodeMieToolConfig):
         default=get_tool_default(TOOL_NAME, "url") or "",
         description="SharePoint tenant root URL",
         json_schema_extra={"placeholder": get_tool_default(TOOL_NAME, "url_placeholder") or ""},
+    )
+    auth_type: str = Field(
+        default="app",
+        description=(
+            "Authentication type: 'app' for an Azure app registration, "
+            "'oauth' for a delegated Sign in with Microsoft integration."
+        ),
+    )
+
+    # Delegated ('oauth') credential. Set by the platform, which renews it when stale;
+    # the refresh token and its expiry stay on the setting and never reach a tool.
+    access_token: str = Field(
+        default="", description="Delegated access token", json_schema_extra={"sensitive": True, "hidden": True}
+    )
+
+    # App ('app') credentials.
+    tenant_id: str = RequiredField(
+        description="Azure AD tenant ID",
+        json_schema_extra={"placeholder": "12345678-1234-1234-1234-123456789012"},
+    )
+    client_id: str = RequiredField(
+        description="Azure AD application (client) ID",
+        json_schema_extra={"placeholder": "12345678-1234-1234-1234-123456789012"},
+    )
+    client_secret: str = RequiredField(
+        description="Azure AD application client secret",
+        json_schema_extra={"placeholder": "client secret", "sensitive": True},
     )

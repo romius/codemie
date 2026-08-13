@@ -21,7 +21,7 @@ class TestDataManagementToolkit:
         toolkit_ui = DataManagementToolkit.get_definition()
         assert isinstance(toolkit_ui, DataManagementToolkitUI)
         assert toolkit_ui.toolkit == ToolSet.DATA_MANAGEMENT
-        assert len(toolkit_ui.tools) == 2
+        assert len(toolkit_ui.tools) == 3
         assert toolkit_ui.label == ToolSet.DATA_MANAGEMENT.value
 
 
@@ -32,9 +32,10 @@ class TestDataManagementToolkitUI:
 
     def test_tools_property(self):
         toolkit_ui = DataManagementToolkitUI()
-        assert len(toolkit_ui.tools) == 2
+        assert len(toolkit_ui.tools) == 3
 
         # Check that the tools are correctly defined
         tool_names = [tool.name for tool in toolkit_ui.tools]
         assert "elastic" in tool_names
         assert "sql" in tool_names
+        assert "sharepoint" in tool_names

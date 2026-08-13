@@ -28,6 +28,8 @@ from codemie_tools.core.project_management.confluence.models import ConfluenceCo
 from codemie_tools.core.project_management.confluence.tools import GenericConfluenceTool
 from codemie_tools.core.project_management.jira.models import JiraConfig
 from codemie_tools.core.project_management.jira.tools import GenericJiraIssueTool
+from codemie_tools.data_management.sharepoint.models import SharePointConfig
+from codemie_tools.data_management.sharepoint.tools import SharePointTool
 from codemie_tools.git.toolkit import GitToolkit
 from codemie_tools.itsm.servicenow.models import ServiceNowConfig
 from codemie_tools.itsm.servicenow.tools import ServiceNowTableTool
@@ -94,10 +96,14 @@ class SettingsTester(SettingsService):
             CredentialTypes.GIT: SettingsTester._test_git,
             CredentialTypes.SONAR: SettingsTester._test_sonar,
             CredentialTypes.REPORT_PORTAL: SettingsTester._test_report_portal,
+            CredentialTypes.SHAREPOINT: SettingsTester._test_sharepoint,
         }
 
     def _test_snow(self) -> Tuple[bool, str]:
         return ServiceNowTableTool(config=ServiceNowConfig(**self.credential_values)).healthcheck()
+
+    def _test_sharepoint(self) -> Tuple[bool, str]:
+        return SharePointTool(config=SharePointConfig(**self.credential_values)).healthcheck()
 
     def _test_jira(self) -> Tuple[bool, str]:
         return GenericJiraIssueTool(config=JiraConfig(**self.credential_values)).healthcheck()
