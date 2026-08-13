@@ -44,6 +44,7 @@ from codemie.rest_api.models.assistant import (
 )
 from codemie.rest_api.models.conversation import Conversation
 from codemie.rest_api.security.user import User
+from codemie.rest_api.security.workflow_context import get_current_workflow_id
 from codemie.service.assistant import VirtualAssistantService
 from codemie.service.assistant.assistant_engine_builder import LangGraphAssistantBuilder
 from codemie.service.assistant.assistant_user_mapping_service import assistant_user_mapping_service
@@ -52,20 +53,7 @@ from codemie.service.llm_service.llm_service import llm_service
 from codemie.service.llm_service.utils import set_llm_context
 from codemie.service.tools.tools_info_service import ToolsInfoService
 from codemie.service.tools.toolkit_service import ToolkitService
-from codemie.service.mcp.toolkit_service import MCP_TOOL_CONFIG_PREFIX
 from codemie.service.skills.skill_contributions import SkillContributionsResolver
-
-
-# Registry of tool-config name prefixes whose per-user mappings participate in the
-# "extended gate" — i.e. they are applied to any shared assistant, not only global
-# marketplace ones. Data-driven on purpose: enrolling another toolkit type later is a
-# one-line addition here, with no change to the gating logic below.
-EXTENDED_GATE_TOOL_CONFIG_PREFIXES: tuple[str, ...] = (MCP_TOOL_CONFIG_PREFIX,)
-
-
-def _is_extended_gate_tool_config(name: str) -> bool:
-    """Return True if a mapping entry belongs to a toolkit type in the extended gate."""
-    return any(name.startswith(prefix) for prefix in EXTENDED_GATE_TOOL_CONFIG_PREFIXES)
 
 
 class AssistantService:
@@ -367,10 +355,15 @@ Instead, leverage the schema's data to generate deeper insights and improve tool
     ) -> None:
         """Apply user-specific tool mappings for shared assistants.
 
-        Global marketplace assistants keep the full per-user mapping behavior. For other
-        shared assistants (e.g. project-shared) only toolkit types enrolled in the extended
-        gate (currently MCP) receive per-user mappings; regular tool mappings stay scoped to
-        marketplace assistants, so their behavior is unchanged.
+        Every shared assistant — marketplace or project-shared — resolves each unpinned slot
+        against the running user's own selection, for regular toolkits as well as MCP servers.
+        Private assistants have no other users and stay a no-op.
+
+        Inside a workflow run the executing workflow is bound to the context for the whole run,
+        and the user's workflow-scoped selection then overrides their assistant-wide one per slot.
+        Reading it from there rather than from a parameter keeps one source of truth with the
+        settings-handler chain, which resolves the same scope the same way. Chat binds no workflow
+        and keeps reading the assistant scope exactly as before.
         """
         # Global marketplace assistants are handled by the is_global branch in
         # _select_gated_tool_configs, so let them through even in the rare is_global && not-shared
@@ -384,13 +377,20 @@ Instead, leverage the schema's data to generate deeper insights and improve tool
             mcp_server_names = [s.name for s in assistant.mcp_servers]
             logger.debug(f"Assistant has {len(assistant.mcp_servers)} MCP servers: {mcp_server_names}")
 
-        mapping = assistant_user_mapping_service.get_mapping(assistant_id=assistant.id, user_id=user.id)
+        workflow_id = get_current_workflow_id()
+        if workflow_id:
+            tools_config, _ = assistant_user_mapping_service.get_effective_tools_config(
+                assistant_id=assistant.id, user_id=user.id, workflow_id=workflow_id
+            )
+        else:
+            mapping = assistant_user_mapping_service.get_mapping(assistant_id=assistant.id, user_id=user.id)
+            tools_config = mapping.tools_config if mapping else []
 
-        if not mapping or not mapping.tools_config:
+        if not tools_config:
             logger.debug(f"No tool mappings found for shared assistant {assistant.id} and user {user.id}")
             return
 
-        eligible_configs = cls._select_gated_tool_configs(assistant, mapping.tools_config)
+        eligible_configs = cls._select_gated_tool_configs(assistant, tools_config)
 
         if not eligible_configs:
             logger.debug(f"No gate-eligible tool mappings for assistant {assistant.id} and user {user.id}")
@@ -419,16 +419,15 @@ Instead, leverage the schema's data to generate deeper insights and improve tool
 
     @classmethod
     def _select_gated_tool_configs(cls, assistant: Assistant, tools_config: list) -> list:
-        """Select which mapping entries are allowed through the per-user mapping gate.
+        """Select which mapping entries reach the request.
 
-        - Global marketplace assistants: all mappings (unchanged behavior).
-        - Other shared assistants: only mappings for toolkit types in the extended gate
-          (currently MCP), so regular tools remain marketplace-only.
+        Every shared assistant — marketplace or project-shared — applies the user's own selection,
+        for MCP servers and regular tools alike. Restricting regular tools to marketplace
+        assistants here left this path disagreeing with the settings-handler chain, which resolves
+        the same mapping regardless of ``is_global``: the same slot could resolve to the user's
+        integration through one path and to the author's base config through the other.
         """
-        if assistant.is_global:
-            return list(tools_config)
-
-        return [tc for tc in tools_config if _is_extended_gate_tool_config(tc.name)]
+        return list(tools_config)
 
     @classmethod
     def _prepare_system_prompt(

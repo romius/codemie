@@ -329,6 +329,39 @@ async def test_create_workflow(mock_get_guardrail_assignments, create_workflow_r
 
 
 @pytest.mark.asyncio
+@patch("codemie.service.guardrail.guardrail_service.GuardrailService.get_entity_guardrail_assignments")
+async def test_create_workflow_reports_consumer_slot_warnings(
+    mock_get_guardrail_assignments, create_workflow_request, request_header
+):
+    # The first save of a new workflow falls under the same rule as an update: a slot left to the
+    # consuming user must not block the save, and the author has to be told it depends on each
+    # user's own setup.
+    warning = {"assistant_ref": "assistant_1", "tool_name": "generic_confluence_tool", "credential_type": "Confluence"}
+    with (
+        patch(
+            "codemie.service.workflow_service.WorkflowService.create_workflow",
+            return_value=workflow_config_data,
+        ),
+        patch("codemie.service.workflow_service.WorkflowService.save_workflow_schema"),
+        patch("codemie.workflows.workflow.WorkflowExecutor.validate_workflow_and_draw"),
+        patch("codemie.workflows.workflow.WorkflowExecutor.validate_workflow"),
+        patch("codemie.rest_api.routers.workflow.project_access_check"),
+        patch(
+            "codemie.rest_api.routers.workflow.collect_consumer_slot_integration_warnings",
+            return_value=[warning],
+        ),
+    ):
+        mock_get_guardrail_assignments.return_value = None
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+            response = await ac.post("/v1/workflows", json=create_workflow_request.model_dump(), headers=request_header)
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["warnings"] == [warning]
+
+
+@pytest.mark.asyncio
 async def test_create_autonomous_workflow(create_autonomous_workflow_request, request_header):
     with (
         patch(

@@ -16,8 +16,16 @@ from typing import Self, Optional
 
 from codemie.rest_api.models.settings import Settings, SettingsBase, SettingType
 from codemie.service.settings.base_settings import SearchFields
-from codemie.repository.assistants.assistant_user_mapping_repository import AssistantUserMappingRepositoryImpl
-from codemie.service.settings.settings_util import search_settings_by_id, search_assistant, search_assistant_settings
+from codemie.configs import logger
+from codemie.rest_api.security.user_context import get_current_user
+from codemie.rest_api.security.workflow_context import get_current_workflow_id
+from codemie.service.assistant.assistant_user_mapping_service import assistant_user_mapping_service
+from codemie.service.settings.settings_util import (
+    search_settings_by_id,
+    search_assistant,
+    search_assistant_settings,
+    user_can_access_setting,
+)
 
 
 class SettingsHandler:
@@ -37,6 +45,23 @@ class SettingsHandler:
             return self._next_handler.handle(search_fields, **kwargs)
 
         return None
+
+
+def _current_user_can_use_mapped_setting(setting: SettingsBase, assistant) -> bool:
+    """Check that the requesting user may still use an integration stored in their mapping.
+
+    Access is granted on save, but an integration can later be deleted, unshared or moved out of
+    the user's reach, and a stored mapping must not keep resolving it. Mirrors the MCP path's
+    runtime re-check and applies the same rule as the save gate: the assistant's project plus its
+    marketplace flag. Fails closed when no user is in context, so a mapping can never surface
+    credentials outside the user's access.
+    """
+    current_user = get_current_user()
+    if not current_user:
+        logger.warning("No current user in context while applying an integration mapping; skipping it")
+        return False
+
+    return user_can_access_setting(setting, current_user, assistant.project, marketplace=bool(assistant.is_global))
 
 
 class AssistantUserMappingSettingsHandler(SettingsHandler):
@@ -59,17 +84,36 @@ class AssistantUserMappingSettingsHandler(SettingsHandler):
             # if global assistant and assistant has setting - skip
             return next_handler()
 
-        mapping = AssistantUserMappingRepositoryImpl().get_mapping(
-            assistant_id=assistant_id, user_id=search_fields[SearchFields.USER_ID]
+        user_id = search_fields[SearchFields.USER_ID]
+        workflow_id = get_current_workflow_id()
+
+        # Inside a workflow run the two scopes merge per slot — the assistant-wide selection is the
+        # baseline and the workflow-scoped one overrides individual slots — which is exactly what
+        # the mapping API and the MCP path resolve, so every channel picks the same integration.
+        # Falling back per row instead would hide slots the user selected only assistant-wide.
+        # Outside a workflow (chat, assistant page) only the assistant scope may ever be read,
+        # otherwise a selection made for one workflow would leak everywhere.
+        tools_config = (
+            assistant_user_mapping_service.get_effective_tools_config(
+                assistant_id=assistant_id, user_id=user_id, workflow_id=workflow_id
+            )[0]
+            if workflow_id
+            else None
         )
 
-        if not mapping:
+        if tools_config is None:
+            mapping = assistant_user_mapping_service.get_mapping(assistant_id=assistant_id, user_id=user_id)
+            tools_config = mapping.tools_config if mapping else []
+
+        if not tools_config:
             return next_handler()
 
-        for config in mapping.tools_config:
+        for config in tools_config:
             if settings := Settings.get_by_fields(
                 {"id": config.integration_id, "credential_type": search_fields[SearchFields.CREDENTIAL_TYPE]}
             ):
+                if not _current_user_can_use_mapped_setting(settings, assistant):
+                    continue
                 return settings
 
         return next_handler()

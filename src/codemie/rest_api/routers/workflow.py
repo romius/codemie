@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
 import base64
 import json
 from typing import Any, Dict, List, Optional
@@ -40,6 +41,7 @@ from codemie.core.workflow_models import (
 from codemie.core.workflow_models.workflow_config import WorkflowMode
 from codemie.rest_api.models.guardrail import GuardrailEntity
 from codemie.rest_api.routers.utils import raise_access_denied, raise_forbidden, run_in_thread_pool, raise_not_found
+from codemie.workflows.validation.resources import collect_consumer_slot_integration_warnings
 from codemie.rest_api.security.authentication import authenticate, project_access_check
 from codemie.rest_api.security.user import User
 from codemie.rest_api.models.workflow_generator import (
@@ -87,6 +89,25 @@ def _strip_workflow_mcp_servers(workflow_config: WorkflowConfig) -> None:
     for tool in workflow_config.tools or []:
         if tool.mcp_server:
             tool.mcp_server = MCPAccessControlService._strip_one(tool.mcp_server)
+
+
+def _consumer_slot_warnings_sync(workflow_config: WorkflowConfig, user: User) -> list[dict]:
+    """Collect the advisory slot warnings for an already-saved workflow.
+
+    Failures stay here: the workflow is already stored at this point, so a broken advisory must
+    never turn a successful save into an error the client would read as "nothing was saved".
+    """
+    try:
+        return collect_consumer_slot_integration_warnings(workflow_config, user)
+    except Exception as e:
+        logger.warning(f"Failed to collect consumer slot warnings for a saved workflow: {e}")
+        return []
+
+
+async def _consumer_slot_warnings(workflow_config: WorkflowConfig, user: User) -> list[dict]:
+    """Same, for async handlers: collecting reads assistants and integrations, so keep it off the
+    event loop."""
+    return await asyncio.to_thread(_consumer_slot_warnings_sync, workflow_config, user)
 
 
 @router.get(
@@ -246,10 +267,16 @@ def get_workflow(workflow_id: str, user: User = Depends(authenticate)):
     return workflow_config
 
 
+class WorkflowSaveResponse(BaseResponseWithData):
+    """Save response that can carry non-blocking notes about the saved configuration."""
+
+    warnings: list[dict] = []
+
+
 @router.post(
     "/workflows",
     status_code=status.HTTP_200_OK,
-    response_model=BaseResponseWithData,
+    response_model=WorkflowSaveResponse,
     response_model_by_alias=True,
 )
 def create_workflow(
@@ -292,7 +319,11 @@ def create_workflow(
             GuardrailEntity.WORKFLOW,
             str(workflow_config.id),
         )
-        return {"message": "Workflow created successfully", "data": workflow_config}
+        return {
+            "message": "Workflow created successfully",
+            "data": workflow_config,
+            "warnings": _consumer_slot_warnings_sync(workflow_config, user),
+        }
     except Exception as e:
         formatted_exception = e.message if isinstance(e, ExtendedHTTPException) else str(e).strip()
         details = (
@@ -311,7 +342,7 @@ def create_workflow(
 @router.put(
     "/workflows/{workflow_id}",
     status_code=status.HTTP_200_OK,
-    response_model=BaseResponseWithData,
+    response_model=WorkflowSaveResponse,
     response_model_by_alias=True,
 )
 async def update_workflow(
@@ -374,7 +405,11 @@ async def update_workflow(
             GuardrailEntity.WORKFLOW,
             str(updated_workflow.id),
         )
-        return {"message": "Workflow updated successfully", "data": updated_workflow}
+        return {
+            "message": "Workflow updated successfully",
+            "data": updated_workflow,
+            "warnings": await _consumer_slot_warnings(updated_config, user),
+        }
     except ValidationException:
         raise
     except Exception as e:

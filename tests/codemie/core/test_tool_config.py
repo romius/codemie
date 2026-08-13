@@ -42,6 +42,19 @@ def test_tool_config_with_both():
     assert "Either tool_creds or integration_id must be provided, but not both" in str(excinfo.value)
 
 
+def test_tool_config_accepts_the_explicit_no_integration_choice():
+    """An empty integration id is the stored form of "no integration", not a missing value.
+
+    The user can deliberately leave a slot without credentials; that choice travels as an empty
+    integration id and must survive validation, so the tool can be built and report the missing
+    integration on use instead of the whole agent failing to start.
+    """
+    tool_config = ToolConfig(name="test_tool", integration_id="")
+
+    assert tool_config.integration_id == ""
+    assert tool_config.tool_creds is None
+
+
 def test_tool_config_without_either_fails():
     """Test that ToolConfig cannot be created without either tool_creds or integration_id."""
     with pytest.raises(ValidationError) as excinfo:

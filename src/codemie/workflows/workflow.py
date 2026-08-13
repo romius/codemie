@@ -852,6 +852,13 @@ class WorkflowExecutor:
         # None means get_current_user() is None and resolution surfaces nothing.
         set_current_user(self.user)
 
+        # Same reasoning for the workflow being executed: the settings-handler chain resolves
+        # integrations far from this plumbing, and reads the scope from here. Set unconditionally
+        # so a reused pool thread cannot carry a previous execution's workflow into this one.
+        from codemie.rest_api.security.workflow_context import set_current_workflow_id
+
+        set_current_workflow_id(self.workflow_config.id if self.workflow_config else None)
+
         if self.user:
             from codemie.configs.logger import set_logging_info
 
@@ -911,9 +918,11 @@ class WorkflowExecutor:
                     get_observability_provider().clear_workflow_trace_context(self.execution_id)
                     VirtualAssistantService.delete_by_execution_id(self.execution_id)
         finally:
-            # Reset the ContextVar so a reused pool thread never carries this execution's user
-            # into the next run (which may run for a different or no user).
+            # Reset the ContextVars so a reused pool thread never carries this execution's user
+            # or workflow into the next run (which may run for a different or no user, and
+            # outside a workflow entirely).
             set_current_user(None)
+            set_current_workflow_id(None)
 
     def _start_thought_consumer_if_enabled(self, enable_verbose_consumer: bool):
         """Start ThoughtConsumer for database persistence if enabled."""

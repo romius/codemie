@@ -1,0 +1,3008 @@
+diff --git a/config/customer/customer-config.yaml b/config/customer/customer-config.yaml
+index ced35edc8..570160e24 100644
+--- a/config/customer/customer-config.yaml
++++ b/config/customer/customer-config.yaml
+@@ -190,6 +190,21 @@ components:
+       enabled: false
+       name: "Request Hedging"
+       description: "Race a fast-path tool against the agent pipeline to reduce response latency"
++  - id: "features:interactiveElements"
++    settings:
++      enabled: true
++      name: "Interactive Chat Elements"
++      description: "Allow assistants to request structured user input via interactive chat elements"
++      # Optional catalog override: gate which registered element types each interactive
++      # feature exposes to agents, without a code change. Omit to use the built-in
++      # registry defaults (core/interactive.py). New element TYPES still require a model
++      # in the registry — this only toggles membership of already-registered elements.
++      # catalog:
++      #   layout: [text, column, row]
++      #   features:
++      #     action_buttons: [button]
++      #     choice: [multiple_choice, dropdown]
++      #     short_forms: [text_field, checkbox, date_picker, button]
+ 
+   - id: "features:personalLiteLLMIntegrations"
+     settings:
+diff --git a/src/codemie/agents/tools/interactive/__init__.py b/src/codemie/agents/tools/interactive/__init__.py
+new file mode 100644
+index 000000000..e69de29bb
+diff --git a/src/codemie/agents/tools/interactive/request_user_input.py b/src/codemie/agents/tools/interactive/request_user_input.py
+new file mode 100644
+index 000000000..c2e0e75cb
+--- /dev/null
++++ b/src/codemie/agents/tools/interactive/request_user_input.py
+@@ -0,0 +1,67 @@
++# Copyright 2026 EPAM Systems, Inc. (“EPAM”)
++#
++# Licensed under the Apache License, Version 2.0 (the "License");
++# you may not use this file except in compliance with the License.
++# You may obtain a copy of the License at
++#
++#     http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing, software
++# distributed under the License is distributed on an "AS IS" BASIS,
++# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++# See the License for the specific language governing permissions and
++# limitations under the License.
++
++"""Built-in tool that shows interactive UI elements to the user in chat.
++
++The tool's args schema is built dynamically from the assistant's interactive
++features config so disabled element types are absent from the schema exposed
++to the model. Executing the tool emits an ``interactive_request`` chunk into
++the NDJSON stream and ends the agent turn (``return_direct``); the structured
++user response arrives as the next chat message.
++"""
++
++import logging
++import uuid
++from typing import Optional
++
++from codemie_tools.base.codemie_tool import CodeMieTool
++
++from codemie.chains.base import StreamedGenerationResult
++from codemie.core.interactive import (
++    InteractiveFeaturesConfig,
++    InteractiveRequest,
++    build_surface_args_schema,
++    validate_surface,
++)
++
++logger = logging.getLogger(__name__)
++
++REQUEST_USER_INPUT_TOOL_NAME = "request_user_input"
++
++
++class RequestUserInputTool(CodeMieTool):
++    name: str = REQUEST_USER_INPUT_TOOL_NAME
++    description: str = (
++        "Show interactive UI elements to the user and wait for their structured response. "
++        "Call this when you need an explicit decision, option selection, or short-form input. "
++        "This ends your current turn; the user's structured response arrives as the next message."
++    )
++    return_direct: bool = True
++    config: InteractiveFeaturesConfig
++    # Optional customer-config catalog override (feature->element-types); None uses the
++    # registry defaults in core/interactive.py.
++    catalog: Optional[dict] = None
++    thread_generator: object = None
++
++    def __init__(self, config: InteractiveFeaturesConfig, thread_generator, catalog=None, **kwargs):
++        super().__init__(config=config, thread_generator=thread_generator, catalog=catalog, **kwargs)
++        self.args_schema = build_surface_args_schema(config, catalog)
++
++    def execute(self, surface: list, **kwargs) -> str:
++        # Raises ValueError on disabled elements -> ToolException -> model retries
++        elements = validate_surface(surface, self.config, self.catalog)
++        request = InteractiveRequest(request_id=str(uuid.uuid4()), surface=elements)
++        self.thread_generator.send(StreamedGenerationResult(interactive_request=request).model_dump_json())
++        logger.info(f"Emitted interactive request {request.request_id}")
++        return ""  # return_direct=True ends the agent turn with no extra text
+diff --git a/src/codemie/chains/base.py b/src/codemie/chains/base.py
+index 751d94b49..799ef64b3 100644
+--- a/src/codemie/chains/base.py
++++ b/src/codemie/chains/base.py
+@@ -18,6 +18,7 @@ from typing import Optional, List, Iterator
+ from langchain_core.messages import BaseMessage
+ from pydantic import BaseModel, Field, model_validator
+ 
++from codemie.core.interactive import InteractiveRequest
+ from codemie.configs import logger
+ from codemie.core.models import ChatMessage
+ from codemie.core.errors import AgentErrorDetails, ToolErrorDetails
+@@ -139,6 +140,9 @@ class StreamedGenerationResult(BaseModel):
+     error_details: Optional[dict] = Field(
+         default=None, description="Provide full information about the execution_error field."
+     )
++    interactive_request: Optional[InteractiveRequest] = Field(
++        default=None, description="Interactive UI request emitted by the request_user_input tool"
++    )
+ 
+ 
+ class BaseChain:
+diff --git a/src/codemie/configs/customer_config.py b/src/codemie/configs/customer_config.py
+index 3473af75a..23af5be88 100644
+--- a/src/codemie/configs/customer_config.py
++++ b/src/codemie/configs/customer_config.py
+@@ -256,5 +256,17 @@ class CustomerConfig(BaseModel):
+         component_id = f"features:{feature_key}"
+         return self.is_component_enabled(component_id)
+ 
++    def get_feature_setting(self, feature_key: str, setting_name: str, default=None):
++        """Read an extra setting from a ``features:<feature_key>`` component's settings.
++
++        ``ComponentSetting`` allows extra fields, so features can carry structured config
++        (e.g. an interactive-elements ``catalog``). Returns ``default`` when absent.
++        """
++        component_id = f"features:{feature_key}"
++        component = next((c for c in self.components if c.id == component_id), None)
++        if component is None:
++            return default
++        return getattr(component.settings, setting_name, default)
++
+ 
+ customer_config = CustomerConfig()
+diff --git a/src/codemie/core/interactive.py b/src/codemie/core/interactive.py
+new file mode 100644
+index 000000000..c99d97721
+--- /dev/null
++++ b/src/codemie/core/interactive.py
+@@ -0,0 +1,681 @@
++# Copyright 2026 EPAM Systems, Inc. (“EPAM”)
++#
++# Licensed under the Apache License, Version 2.0 (the "License");
++# you may not use this file except in compliance with the License.
++# You may obtain a copy of the License at
++#
++#     http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing, software
++# distributed under the License is distributed on an "AS IS" BASIS,
++# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++# See the License for the specific language governing permissions and
++# limitations under the License.
++
++"""Fixed-schema interactive element protocol for agent chat.
++
++Defines the element catalog, the request/response payloads carried over the
++NDJSON stream, and validation helpers that enforce the per-assistant
++interactive features configuration server-side.
++"""
++
++import json
++import re
++import uuid
++from datetime import date
++from typing import Annotated, ClassVar, Literal, Optional, Union
++
++# The `regex` module provides a match-time timeout that stdlib `re` lacks, used to
++# bound agent-authored regex validation (ReDoS defense). It is resolved transitively
++# rather than as a declared dependency, so guard the import: if it ever disappears,
++# degrade gracefully (skip regex format-checks) instead of crashing every module on
++# the core import path. TODO: promote to a direct pyproject dependency on the next
++# lock with registry access.
++try:
++    import regex
++
++    _HAS_REGEX = True
++except ImportError:  # pragma: no cover - regex is currently resolved via poetry.lock
++    regex = None
++    _HAS_REGEX = False
++from pydantic import BaseModel, BeforeValidator, Field, create_model
++
++# Linear-time email check: the label before the required dot excludes "." ([^@\s.]),
++# so no quantified group overlaps the "." separator — the match cannot backtrack (no ReDoS).
++EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s.]+\.[^@\s]+$")
++
++# The surface (and thus any regex) is authored by the LLM agent and the value by
++# the user, so both are untrusted. Length caps reduce blast radius; the regex
++# match runs under a hard wall-clock timeout (via the `regex` module) so a
++# catastrophic-backtracking pattern cannot hang the request worker.
++MAX_FIELD_VALUE_LEN = 4096
++MAX_REGEX_PATTERN_LEN = 512
++MAX_PAYLOAD_BYTES = 65536
++REGEX_MATCH_TIMEOUT_SECONDS = 0.1
++# Agent-authored surfaces are untrusted (steerable via prompt injection); bound
++# their size/nesting BEFORE pydantic parses them so a hostile tree cannot exhaust
++# the stack (RecursionError) or the DB/token budget.
++MAX_SURFACE_DEPTH = 12
++MAX_SURFACE_ELEMENTS = 100
++
++
++class InteractiveFeaturesConfig(BaseModel):
++    """Per-assistant toggles controlling which interactive elements the agent may use."""
++
++    action_buttons: bool = False
++    choice: bool = False
++    short_forms: bool = False
++
++    def any_enabled(self) -> bool:
++        return self.action_buttons or self.choice or self.short_forms
++
++
++class _InteractiveElement(BaseModel):
++    """Base for every catalog element.
++
++    Catalog metadata lives here as class attributes so the whole registry (the union,
++    the type map, the feature gating, the response-kind coverage, and per-element answer
++    validation) derives from ONE place. Adding an element = define a subclass (set its
++    metadata + ``validate_answer``) and list it in ``ELEMENT_REGISTRY`` — nothing else.
++    """
++
++    # Feature flags on ``InteractiveFeaturesConfig`` that enable this element (ANY of
++    # them). Empty for layout elements (always available when any feature is enabled).
++    FEATURES: ClassVar[tuple[str, ...]] = ()
++    # Layout/structure element (text/column/row): available whenever any feature is on.
++    IS_LAYOUT: ClassVar[bool] = False
++    # Response ``kind`` values whose payload is able to carry this element's answer.
++    ANSWERABLE_KINDS: ClassVar[tuple[str, ...]] = ()
++
++    def validate_answer(self, answer) -> None:  # noqa: ARG002 - overridden by answerable elements
++        """Validate this element's submitted answer. Default: nothing to validate."""
++        return None
++
++
++class TextElement(_InteractiveElement):
++    IS_LAYOUT: ClassVar[bool] = True
++    type: Literal["text"] = "text"
++    content: str
++
++
++class ButtonElement(_InteractiveElement):
++    # A button is the submit trigger, so it is available with either action buttons or
++    # short forms enabled.
++    FEATURES: ClassVar[tuple[str, ...]] = ("action_buttons", "short_forms")
++    type: Literal["button"] = "button"
++    id: str
++    label: str
++    style: Optional[Literal["primary", "secondary", "danger"]] = "primary"
++
++
++class ChoiceOption(BaseModel):
++    value: str
++    label: str
++
++
++class MultipleChoiceElement(_InteractiveElement):
++    FEATURES: ClassVar[tuple[str, ...]] = ("choice",)
++    ANSWERABLE_KINDS: ClassVar[tuple[str, ...]] = ("choice", "submit")
++    type: Literal["multiple_choice"] = "multiple_choice"
++    id: str
++    options: list[ChoiceOption]
++    max_allowed_selections: int = Field(default=1, ge=1)
++
++    def validate_answer(self, answer) -> None:
++        # A choice may be left unanswered (empty selection); validate only if present.
++        if answer is not None:
++            if not isinstance(answer, dict):
++                raise ValueError(f"Answer for '{self.id}' must be an object")
++            _validate_selected(self, answer.get("selected", []))
++
++
++class DropdownElement(_InteractiveElement):
++    """Single-select drop-down; the user picks exactly one option value.
++
++    A presentation-and-semantics sibling of a single-select multiple_choice, but
++    value-based (answer is ``{"value": <option value>}``) so it slots into the
++    combined-submit contract like the short-form fields.
++    """
++
++    FEATURES: ClassVar[tuple[str, ...]] = ("choice",)
++    ANSWERABLE_KINDS: ClassVar[tuple[str, ...]] = ("submit",)
++    type: Literal["dropdown"] = "dropdown"
++    id: str
++    label: str
++    options: list[ChoiceOption]
++    placeholder: Optional[str] = None
++    required: bool = False
++
++    def validate_answer(self, answer) -> None:
++        _validate_dropdown_value(self, answer)
++
++
++class DatePickerElement(_InteractiveElement):
++    """Calendar date input. ``value`` is an ISO ``YYYY-MM-DD`` string.
++
++    Optional ``min``/``max`` (inclusive, ISO dates) bound the acceptable range.
++    """
++
++    FEATURES: ClassVar[tuple[str, ...]] = ("short_forms",)
++    ANSWERABLE_KINDS: ClassVar[tuple[str, ...]] = ("submit",)
++    type: Literal["date_picker"] = "date_picker"
++    id: str
++    label: str
++    min: Optional[str] = None
++    max: Optional[str] = None
++    required: bool = False
++
++    def validate_answer(self, answer) -> None:
++        _validate_date_value(self, answer)
++
++
++class FieldValidation(BaseModel):
++    required: bool = False
++    regex: Optional[str] = None
++    email: bool = False
++
++
++class TextFieldElement(_InteractiveElement):
++    FEATURES: ClassVar[tuple[str, ...]] = ("short_forms",)
++    ANSWERABLE_KINDS: ClassVar[tuple[str, ...]] = ("form", "submit")
++    type: Literal["text_field"] = "text_field"
++    id: str
++    label: str
++    validation: Optional[FieldValidation] = None
++
++    def validate_answer(self, answer) -> None:
++        _validate_field_value(self, _answer_value(answer))
++
++
++class CheckBoxElement(_InteractiveElement):
++    FEATURES: ClassVar[tuple[str, ...]] = ("short_forms",)
++    ANSWERABLE_KINDS: ClassVar[tuple[str, ...]] = ("form", "submit")
++    type: Literal["checkbox"] = "checkbox"
++    id: str
++    label: str
++    validation: Optional[FieldValidation] = None
++
++    def validate_answer(self, answer) -> None:
++        _validate_field_value(self, _answer_value(answer))
++
++
++class ColumnElement(_InteractiveElement):
++    IS_LAYOUT: ClassVar[bool] = True
++    type: Literal["column"] = "column"
++    children: list["AnyElement"]
++
++
++class RowElement(_InteractiveElement):
++    IS_LAYOUT: ClassVar[bool] = True
++    type: Literal["row"] = "row"
++    children: list["AnyElement"]
++
++
++# THE registry: the single source of truth for the element catalog. Everything below
++# (the discriminated union, the type map, feature gating, kind coverage, and answer
++# validation) derives from it. To add an element type, define its model above and add
++# it here — nothing else in this module enumerates the catalog.
++ELEMENT_REGISTRY: tuple[type[_InteractiveElement], ...] = (
++    TextElement,
++    ColumnElement,
++    RowElement,
++    ButtonElement,
++    MultipleChoiceElement,
++    DropdownElement,
++    DatePickerElement,
++    TextFieldElement,
++    CheckBoxElement,
++)
++
++
++def _element_type(model: type[_InteractiveElement]) -> str:
++    """The wire discriminator (``type`` literal default) of an element model."""
++    return model.model_fields["type"].default
++
++
++_ELEMENT_BY_TYPE: dict[str, type[_InteractiveElement]] = {_element_type(model): model for model in ELEMENT_REGISTRY}
++_LAYOUT_TYPES: set[str] = {t for t, model in _ELEMENT_BY_TYPE.items() if model.IS_LAYOUT}
++
++AnyElement = Annotated[Union[ELEMENT_REGISTRY], Field(discriminator="type")]
++ColumnElement.model_rebuild()
++RowElement.model_rebuild()
++
++
++class InteractiveRequest(BaseModel):
++    """Interactive UI request emitted by the agent as a stream chunk."""
++
++    request_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
++    surface: list[AnyElement]
++
++
++class InteractiveResponse(BaseModel):
++    """Structured user response referencing an earlier InteractiveRequest."""
++
++    request_id: str
++    kind: Literal["action", "choice", "form", "submit", "text_fallback"]
++    payload: dict
++
++
++def default_element_catalog() -> dict:
++    """The catalog (layout + feature->types) derived from the registry defaults.
++
++    This is the shape a deployment can override via customer config to gate which
++    registered elements each feature exposes, without touching code. New element TYPES
++    still require a model in the registry (a widget cannot be rendered from config alone).
++    """
++    features: dict[str, list[str]] = {}
++    for element_type, model in _ELEMENT_BY_TYPE.items():
++        for feature in model.FEATURES:
++            features.setdefault(feature, []).append(element_type)
++    return {"layout": sorted(_LAYOUT_TYPES), "features": features}
++
++
++def _known_type_set(value) -> set[str]:
++    """Registry-known element types from an untrusted catalog list; else empty.
++
++    Tolerates a malformed catalog value (non-iterable, non-string entries): the whole
++    ``catalog`` comes raw from customer config, so a bad shape must degrade — never raise.
++    """
++    if not isinstance(value, (list, tuple, set)):
++        return set()
++    return {t for t in value if isinstance(t, str)} & set(_ELEMENT_BY_TYPE)
++
++
++def _catalog_enabled_types(config: "InteractiveFeaturesConfig", catalog: dict) -> set[str]:
++    """Resolve enabled element types from a (possibly overridden) catalog config.
++
++    Only types that actually exist in the registry are honored, so a stale/typo catalog
++    entry can never smuggle an unknown element type into the allowed set. Malformed shapes
++    are treated as empty (fail-closed) rather than raising.
++    """
++    types = _known_type_set(catalog.get("layout"))
++    features = catalog.get("features")
++    if isinstance(features, dict):
++        for feature, element_types in features.items():
++            if getattr(config, feature, False):
++                types.update(_known_type_set(element_types))
++    return types
++
++
++def enabled_element_types(config: InteractiveFeaturesConfig, catalog: Optional[dict] = None) -> set[str]:
++    """Element types available to the agent for this config.
++
++    Derived from the registry's per-element ``FEATURES`` metadata; when a ``catalog``
++    override (from customer config) is supplied it drives the feature->type mapping instead.
++    """
++    if not config.any_enabled():
++        return set()
++    # A non-dict catalog (absent or a malformed customer-config value) falls back to the
++    # registry defaults instead of raising.
++    if isinstance(catalog, dict):
++        return _catalog_enabled_types(config, catalog)
++    types = set(_LAYOUT_TYPES)
++    for element_type, model in _ELEMENT_BY_TYPE.items():
++        if any(getattr(config, feature, False) for feature in model.FEATURES):
++            types.add(element_type)
++    return types
++
++
++def _walk(elements) -> list:
++    flat = []
++    for element in elements:
++        flat.append(element)
++        children = getattr(element, "children", None)
++        if children:
++            flat.extend(_walk(children))
++    return flat
++
++
++def _check_surface_limits(surface) -> None:
++    """Iteratively bound depth and element count on the RAW surface tree.
++
++    Runs before pydantic parsing (which would itself recurse) and uses an explicit
++    stack so a hostile deeply-nested input cannot raise RecursionError here.
++    """
++    if not isinstance(surface, list):
++        return  # structural validation is pydantic's job
++    stack = [(element, 1) for element in surface if isinstance(element, dict)]
++    count = 0
++    while stack:
++        element, depth = stack.pop()
++        count += 1
++        if depth > MAX_SURFACE_DEPTH:
++            raise ValueError(f"Surface exceeds max nesting depth ({MAX_SURFACE_DEPTH})")
++        if count > MAX_SURFACE_ELEMENTS:
++            raise ValueError(f"Surface exceeds max element count ({MAX_SURFACE_ELEMENTS})")
++        children = element.get("children")
++        if isinstance(children, list):
++            stack.extend((child, depth + 1) for child in children if isinstance(child, dict))
++
++
++def _to_raw_surface(surface):
++    """Normalize a surface to plain dicts.
++
++    The tool's args schema (build_surface_args_schema) parses the agent's call into
++    DYNAMIC element classes; re-validating those instances against the module-level
++    AnyElement union fails on nested column/row (distinct classes). Dumping to dicts
++    lets InteractiveRequest re-parse into the canonical classes and lets
++    _check_surface_limits see the tree (it inspects dicts).
++    """
++    if not isinstance(surface, list):
++        return surface
++    return [element.model_dump() if isinstance(element, BaseModel) else element for element in surface]
++
++
++def validate_surface(surface: list, config: InteractiveFeaturesConfig, catalog: Optional[dict] = None) -> list:
++    """Validate a raw surface tree structurally and against the enabled catalog."""
++    surface = _to_raw_surface(surface)
++    _check_surface_limits(surface)
++    request = InteractiveRequest(surface=surface)
++    allowed = enabled_element_types(config, catalog)
++    disallowed = sorted({el.type for el in _walk(request.surface) if el.type not in allowed})
++    if disallowed:
++        raise ValueError(
++            f"Elements not allowed by the assistant's interactive features config: {', '.join(disallowed)}. "
++            f"Allowed: {', '.join(sorted(allowed)) or 'none'}."
++        )
++    return request.surface
++
++
++def build_surface_args_schema(config: InteractiveFeaturesConfig, catalog: Optional[dict] = None) -> type[BaseModel]:
++    """Build the tool args schema exposing only the enabled element types.
++
++    Layout containers (column/row) are rebuilt with children restricted to the
++    enabled union so disabled element types are absent from the schema entirely,
++    not just rejected at runtime.
++    """
++    allowed = enabled_element_types(config, catalog)
++    if not allowed:
++        raise ValueError("No interactive features enabled")
++    leaf_members = [_ELEMENT_BY_TYPE[element_type] for element_type in sorted(allowed - {"column", "row"})]
++    # "RestrictedAnyElement" is a forward reference resolved dynamically below via
++    # _types_namespace on model_rebuild, so it is intentionally not a module symbol.
++    column_cls = create_model(
++        "ColumnElement",
++        type=(Literal["column"], "column"),
++        children=(list["RestrictedAnyElement"], ...),  # noqa: F821
++    )
++    row_cls = create_model(
++        "RowElement",
++        type=(Literal["row"], "row"),
++        children=(list["RestrictedAnyElement"], ...),  # noqa: F821
++    )
++    members = tuple(leaf_members + [column_cls, row_cls])
++    union = Annotated[Union[members], Field(discriminator="type")]
++    namespace = {"RestrictedAnyElement": union}
++    column_cls.model_rebuild(_types_namespace=namespace)
++    row_cls.model_rebuild(_types_namespace=namespace)
++    # Bound depth/element-count on the RAW surface BEFORE the recursive union is
++    # parsed. The tool framework validates args against this schema before execute()
++    # (and thus before validate_surface) runs, so a hostile deeply-nested surface
++    # would otherwise recurse through pydantic and raise RecursionError instead of the
++    # clean ValueError this guard produces.
++    bounded_surface = Annotated[list[union], BeforeValidator(_bounded_surface_input)]
++    return create_model(
++        "RequestUserInputArgs",
++        surface=(bounded_surface, Field(description="Tree of interactive UI elements to show the user")),
++    )
++
++
++def _bounded_surface_input(value):
++    """Pydantic BeforeValidator: pre-screen the raw surface for depth/count limits."""
++    _check_surface_limits(value)
++    return value
++
++
++def render_interactive_elements_prompt(config: InteractiveFeaturesConfig, catalog: Optional[dict] = None) -> str:
++    """System prompt section listing the explicit catalog of enabled elements."""
++    allowed = sorted(enabled_element_types(config, catalog))
++    if not allowed:
++        return ""
++    return (
++        "\n\n## Interactive user input\n"
++        "When you need an explicit user decision, option selection, or short-form input, "
++        "call the `request_user_input` tool instead of asking in plain text. "
++        f"The ONLY interactive element types available are: {', '.join(allowed)}. "
++        "Never reference or emit element types outside this list. "
++        "Calling the tool ends your turn; the user's structured response arrives as the next message."
++    )
++
++
++def _validate_selected(element: "MultipleChoiceElement", selected) -> None:
++    """Validate one choice element's selection against ITS OWN options and cap."""
++    if not isinstance(selected, list):
++        raise ValueError("'selected' must be a list")
++    if not all(isinstance(value, str) for value in selected):
++        raise ValueError("'selected' must contain only strings")
++    valid_values = {option.value for option in element.options}
++    unknown = [value for value in selected if value not in valid_values]
++    if unknown:
++        raise ValueError(f"Unknown choice values: {unknown}")
++    if len(selected) > element.max_allowed_selections:
++        raise ValueError(f"Selected {len(selected)} options, max allowed: {element.max_allowed_selections}")
++
++
++def _validate_choice_response(response: InteractiveResponse, elements: list) -> None:
++    selected = response.payload.get("selected", [])
++    for element in elements:
++        if isinstance(element, MultipleChoiceElement):
++            _validate_selected(element, selected)
++
++
++def _check_required_field(element, raw, is_checkbox) -> None:
++    # A required checkbox must be checked (True); a required text field must be a
++    # non-empty string. Falsy non-strings (0, [], {}, False) never satisfy required.
++    if is_checkbox and raw is not True:
++        raise ValueError(f"Field '{element.id}' is required")
++    if not is_checkbox and (not isinstance(raw, str) or raw.strip() == ""):
++        raise ValueError(f"Field '{element.id}' is required")
++
++
++def _validate_field_value(element, raw) -> None:
++    # ``validation`` is optional on text_field/checkbox; a missing block means "no
++    # rules" — treat it as such instead of dereferencing None (an unvalidated field
++    # in a combined submit must not crash with AttributeError).
++    validation = element.validation
++    is_checkbox = isinstance(element, CheckBoxElement)
++    if validation is not None and validation.required:
++        _check_required_field(element, raw, is_checkbox)
++    if raw is None or raw == "" or raw is False:
++        return
++    if is_checkbox:
++        return  # a checked checkbox has no further text/regex/email rules
++    if not isinstance(raw, str):
++        raise ValueError(f"Field '{element.id}' must be a string")
++    if len(raw) > MAX_FIELD_VALUE_LEN:
++        raise ValueError(f"Field '{element.id}' value too long (max {MAX_FIELD_VALUE_LEN})")
++    if validation is None:
++        return
++    if validation.regex:
++        _match_field_regex(element.id, validation.regex, str(raw))
++    if validation.email and not EMAIL_RE.match(str(raw)):
++        raise ValueError(f"Field '{element.id}' must be a valid email")
++
++
++def _match_field_regex(field_id: str, pattern: str, value: str) -> None:
++    """Full-match an agent-authored pattern against a user value under a hard timeout."""
++    if len(pattern) > MAX_REGEX_PATTERN_LEN:
++        raise ValueError(f"Field '{field_id}' validation pattern too long")
++    if not _HAS_REGEX:
++        # Without the timeout-capable `regex` engine we must NOT run an untrusted
++        # pattern through stdlib `re` (unbounded ReDoS); skip — the length/type caps
++        # still apply and the client also validates format.
++        return
++    try:
++        matched = regex.fullmatch(pattern, value, timeout=REGEX_MATCH_TIMEOUT_SECONDS) is not None
++    except regex.error:
++        raise ValueError(f"Field '{field_id}' has an invalid validation pattern")
++    except TimeoutError:
++        raise ValueError(f"Field '{field_id}' validation pattern is too complex")
++    if not matched:
++        raise ValueError(f"Field '{field_id}' does not match the required format")
++
++
++def _answer_value(answer):
++    """Extract the ``value`` from a value-based answer object, or None."""
++    return answer.get("value") if isinstance(answer, dict) else None
++
++
++def _parse_iso_date(raw):
++    """Parse an ISO ``YYYY-MM-DD`` string to a date; None if empty/unparseable."""
++    if not raw:
++        return None
++    try:
++        return date.fromisoformat(raw)
++    except (ValueError, TypeError):
++        return None
++
++
++def _validate_dropdown_value(element: "DropdownElement", answer) -> None:
++    raw = _answer_value(answer)
++    if element.required and (not isinstance(raw, str) or raw == ""):
++        raise ValueError(f"Field '{element.id}' is required")
++    if raw is None or raw == "":
++        return
++    if not isinstance(raw, str):
++        raise ValueError(f"Field '{element.id}' must be a string")
++    valid_values = {option.value for option in element.options}
++    if raw not in valid_values:
++        raise ValueError(f"Unknown dropdown value for '{element.id}': {raw!r}")
++
++
++def _validate_date_value(element: "DatePickerElement", answer) -> None:
++    raw = _answer_value(answer)
++    if element.required and (not isinstance(raw, str) or raw == ""):
++        raise ValueError(f"Field '{element.id}' is required")
++    if raw is None or raw == "":
++        return
++    if not isinstance(raw, str):
++        raise ValueError(f"Field '{element.id}' must be a string")
++    value = _parse_iso_date(raw)
++    if value is None:
++        raise ValueError(f"Field '{element.id}' must be an ISO date (YYYY-MM-DD)")
++    lower = _parse_iso_date(element.min)
++    if lower is not None and value < lower:
++        raise ValueError(f"Field '{element.id}' must be on or after {element.min}")
++    upper = _parse_iso_date(element.max)
++    if upper is not None and value > upper:
++        raise ValueError(f"Field '{element.id}' must be on or before {element.max}")
++
++
++def _reject_extra_keys(payload: dict, allowed: set) -> None:
++    extra = sorted(set(payload) - allowed)
++    if extra:
++        raise ValueError(f"Payload has unexpected keys: {extra}")
++
++
++def _validate_form_response(response: InteractiveResponse, field_elements: list) -> None:
++    values = response.payload.get("values", {})
++    if not isinstance(values, dict):
++        raise ValueError("'values' must be an object")
++    field_ids = {element.id for element in field_elements}
++    unknown = sorted(set(values) - field_ids)
++    if unknown:
++        raise ValueError(f"Unknown form fields: {unknown}")
++    for element in field_elements:
++        if getattr(element, "validation", None) is not None:
++            _validate_field_value(element, values.get(element.id))
++    _reject_extra_keys(response.payload, {"values"})
++
++
++def _validate_submit_response(response: InteractiveResponse, elements: list) -> None:
++    """Validate a combined submit: one response answering EVERY block of the surface.
++
++    ``payload`` is ``{"action": <button id | null>, "answers": {<element id>: <answer>}}``.
++    Each answer is validated against its OWN element by id, so a value valid for one
++    choice is never rejected because another choice does not know it.
++    """
++    payload = response.payload
++    _reject_extra_keys(payload, {"action", "answers"})
++    answers = payload.get("answers", {})
++    if not isinstance(answers, dict):
++        raise ValueError("'answers' must be an object")
++    by_id = {el.id: el for el in elements}
++    unknown = sorted(set(answers) - set(by_id))
++    if unknown:
++        raise ValueError(f"Unknown answer ids: {unknown}")
++
++    action = payload.get("action")
++    if action is not None:
++        button_ids = {el.id for el in elements if isinstance(el, ButtonElement)}
++        if action not in button_ids:
++            raise ValueError(f"Unknown action id: {action!r}")
++
++    for element in elements:
++        _validate_answer_for_element(element, answers.get(element.id))
++
++
++def _validate_answer_for_element(element, answer) -> None:
++    """Validate one element's answer via the element's own ``validate_answer`` (registry)."""
++    element.validate_answer(answer)
++
++
++# Which element models each response ``kind`` can answer — derived from each element's
++# ANSWERABLE_KINDS so a narrow kind cannot be used to skip a REQUIRED element it
++# structurally cannot carry.
++_KIND_COVERAGE: dict[str, tuple[type, ...]] = {
++    kind: tuple(model for model in ELEMENT_REGISTRY if kind in model.ANSWERABLE_KINDS)
++    for kind in ("action", "choice", "form", "submit")
++}
++
++
++def _element_is_required(element) -> bool:
++    if isinstance(element, (TextFieldElement, CheckBoxElement)):
++        return element.validation is not None and element.validation.required
++    if isinstance(element, (DropdownElement, DatePickerElement)):
++        return element.required
++    return False
++
++
++def _reject_kind_missing_required(kind: str, elements: list) -> None:
++    """Reject a response ``kind`` that structurally cannot answer a required element.
++
++    ``kind`` is client-supplied, so without this a caller could send e.g. ``action``
++    for a surface with a required text field and skip its validation entirely.
++    ``text_fallback`` is the deliberate free-text opt-out and is exempt.
++    """
++    if kind == "text_fallback":
++        return
++    covered = _KIND_COVERAGE.get(kind, ())
++    for element in elements:
++        if _element_is_required(element) and not isinstance(element, covered):
++            raise ValueError(f"Response kind '{kind}' cannot answer required element '{element.id}'")
++
++
++def validate_response_values(response: InteractiveResponse, request: InteractiveRequest) -> None:
++    """Server-side re-validation of a structured response against its request.
++
++    The response ``kind`` is client-supplied and therefore untrusted: each branch
++    validates the payload against the request surface and rejects unexpected keys,
++    and a kind that cannot carry a required element is rejected outright, so a caller
++    cannot skip validation by lying about ``kind``.
++    """
++    # Bound the whole payload up front: it is persisted and replayed into the LLM
++    # prompt every turn, so an oversized blob is a storage/token DoS regardless of kind.
++    if len(json.dumps(response.payload)) > MAX_PAYLOAD_BYTES:
++        raise ValueError(f"Payload too large (max {MAX_PAYLOAD_BYTES} bytes)")
++    elements = [el for el in _walk(request.surface) if hasattr(el, "id")]
++    _reject_kind_missing_required(response.kind, elements)
++    button_ids = {el.id for el in elements if isinstance(el, ButtonElement)}
++    choice_elements = [el for el in elements if isinstance(el, MultipleChoiceElement)]
++    field_elements = [el for el in elements if isinstance(el, (TextFieldElement, CheckBoxElement))]
++
++    if response.kind == "text_fallback":
++        # The free-text escape may carry ONLY text — never structured values/selected/action.
++        _reject_extra_keys(response.payload, {"text"})
++        return
++    if response.kind == "action":
++        action = response.payload.get("action")
++        if action not in button_ids:
++            raise ValueError(f"Unknown action id: {action!r}")
++        _reject_extra_keys(response.payload, {"action"})
++        return
++    if response.kind == "choice":
++        _validate_choice_response(response, choice_elements)
++        _reject_extra_keys(response.payload, {"selected"})
++        return
++    if response.kind == "submit":
++        _validate_submit_response(response, elements)
++        return
++    if response.kind == "form":
++        _validate_form_response(response, field_elements)
+diff --git a/src/codemie/core/models.py b/src/codemie/core/models.py
+index b8f3482ea..3c57ca33b 100644
+--- a/src/codemie/core/models.py
++++ b/src/codemie/core/models.py
+@@ -35,6 +35,7 @@ from pydantic import (
+ )
+ from pydantic.alias_generators import to_camel
+ 
++from codemie.core.interactive import InteractiveResponse
+ from codemie.configs import config
+ from codemie.core.ability import Owned
+ from codemie.core.constants import CodeIndexType, ChatRole, BackgroundTaskStatus, DatasourceTypes
+@@ -554,6 +555,10 @@ class AssistantChatRequest(ConfiguredModel):
+     history_index: Optional[int] = Field(default=None)
+     mcp_server_single_usage: Optional[bool] = None  # Use conversation default if not specified
+     workflow_execution_id: Optional[str] = Field(None, description="Identifier for the workflow execution")
++    interactive_response: Optional[InteractiveResponse] = Field(
++        default=None,
++        description="Structured user response to an earlier interactive request emitted by the agent",
++    )
+     version: Optional[int] = Field(None, description="Optional version number to use specific assistant configuration")
+     sub_assistants_versions: Optional[dict[str, int]] = Field(
+         None,
+diff --git a/src/codemie/rest_api/handlers/assistant_handlers.py b/src/codemie/rest_api/handlers/assistant_handlers.py
+index 9d8639ac5..78cf260c2 100644
+--- a/src/codemie/rest_api/handlers/assistant_handlers.py
++++ b/src/codemie/rest_api/handlers/assistant_handlers.py
+@@ -29,6 +29,7 @@ from fastapi import BackgroundTasks, Request, status
+ from starlette.responses import StreamingResponse
+ 
+ from codemie.chains.base import Thought, StreamedGenerationResult
++from codemie.core.interactive import InteractiveRequest
+ from codemie.configs import config, logger
+ from codemie.configs.customer_config import customer_config
+ from codemie.core.ability import Ability, Action
+@@ -73,6 +74,7 @@ from codemie.configs.pyroscope_config import pyroscope_profile
+ 
+ # Constants
+ NDJSON_MEDIA_TYPE = "application/x-ndjson"
++ACCESS_DENIED_MESSAGE = "Access denied"
+ 
+ 
+ @dataclass
+@@ -85,6 +87,7 @@ class ChatHistoryData:
+     thoughts: List[Thought]
+     status: ConversationStatus = ConversationStatus.SUCCESS
+     user_message_received_at: datetime | None = None
++    interactive_request: InteractiveRequest | None = None
+ 
+ 
+ class AssistantRequestHandler(ABC):
+@@ -111,6 +114,29 @@ class AssistantRequestHandler(ABC):
+         """
+         pass
+ 
++    def _validate_interactive_response(self, request: AssistantChatRequest) -> None:
++        """Validate an incoming interactive response against the stored conversation history."""
++        if request.interactive_response is None:
++            return
++        from codemie.service.conversation.interactive_intake import validate_interactive_intake
++
++        conversation = Conversation.find_by_id(request.conversation_id) if request.conversation_id else None
++        if conversation and not Ability(self.user).can(Action.READ, conversation):
++            # Verify ownership BEFORE reading history, so intake cannot become an
++            # existence/answered-state oracle for another user's conversation.
++            raise ExtendedHTTPException(
++                code=status.HTTP_403_FORBIDDEN,
++                message=ACCESS_DENIED_MESSAGE,
++                details=f"You don't have permission to access conversation {request.conversation_id}.",
++            )
++        history = conversation.history if conversation else []
++        # A re-submit replaces the turn at request.history_index (like editing the
++        # previous request); pass it so a response being overwritten there is not
++        # treated as "already answered".
++        validate_interactive_intake(
++            history, request.interactive_response, replacing_history_index=request.history_index
++        )
++
+     def _populate_conversation_history(self, request: AssistantChatRequest) -> None:
+         """
+         Retrieve and populate conversation history from existing conversation if conversation_id is provided.
+@@ -158,7 +184,7 @@ class AssistantRequestHandler(ABC):
+             )
+             raise ExtendedHTTPException(
+                 code=status.HTTP_403_FORBIDDEN,
+-                message="Access denied",
++                message=ACCESS_DENIED_MESSAGE,
+                 details=f"You don't have permission to access conversation {request.conversation_id}.",
+                 help="Please ensure you have the correct permissions or contact the conversation owner.",
+             )
+@@ -221,7 +247,7 @@ class AssistantRequestHandler(ABC):
+             )
+             raise ExtendedHTTPException(
+                 code=status.HTTP_403_FORBIDDEN,
+-                message="Access denied",
++                message=ACCESS_DENIED_MESSAGE,
+                 details=f"You don't have permission to access conversation {request.conversation_id}.",
+                 help="Please ensure you have the correct permissions or contact the conversation owner.",
+             )
+@@ -373,6 +399,7 @@ class AssistantRequestHandler(ABC):
+             thoughts=self._filter_thoughts(data.thoughts),
+             status=data.status,
+             user_message_received_at=data.user_message_received_at,
++            interactive_request=data.interactive_request,
+             request_id=self.request_uuid,
+         )
+         request_summary_manager.clear_summary(self.request_uuid)
+@@ -447,6 +474,9 @@ class StandardAssistantHandler(AssistantRequestHandler):
+         """
+         self._sync_uploaded_files_to_workspace(request)
+ 
++        # Validate structured interactive responses against the stored conversation
++        self._validate_interactive_response(request)
++
+         # Populate conversation history if conversation_id is provided
+         self._populate_conversation_history(request)
+ 
+@@ -638,6 +668,7 @@ class StandardAssistantHandler(AssistantRequestHandler):
+ 
+         # We pass an empty string to avoid sending the default None value in the chat history.
+         response = StreamedGenerationResult(generated="")
++        interactive_request = None
+         while True:
+             value = generator_queue.queue.get()
+             if isinstance(value, BaseException):
+@@ -647,6 +678,9 @@ class StandardAssistantHandler(AssistantRequestHandler):
+                 generation_result = json.loads(value, object_hook=lambda d: SimpleNamespace(**d))
+                 if generation_result.generated is not None:
+                     response = generation_result
++                if getattr(generation_result, "interactive_request", None) is not None:
++                    # Re-parse as a plain dict so the typed model survives persistence
++                    interactive_request = InteractiveRequest(**json.loads(value)["interactive_request"])
+                 yield value
+                 generator_queue.queue.task_done()
+                 continue
+@@ -658,6 +692,7 @@ class StandardAssistantHandler(AssistantRequestHandler):
+                     response=response.generated,
+                     thoughts=generator_queue.thoughts,
+                     user_message_received_at=user_message_received_at,
++                    interactive_request=interactive_request,
+                 )
+             )
+             final_chunk = self._build_final_chunk(agent, execution_start, include_tool_errors, error_detail_level)
+@@ -945,6 +980,9 @@ class A2AAssistantHandler(AssistantRequestHandler):
+         """
+         self._sync_uploaded_files_to_workspace(request)
+ 
++        # Validate structured interactive responses against the stored conversation
++        self._validate_interactive_response(request)
++
+         # Populate conversation history if conversation_id is provided
+         self._populate_conversation_history(request)
+ 
+diff --git a/src/codemie/rest_api/models/assistant.py b/src/codemie/rest_api/models/assistant.py
+index 392a7ea46..604c2b496 100644
+--- a/src/codemie/rest_api/models/assistant.py
++++ b/src/codemie/rest_api/models/assistant.py
+@@ -42,6 +42,7 @@ from codemie.rest_api.models.base import (
+     PydanticListType,
+ )
+ from codemie.rest_api.models.guardrail import GuardrailAssignmentItem, GuardrailEntity
++from codemie.core.interactive import InteractiveFeaturesConfig
+ from codemie.rest_api.models.hedging import HedgingConfig
+ from codemie.rest_api.models.index import IndexInfo, IndexTypeByContextTypeMapping
+ from codemie.rest_api.models.settings import SettingsBase
+@@ -316,6 +317,7 @@ class AssistantRequest(BaseModel):
+     )
+     smart_tool_selection_enabled: Optional[bool] = False
+     hedging_config: Optional[HedgingConfig] = None
++    interactive_features: Optional[InteractiveFeaturesConfig] = None
+     mcp_servers: list[MCPServerDetails] = Field(default_factory=list)
+     assistant_ids: list[str] = Field(default_factory=list)
+     enabled_builtin_subagents: list[BuiltinSubagent] = Field(
+@@ -636,6 +638,9 @@ class AssistantBase(CommonBaseModel, Owned):
+     tools_tokens_size_limit: Optional[int] = None
+     smart_tool_selection_enabled: Optional[bool] = False
+     hedging_config: Optional[HedgingConfig] = SQLField(default=None, sa_column=Column(PydanticType(HedgingConfig)))
++    interactive_features: Optional[InteractiveFeaturesConfig] = SQLField(
++        default=None, sa_column=Column(PydanticType(InteractiveFeaturesConfig))
++    )
+     context: list[Context] = SQLField(default_factory=list, sa_column=Column(PydanticListType(Context)))
+     user_abilities: Optional[list[Action]] = SQLField(default=None, sa_column=Column(JSONB))
+     mcp_servers: list[MCPServerDetails] = SQLField(
+diff --git a/src/codemie/rest_api/models/conversation.py b/src/codemie/rest_api/models/conversation.py
+index a497fdc49..560efe3f9 100644
+--- a/src/codemie/rest_api/models/conversation.py
++++ b/src/codemie/rest_api/models/conversation.py
+@@ -14,6 +14,7 @@
+ 
+ from __future__ import annotations
+ 
++from dataclasses import dataclass
+ from datetime import datetime
+ from typing import List, Literal, Optional
+ 
+@@ -21,6 +22,7 @@ from codemie_tools.base.models import Tool
+ from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
+ 
+ from codemie.chains.base import Thought
++from codemie.core.interactive import InteractiveRequest, InteractiveResponse
+ from codemie.clients.postgres import get_session
+ from codemie.configs import config, logger
+ from codemie.core.ability import Owned, Action
+@@ -43,6 +45,30 @@ from sqlalchemy.ext.mutable import MutableList
+ from enum import StrEnum
+ 
+ 
++@dataclass
++class ChatTurnData:
++    """Per-turn payload for persisting one chat exchange (user + assistant messages).
++
++    Bundles the fields that always travel together from upsert down to message
++    construction, so the persistence methods stay well under the parameter limit.
++    """
++
++    user_query: str
++    user_query_raw: str
++    assistant_id: str
++    assistant_response: str
++    thoughts: List[Thought]
++    history_index: int
++    time_elapsed: float
++    input_tokens: int
++    output_tokens: int
++    file_names: list[str]
++    money_spent: float
++    user_message_received_at: datetime | None = None
++    interactive_request: Optional[InteractiveRequest] = None
++    interactive_response: Optional[InteractiveResponse] = None
++
++
+ class Operator(BaseModel):
+     user_id: str
+     name: str
+@@ -105,6 +131,9 @@ class GeneratedMessage(ChatMessage):
+     ## Workflow execution reference fields
+     workflow_execution_ref: Optional[bool] = None  # Marker that this is a reference to workflow execution
+     execution_id: Optional[str] = None  # Reference to WorkflowExecution.execution_id
++    ## Interactive element fields (assistant message carries the request, user message the response)
++    interactive_request: Optional[InteractiveRequest] = None
++    interactive_response: Optional[InteractiveResponse] = None
+ 
+     @classmethod
+     @model_validator(mode="before")
+@@ -293,40 +322,29 @@ class Conversation(BaseModelWithSQLSupport, Owned, table=True):
+         return sum(money_spent) if money_spent else 0
+ 
+     @staticmethod
+-    def _build_chat_history_messages(
+-        user_query: str,
+-        user_query_raw: str,
+-        assistant_id: str,
+-        assistant_response: str,
+-        thoughts: List[Thought],
+-        history_index: int,
+-        time_elapsed: float,
+-        input_tokens: int,
+-        output_tokens: int,
+-        file_names: list[str],
+-        money_spent: float,
+-        user_message_received_at: datetime | None = None,
+-    ) -> tuple[GeneratedMessage, GeneratedMessage]:
++    def _build_chat_history_messages(turn: ChatTurnData) -> tuple[GeneratedMessage, GeneratedMessage]:
+         assistant_responded_at = datetime.now()
+         user_message = GeneratedMessage(
+-            date=user_message_received_at or assistant_responded_at,
++            date=turn.user_message_received_at or assistant_responded_at,
+             role=ChatRole.USER,
+-            message_raw=user_query_raw,
+-            file_names=file_names,
+-            history_index=history_index,
+-            message=user_query,
++            message_raw=turn.user_query_raw,
++            file_names=turn.file_names,
++            history_index=turn.history_index,
++            message=turn.user_query,
++            interactive_response=turn.interactive_response,
+         )
+         assistant_message = GeneratedMessage(
+             date=assistant_responded_at,
+             role=ChatRole.ASSISTANT,
+-            message=assistant_response,
+-            input_tokens=input_tokens,
+-            output_tokens=output_tokens,
+-            money_spent=money_spent,
+-            response_time=time_elapsed,
+-            history_index=history_index,
+-            thoughts=thoughts,
+-            assistant_id=assistant_id,
++            message=turn.assistant_response,
++            input_tokens=turn.input_tokens,
++            output_tokens=turn.output_tokens,
++            money_spent=turn.money_spent,
++            response_time=turn.time_elapsed,
++            history_index=turn.history_index,
++            thoughts=turn.thoughts,
++            assistant_id=turn.assistant_id,
++            interactive_request=turn.interactive_request,
+         )
+         return user_message, assistant_message
+ 
+@@ -357,41 +375,12 @@ class Conversation(BaseModelWithSQLSupport, Owned, table=True):
+         retained_history.reverse()
+         return retained_history
+ 
+-    def update_chat_history(
+-        self,
+-        user_query: str,
+-        user_query_raw: str,
+-        assistant_id: str,
+-        project: str,
+-        assistant_response: str,
+-        thoughts: List[Thought],
+-        history_index: int,
+-        time_elapsed: float,
+-        input_tokens: int,
+-        output_tokens: int,
+-        file_names: list[str],
+-        money_spent: float,
+-        replace_latest_variant: bool = False,
+-        user_message_received_at: datetime | None = None,
+-    ):
+-        user_message, assistant_message = self._build_chat_history_messages(
+-            user_query=user_query,
+-            user_query_raw=user_query_raw,
+-            assistant_id=assistant_id,
+-            assistant_response=assistant_response,
+-            thoughts=thoughts,
+-            history_index=history_index,
+-            time_elapsed=time_elapsed,
+-            input_tokens=input_tokens,
+-            output_tokens=output_tokens,
+-            file_names=file_names,
+-            money_spent=money_spent,
+-            user_message_received_at=user_message_received_at,
+-        )
++    def update_chat_history(self, turn: ChatTurnData, project: str, replace_latest_variant: bool = False):
++        user_message, assistant_message = self._build_chat_history_messages(turn)
+ 
+         retained_history = self._build_retained_history(
+             existing_history=list(self.history or []),
+-            history_index=history_index,
++            history_index=turn.history_index,
+             replace_latest_variant=replace_latest_variant,
+         )
+ 
+@@ -607,7 +596,14 @@ class Conversation(BaseModelWithSQLSupport, Owned, table=True):
+         for (role, _), message in unique_messages.items():
+             match role:
+                 case ChatRole.USER.value:
+-                    chat_message = ChatMessage(role=ChatRole.USER, message=message.message or "")
++                    user_text = message.message or ""
++                    if message.interactive_response is not None:
++                        from codemie.service.conversation.interactive_intake import (
++                            materialize_interactive_message_text,
++                        )
++
++                        user_text = materialize_interactive_message_text(user_text, message.interactive_response)
++                    chat_message = ChatMessage(role=ChatRole.USER, message=user_text)
+                     chat_messages.append(chat_message)
+                 case ChatRole.ASSISTANT.value:
+                     chat_message = ChatMessage(role=ChatRole.ASSISTANT, message=message.message or "")
+diff --git a/src/codemie/service/assistant_service.py b/src/codemie/service/assistant_service.py
+index dbcb7bff7..4e6d132ab 100644
+--- a/src/codemie/service/assistant_service.py
++++ b/src/codemie/service/assistant_service.py
+@@ -26,7 +26,9 @@ from codemie.agents.langgraph_agent import LangGraphAgent
+ from codemie.agents.utils import validate_json_schema
+ from codemie.configs import config
+ from codemie.configs.logger import logger
++from codemie.configs.customer_config import customer_config
+ from codemie.core.dependecies import get_disable_prompt_cache, set_disable_prompt_cache
++from codemie.core.interactive import render_interactive_elements_prompt
+ from codemie.core.models import AssistantChatRequest, IdeChatRequest, ToolConfig
+ from codemie.core.template_security import render_system_prompt_template, TemplateSecurityError
+ from codemie.core.thread import MessageQueue
+@@ -434,6 +436,7 @@ Instead, leverage the schema's data to generate deeper insights and improve tool
+         assistant: Assistant,
+         user: User,
+         request: AssistantChatRequest,
++        thread_generator: MessageQueue = None,
+     ) -> str:
+         """Prepare system prompt with optional IDE decorations and output schema."""
+         system_prompt = cls.get_system_prompt(assistant, user_id=user.id, current_user=user.username)
+@@ -449,6 +452,20 @@ Instead, leverage the schema's data to generate deeper insights and improve tool
+             output_schema_prompt = cls.suggested_json_prompt.format(schema=schema)
+             system_prompt = f"{system_prompt}\n{output_schema_prompt}"
+ 
++        interactive_config = getattr(assistant, "interactive_features", None)
++        if (
++            interactive_config
++            and interactive_config.any_enabled()
++            and customer_config.is_feature_enabled("interactiveElements")
++            # Only advertise request_user_input when it is actually registered — the
++            # tool needs the stream (thread_generator) to deliver its request chunk,
++            # so gating here mirrors _append_request_user_input_tool_if_enabled and
++            # avoids telling the model to call a tool that is absent in non-streaming paths.
++            and thread_generator is not None
++        ):
++            catalog = customer_config.get_feature_setting("interactiveElements", "catalog", None)
++            system_prompt = f"{system_prompt}{render_interactive_elements_prompt(interactive_config, catalog)}"
++
+         return system_prompt
+ 
+     @classmethod
+@@ -553,7 +570,7 @@ Instead, leverage the schema's data to generate deeper insights and improve tool
+         )
+ 
+         # Prepare system prompt with decorations and schema
+-        system_prompt = cls._prepare_system_prompt(assistant, user, request)
++        system_prompt = cls._prepare_system_prompt(assistant, user, request, thread_generator)
+ 
+         # Select agent class based on configuration
+         agent_class = LangGraphAgent if config.ENABLE_LANGGRAPH_AITOOLS_AGENT and not is_react else AIToolsAgent
+diff --git a/src/codemie/service/conversation/interactive_intake.py b/src/codemie/service/conversation/interactive_intake.py
+new file mode 100644
+index 000000000..f5beb6b67
+--- /dev/null
++++ b/src/codemie/service/conversation/interactive_intake.py
+@@ -0,0 +1,81 @@
++# Copyright 2026 EPAM Systems, Inc. (“EPAM”)
++#
++# Licensed under the Apache License, Version 2.0 (the "License");
++# you may not use this file except in compliance with the License.
++# You may obtain a copy of the License at
++#
++#     http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing, software
++# distributed under the License is distributed on an "AS IS" BASIS,
++# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++# See the License for the specific language governing permissions and
++# limitations under the License.
++
++"""Validation and history materialization for structured interactive responses."""
++
++import json
++from typing import Iterable
++
++from pydantic import ValidationError
++
++from codemie.core.exceptions import ExtendedHTTPException
++from codemie.core.interactive import InteractiveRequest, InteractiveResponse, validate_response_values
++
++
++def validate_interactive_intake(
++    history: Iterable,
++    response: InteractiveResponse,
++    replacing_history_index: int | None = None,
++) -> InteractiveRequest:
++    """Validate an incoming structured response against the conversation history.
++
++    Ensures the referenced request exists, has not been answered yet, and the
++    submitted values pass server-side re-validation (client validation is not
++    trusted). Raises ExtendedHTTPException(422) on any violation.
++
++    Re-answering a form mirrors editing the previous user request: when this submit
++    replaces a turn (``replacing_history_index`` set), the stored answer AT THAT EXACT
++    turn is being overwritten, so it does not count as "already answered".
++
++    ``replacing_history_index`` comes from the client, so the match is strict equality
++    on the stored answer's OWN ``history_index`` — never ``>=``. Otherwise a client
++    could send a low index (e.g. 0) to mark every prior answer as "being replaced" and
++    slip a duplicate past the once-only guard (and steer the replaced turn).
++    """
++    request = None
++    for message in history:
++        stored_request = getattr(message, "interactive_request", None)
++        if stored_request is not None and stored_request.request_id == response.request_id:
++            request = stored_request
++        stored_response = getattr(message, "interactive_response", None)
++        if stored_response is not None and stored_response.request_id == response.request_id:
++            message_index = getattr(message, "history_index", None)
++            being_replaced = (
++                replacing_history_index is not None
++                and message_index is not None
++                and message_index == replacing_history_index
++            )
++            if not being_replaced:
++                raise ExtendedHTTPException(code=422, message="Interactive request already answered")
++    if request is None:
++        raise ExtendedHTTPException(code=422, message="Unknown interactive request_id")
++    try:
++        validate_response_values(response, request)
++    except (ValidationError, RecursionError):
++        # A malformed/pathological stored surface must surface as a clean 4xx,
++        # never an unhandled 500. ValidationError subclasses ValueError, so this
++        # specific clause must come first or it would be shadowed below.
++        raise ExtendedHTTPException(code=422, message="Invalid interactive request or response")
++    except ValueError as error:
++        raise ExtendedHTTPException(code=422, message=str(error))
++    return request
++
++
++def materialize_interactive_message_text(display_text: str, response: InteractiveResponse) -> str:
++    """Deterministic structured text replayed to the LLM for an interactive response."""
++    return (
++        f"{display_text}\n\n"
++        f"[Structured response to interactive request {response.request_id}]\n"
++        f"{json.dumps(response.payload, ensure_ascii=False)}"
++    )
+diff --git a/src/codemie/service/conversation_service.py b/src/codemie/service/conversation_service.py
+index b199a7020..fef1e4ed8 100644
+--- a/src/codemie/service/conversation_service.py
++++ b/src/codemie/service/conversation_service.py
+@@ -25,6 +25,7 @@ from pydantic import BaseModel
+ from sqlmodel import select, and_, func, or_, text, Session
+ 
+ from codemie.chains.base import Thought
++from codemie.core.interactive import InteractiveRequest
+ from codemie.clients.postgres import get_session
+ from codemie.configs import config, logger
+ from codemie.core.dependecies import get_stt_openai_client
+@@ -33,6 +34,7 @@ from codemie.core.models import AssistantChatRequest, UpdateConversationRequest,
+ from codemie.core.utils import safe_divide
+ from codemie.rest_api.models.base import ConversationStatus
+ from codemie.rest_api.models.conversation import (
++    ChatTurnData,
+     Conversation,
+     ConversationMetrics,
+     GeneratedMessage,
+@@ -136,6 +138,7 @@ class ConversationService:
+         thoughts: List[Thought],
+         status: ConversationStatus = ConversationStatus.SUCCESS,
+         user_message_received_at: datetime | None = None,
++        interactive_request: InteractiveRequest | None = None,
+         request_id: Optional[str] = None,
+     ):
+         should_create_conversation = False
+@@ -176,20 +179,24 @@ class ConversationService:
+         replace_latest_variant = request.has_persisted_history_variant()
+ 
+         conversation.update_chat_history(
+-            user_query=request.text,
+-            user_query_raw=request.content_raw or html.escape(request.text or ""),
+-            assistant_id=assistant.id,
++            ChatTurnData(
++                user_query=request.text,
++                user_query_raw=request.content_raw or html.escape(request.text or ""),
++                assistant_id=assistant.id,
++                assistant_response=assistant_response,
++                thoughts=thoughts,
++                history_index=history_index,
++                file_names=request.file_names,
++                time_elapsed=time_elapsed,
++                input_tokens=tokens_usage.input_tokens,
++                output_tokens=tokens_usage.output_tokens,
++                money_spent=tokens_usage.money_spent,
++                user_message_received_at=user_message_received_at,
++                interactive_request=interactive_request,
++                interactive_response=request.interactive_response,
++            ),
+             project=assistant.project,
+-            assistant_response=assistant_response,
+-            thoughts=thoughts,
+-            history_index=history_index,
+-            file_names=request.file_names,
+-            time_elapsed=time_elapsed,
+-            input_tokens=tokens_usage.input_tokens,
+-            output_tokens=tokens_usage.output_tokens,
+-            money_spent=tokens_usage.money_spent,
+             replace_latest_variant=replace_latest_variant,
+-            user_message_received_at=user_message_received_at,
+         )
+         AgentWorkspaceService().sync_uploaded_files(
+             conversation_id=request.conversation_id,
+diff --git a/src/codemie/service/tools/toolkit_service.py b/src/codemie/service/tools/toolkit_service.py
+index ea8a3ca5d..e389d8cda 100644
+--- a/src/codemie/service/tools/toolkit_service.py
++++ b/src/codemie/service/tools/toolkit_service.py
+@@ -40,6 +40,7 @@ from codemie_tools.research.tools_vars import (
+ )
+ from codemie_tools.data_management.code_executor.tools_vars import CODE_EXECUTOR_TOOL
+ from codemie.configs import config
++from codemie.configs.customer_config import customer_config
+ from codemie.configs.logger import logger
+ from codemie.core.constants import CodeIndexType, ToolType
+ from codemie.core.dependecies import get_llm_by_credentials
+@@ -575,7 +576,30 @@ class ToolkitService:
+             )
+         )
+ 
+-        return cls._append_workspace_image_tool_if_enabled(tools, assistant, request, user)
++        tools = cls._append_workspace_image_tool_if_enabled(tools, assistant, request, user)
++        return cls._append_request_user_input_tool_if_enabled(tools, assistant, thread_generator)
++
++    @classmethod
++    def _append_request_user_input_tool_if_enabled(cls, tools, assistant, thread_generator):
++        """Register the interactive input tool when the assistant enables any interactive feature.
++
++        Gated by the platform-level ``features:interactiveElements`` customer flag so a disabled
++        deployment removes the tool from the catalog entirely, not just from the UI.
++        """
++        interactive_config = getattr(assistant, "interactive_features", None)
++        if (
++            interactive_config
++            and interactive_config.any_enabled()
++            and thread_generator is not None
++            and customer_config.is_feature_enabled("interactiveElements")
++        ):
++            from codemie.agents.tools.interactive.request_user_input import RequestUserInputTool
++
++            catalog = customer_config.get_feature_setting("interactiveElements", "catalog", None)
++            tools.append(
++                RequestUserInputTool(config=interactive_config, thread_generator=thread_generator, catalog=catalog)
++            )
++        return tools
+ 
+     @classmethod
+     def get_core_tools(
+diff --git a/src/external/alembic/versions/i1n2t3e4r5a6_add_interactive_features_to_assistants.py b/src/external/alembic/versions/i1n2t3e4r5a6_add_interactive_features_to_assistants.py
+new file mode 100644
+index 000000000..1edda709c
+--- /dev/null
++++ b/src/external/alembic/versions/i1n2t3e4r5a6_add_interactive_features_to_assistants.py
+@@ -0,0 +1,30 @@
++"""add_interactive_features_to_assistants
++
++Revision ID: i1n2t3e4r5a6
++Revises: p1q2r3s4t5u6
++Create Date: 2026-07-16 00:00:00.000000
++
++"""
++
++from typing import Sequence, Union
++
++from alembic import op
++import sqlalchemy as sa
++from sqlalchemy.dialects import postgresql
++
++
++# revision identifiers, used by Alembic.
++revision: str = 'i1n2t3e4r5a6'
++down_revision: Union[str, None] = 's9t0u1v2w3x4'
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++
++def upgrade() -> None:
++    """Upgrade schema."""
++    op.add_column('assistants', sa.Column('interactive_features', postgresql.JSONB(), nullable=True))
++
++
++def downgrade() -> None:
++    """Downgrade schema."""
++    op.drop_column('assistants', 'interactive_features')
+diff --git a/tests/codemie/agents/test_assistant_agent/test_interactive_turn_end.py b/tests/codemie/agents/test_assistant_agent/test_interactive_turn_end.py
+new file mode 100644
+index 000000000..a07f00173
+--- /dev/null
++++ b/tests/codemie/agents/test_assistant_agent/test_interactive_turn_end.py
+@@ -0,0 +1,73 @@
++# Copyright 2026 EPAM Systems, Inc. (“EPAM”)
++#
++# Licensed under the Apache License, Version 2.0 (the "License");
++# you may not use this file except in compliance with the License.
++# You may obtain a copy of the License at
++#
++#     http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing, software
++# distributed under the License is distributed on an "AS IS" BASIS,
++# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++# See the License for the specific language governing permissions and
++# limitations under the License.
++
++"""Verifies the turn-based pause contract: request_user_input ends the agent turn.
++
++This is the single most uncertain integration point of the interactive-input
++feature — the pause semantics rest entirely on the tool's return_direct=True
++being honored by langgraph's create_react_agent. This test pins that contract:
++after the tool runs, the agent must NOT call the LLM a second time.
++"""
++
++from unittest.mock import MagicMock
++
++from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
++from langchain_core.messages import AIMessage, HumanMessage
++from langgraph.prebuilt import create_react_agent
++from pydantic import Field
++
++from codemie.agents.tools.interactive.request_user_input import RequestUserInputTool
++from codemie.core.interactive import InteractiveFeaturesConfig
++
++
++class RecordingBindableFakeChatModel(FakeMessagesListChatModel):
++    """Fake chat model that counts how many times the LLM is invoked."""
++
++    call_count: int = Field(default=0)
++
++    def bind_tools(self, tools, **kwargs):
++        return self
++
++    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
++        self.call_count += 1
++        return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
++
++
++def test_request_user_input_ends_turn_without_second_llm_call():
++    generator = MagicMock()
++    tool = RequestUserInputTool(config=InteractiveFeaturesConfig(action_buttons=True), thread_generator=generator)
++
++    # First (and only) LLM response calls request_user_input. If return_direct
++    # is honored, the graph routes to END and never calls the model again.
++    tool_call_message = AIMessage(
++        content="",
++        tool_calls=[
++            {
++                "name": "request_user_input",
++                "args": {"surface": [{"type": "button", "id": "ok", "label": "OK"}]},
++                "id": "call-1",
++            }
++        ],
++    )
++    # A second response is provided as a trap: if the agent loops, it would be consumed.
++    trap_message = AIMessage(content="the agent should never reach this")
++    model = RecordingBindableFakeChatModel(responses=[tool_call_message, trap_message])
++
++    agent = create_react_agent(model=model, tools=[tool])
++    agent.invoke({"messages": [HumanMessage(content="decide please")]})
++
++    # Exactly one LLM call: the turn ended after the tool ran.
++    assert model.call_count == 1
++    # And the interactive request was streamed out.
++    assert generator.send.call_count == 1
+diff --git a/tests/codemie/agents/tools/test_request_user_input.py b/tests/codemie/agents/tools/test_request_user_input.py
+new file mode 100644
+index 000000000..8efcb2938
+--- /dev/null
++++ b/tests/codemie/agents/tools/test_request_user_input.py
+@@ -0,0 +1,125 @@
++# Copyright 2026 EPAM Systems, Inc. (“EPAM”)
++#
++# Licensed under the Apache License, Version 2.0 (the "License");
++# you may not use this file except in compliance with the License.
++# You may obtain a copy of the License at
++#
++#     http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing, software
++# distributed under the License is distributed on an "AS IS" BASIS,
++# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++# See the License for the specific language governing permissions and
++# limitations under the License.
++
++import json
++from unittest.mock import MagicMock
++
++import pytest
++
++from codemie.agents.tools.interactive.request_user_input import (
++    REQUEST_USER_INPUT_TOOL_NAME,
++    RequestUserInputTool,
++)
++from codemie.core.interactive import InteractiveFeaturesConfig
++
++CFG = InteractiveFeaturesConfig(action_buttons=True)
++
++
++def _tool():
++    generator = MagicMock()
++    return RequestUserInputTool(config=CFG, thread_generator=generator), generator
++
++
++def test_execute_emits_interactive_request_chunk():
++    tool, generator = _tool()
++    tool.execute(surface=[{"type": "button", "id": "ok", "label": "OK"}])
++    assert generator.send.call_count == 1
++    chunk = json.loads(generator.send.call_args[0][0])
++    assert chunk["interactive_request"]["request_id"]
++    assert chunk["interactive_request"]["surface"][0]["id"] == "ok"
++
++
++def test_execute_rejects_disabled_element():
++    tool, generator = _tool()
++    with pytest.raises(ValueError, match="multiple_choice"):
++        tool.execute(surface=[{"type": "multiple_choice", "id": "c", "options": [{"value": "a", "label": "A"}]}])
++    generator.send.assert_not_called()
++
++
++def test_tool_is_return_direct_and_named():
++    tool, _ = _tool()
++    assert tool.name == REQUEST_USER_INPUT_TOOL_NAME == "request_user_input"
++    assert tool.return_direct is True
++
++
++def test_args_schema_reflects_config():
++    tool, _ = _tool()
++    schema = str(tool.args_schema.model_json_schema())
++    assert "button" in schema
++    assert "text_field" not in schema
++
++
++class TestToolkitAppend:
++    def test_appended_when_features_enabled(self):
++        from unittest.mock import patch
++
++        from codemie.service.tools.toolkit_service import ToolkitService
++
++        assistant = MagicMock()
++        assistant.interactive_features = CFG
++        generator = MagicMock()
++        flag = MagicMock()
++        flag.is_feature_enabled.return_value = True
++        flag.get_feature_setting.return_value = None
++        with patch("codemie.service.tools.toolkit_service.customer_config", flag):
++            tools = ToolkitService._append_request_user_input_tool_if_enabled([], assistant, generator)
++        assert len(tools) == 1
++        assert tools[0].name == REQUEST_USER_INPUT_TOOL_NAME
++
++    def test_noop_when_config_absent(self):
++        from codemie.service.tools.toolkit_service import ToolkitService
++
++        assistant = MagicMock()
++        assistant.interactive_features = None
++        tools = ToolkitService._append_request_user_input_tool_if_enabled([], assistant, MagicMock())
++        assert tools == []
++
++    def test_noop_when_all_features_disabled(self):
++        from codemie.service.tools.toolkit_service import ToolkitService
++
++        assistant = MagicMock()
++        assistant.interactive_features = InteractiveFeaturesConfig()
++        tools = ToolkitService._append_request_user_input_tool_if_enabled([], assistant, MagicMock())
++        assert tools == []
++
++    def test_noop_without_thread_generator(self):
++        from codemie.service.tools.toolkit_service import ToolkitService
++
++        assistant = MagicMock()
++        assistant.interactive_features = CFG
++        tools = ToolkitService._append_request_user_input_tool_if_enabled([], assistant, None)
++        assert tools == []
++
++    def test_noop_when_customer_flag_disabled(self):
++        from unittest.mock import patch
++
++        from codemie.service.tools.toolkit_service import ToolkitService
++
++        assistant = MagicMock()
++        assistant.interactive_features = CFG
++        flag = MagicMock()
++        flag.is_feature_enabled.return_value = False
++        with patch("codemie.service.tools.toolkit_service.customer_config", flag):
++            tools = ToolkitService._append_request_user_input_tool_if_enabled([], assistant, MagicMock())
++        assert tools == []
++
++
++def test_interactive_prompt_lists_only_enabled_elements():
++    from codemie.core.interactive import render_interactive_elements_prompt
++
++    prompt = render_interactive_elements_prompt(CFG)
++    assert "request_user_input" in prompt
++    assert "button" in prompt
++    assert "multiple_choice" not in prompt
++    assert "text_field" not in prompt
+diff --git a/tests/codemie/chains/test_interactive.py b/tests/codemie/chains/test_interactive.py
+new file mode 100644
+index 000000000..c60224171
+--- /dev/null
++++ b/tests/codemie/chains/test_interactive.py
+@@ -0,0 +1,774 @@
++# Copyright 2026 EPAM Systems, Inc. (“EPAM”)
++#
++# Licensed under the Apache License, Version 2.0 (the "License");
++# you may not use this file except in compliance with the License.
++# You may obtain a copy of the License at
++#
++#     http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing, software
++# distributed under the License is distributed on an "AS IS" BASIS,
++# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++# See the License for the specific language governing permissions and
++# limitations under the License.
++
++import pytest
++from pydantic import ValidationError
++
++from codemie.core.interactive import (
++    InteractiveFeaturesConfig,
++    InteractiveRequest,
++    InteractiveResponse,
++    build_surface_args_schema,
++    enabled_element_types,
++    validate_response_values,
++    validate_surface,
++)
++
++CFG_CHOICE_ONLY = InteractiveFeaturesConfig(action_buttons=False, choice=True, short_forms=False)
++CFG_ALL = InteractiveFeaturesConfig(action_buttons=True, choice=True, short_forms=True)
++CFG_FORMS_ONLY = InteractiveFeaturesConfig(action_buttons=False, choice=False, short_forms=True)
++
++
++class TestEnabledElementTypes:
++    def test_choice_only_has_layout_and_choice_no_button(self):
++        types = enabled_element_types(CFG_CHOICE_ONLY)
++        assert types == {"text", "column", "row", "multiple_choice", "dropdown"}
++
++    def test_button_enabled_by_short_forms(self):
++        assert "button" in enabled_element_types(CFG_FORMS_ONLY)
++
++    def test_all_disabled_is_empty(self):
++        cfg = InteractiveFeaturesConfig()
++        assert enabled_element_types(cfg) == set()
++
++
++class TestElementRegistryAndCatalog:
++    def test_default_catalog_derived_from_registry(self):
++        from codemie.core.interactive import default_element_catalog
++
++        catalog = default_element_catalog()
++        assert set(catalog["layout"]) == {"text", "column", "row"}
++        # choice enables both multiple_choice and dropdown per registry FEATURES
++        assert set(catalog["features"]["choice"]) == {"multiple_choice", "dropdown"}
++        assert "date_picker" in catalog["features"]["short_forms"]
++
++    def test_catalog_override_gates_types(self):
++        # A deployment can drop dropdown from the 'choice' feature via config without code.
++        catalog = {"layout": ["text", "column", "row"], "features": {"choice": ["multiple_choice"]}}
++        types = enabled_element_types(CFG_CHOICE_ONLY, catalog)
++        assert "multiple_choice" in types
++        assert "dropdown" not in types
++
++    def test_catalog_ignores_unknown_element_types(self):
++        # A stale/typo catalog entry cannot smuggle an unknown type into the allowed set.
++        catalog = {"layout": ["text"], "features": {"choice": ["multiple_choice", "made_up_widget"]}}
++        types = enabled_element_types(CFG_CHOICE_ONLY, catalog)
++        assert "made_up_widget" not in types
++        assert "multiple_choice" in types
++
++    def test_malformed_catalog_shape_does_not_raise(self):
++        # The catalog is raw customer config; a bad SHAPE must degrade, never 500.
++        # Non-dict catalog -> registry defaults.
++        assert "multiple_choice" in enabled_element_types(CFG_CHOICE_ONLY, "onboarding")
++        # Dict catalog with malformed sub-shapes -> those parts empty (fail-closed), no raise.
++        for bad in (
++            {"features": "onboarding"},
++            {"features": {"choice": 5}},
++            {"layout": 7, "features": {"choice": ["dropdown"]}},
++        ):
++            types = enabled_element_types(CFG_CHOICE_ONLY, bad)
++            assert isinstance(types, set)
++
++    def test_registry_is_single_source_for_union_and_map(self):
++        from codemie.core.interactive import ELEMENT_REGISTRY, _ELEMENT_BY_TYPE
++
++        # Every registered model is reachable by its wire discriminator.
++        assert len(_ELEMENT_BY_TYPE) == len(ELEMENT_REGISTRY)
++        assert _ELEMENT_BY_TYPE["dropdown"].__name__ == "DropdownElement"
++
++
++class TestValidateSurface:
++    def test_rejects_disabled_element(self):
++        with pytest.raises(ValueError, match="button"):
++            validate_surface([{"type": "button", "id": "b1", "label": "OK"}], CFG_CHOICE_ONLY)
++
++    def test_rejects_disabled_nested_in_column(self):
++        surface = [{"type": "column", "children": [{"type": "text_field", "id": "f1", "label": "Name"}]}]
++        with pytest.raises(ValueError, match="text_field"):
++            validate_surface(surface, CFG_CHOICE_ONLY)
++
++    def test_accepts_enabled_tree(self):
++        surface = [
++            {
++                "type": "column",
++                "children": [
++                    {"type": "text", "content": "Pick one"},
++                    {
++                        "type": "multiple_choice",
++                        "id": "c1",
++                        "options": [{"value": "a", "label": "A"}],
++                        "max_allowed_selections": 1,
++                    },
++                ],
++            }
++        ]
++        elements = validate_surface(surface, CFG_CHOICE_ONLY)
++        assert elements[0].type == "column"
++
++
++class TestArgsSchemaFactory:
++    def test_schema_excludes_disabled_types(self):
++        schema_cls = build_surface_args_schema(CFG_CHOICE_ONLY)
++        json_schema = str(schema_cls.model_json_schema())
++        assert "multiple_choice" in json_schema
++        assert "text_field" not in json_schema
++        assert "'button'" not in json_schema
++
++    def test_schema_validates_payload(self):
++        schema_cls = build_surface_args_schema(CFG_CHOICE_ONLY)
++        with pytest.raises(ValidationError):
++            schema_cls(surface=[{"type": "button", "id": "b", "label": "X"}])
++
++    def test_no_features_enabled_raises(self):
++        with pytest.raises(ValueError):
++            build_surface_args_schema(InteractiveFeaturesConfig())
++
++
++def _request_with_form():
++    return InteractiveRequest(
++        request_id="r1",
++        surface=[
++            {
++                "type": "text_field",
++                "id": "email",
++                "label": "Email",
++                "validation": {"required": True, "email": True},
++            },
++            {"type": "text_field", "id": "code", "label": "Code", "validation": {"regex": "^[0-9]{4}$"}},
++            {"type": "button", "id": "submit", "label": "Submit"},
++        ],
++    )
++
++
++class TestValidateResponseValues:
++    def test_missing_required_raises(self):
++        resp = InteractiveResponse(request_id="r1", kind="form", payload={"values": {"code": "1234"}})
++        with pytest.raises(ValueError, match="email"):
++            validate_response_values(resp, _request_with_form())
++
++    def test_bad_email_raises(self):
++        resp = InteractiveResponse(
++            request_id="r1", kind="form", payload={"values": {"email": "not-an-email", "code": "1234"}}
++        )
++        with pytest.raises(ValueError, match="email"):
++            validate_response_values(resp, _request_with_form())
++
++    def test_regex_mismatch_raises(self):
++        resp = InteractiveResponse(request_id="r1", kind="form", payload={"values": {"email": "a@b.co", "code": "12"}})
++        with pytest.raises(ValueError, match="code"):
++            validate_response_values(resp, _request_with_form())
++
++    def test_valid_form_passes(self):
++        resp = InteractiveResponse(
++            request_id="r1", kind="form", payload={"values": {"email": "a@b.co", "code": "1234"}}
++        )
++        validate_response_values(resp, _request_with_form())
++
++    def test_choice_over_max_selections_raises(self):
++        req = InteractiveRequest(
++            request_id="r2",
++            surface=[
++                {
++                    "type": "multiple_choice",
++                    "id": "c1",
++                    "max_allowed_selections": 1,
++                    "options": [{"value": "a", "label": "A"}, {"value": "b", "label": "B"}],
++                }
++            ],
++        )
++        resp = InteractiveResponse(request_id="r2", kind="choice", payload={"selected": ["a", "b"]})
++        with pytest.raises(ValueError, match="max"):
++            validate_response_values(resp, req)
++
++    def test_choice_unknown_value_raises(self):
++        req = InteractiveRequest(
++            request_id="r2",
++            surface=[
++                {
++                    "type": "multiple_choice",
++                    "id": "c1",
++                    "max_allowed_selections": 1,
++                    "options": [{"value": "a", "label": "A"}],
++                }
++            ],
++        )
++        resp = InteractiveResponse(request_id="r2", kind="choice", payload={"selected": ["zzz"]})
++        with pytest.raises(ValueError, match="[Uu]nknown"):
++            validate_response_values(resp, req)
++
++    def test_text_fallback_always_passes(self):
++        resp = InteractiveResponse(request_id="r1", kind="text_fallback", payload={"text": "free text"})
++        validate_response_values(resp, _request_with_form())
++
++    def test_request_id_generated_by_default(self):
++        req = InteractiveRequest(surface=[{"type": "text", "content": "hi"}])
++        assert req.request_id
++
++
++class TestWireFields:
++    def test_streamed_result_carries_interactive_request(self):
++        import json
++
++        from codemie.chains.base import StreamedGenerationResult
++
++        req = InteractiveRequest(surface=[{"type": "text", "content": "hi"}])
++        chunk = json.loads(StreamedGenerationResult(interactive_request=req).model_dump_json())
++        assert chunk["interactive_request"]["surface"][0]["type"] == "text"
++
++    def test_streamed_result_default_has_null_interactive_request(self):
++        import json
++
++        from codemie.chains.base import StreamedGenerationResult
++
++        chunk = json.loads(StreamedGenerationResult(generated="x").model_dump_json())
++        assert chunk.get("interactive_request") is None
++
++    def test_chat_request_accepts_interactive_response(self):
++        from codemie.core.models import AssistantChatRequest
++
++        request = AssistantChatRequest(
++            text="✓ OK",
++            interactive_response={"request_id": "r1", "kind": "action", "payload": {"action": "ok"}},
++        )
++        assert request.interactive_response.kind == "action"
++        assert AssistantChatRequest(text="hi").interactive_response is None
++
++    def test_generated_message_persists_interactive_fields(self):
++        from codemie.rest_api.models.conversation import GeneratedMessage
++
++        req = InteractiveRequest(request_id="r1", surface=[{"type": "text", "content": "hi"}])
++        message = GeneratedMessage(role="Assistant", message="", interactive_request=req)
++        assert message.interactive_request.request_id == "r1"
++        resp = InteractiveResponse(request_id="r1", kind="action", payload={"action": "ok"})
++        user_message = GeneratedMessage(role="User", message="✓ OK", interactive_response=resp)
++        assert user_message.interactive_response.request_id == "r1"
++        assert GeneratedMessage(role="User", message="x").interactive_request is None
++
++
++class TestResponseHardening:
++    def test_invalid_regex_raises_value_error_not_re_error(self):
++        req = InteractiveRequest(
++            request_id="r1",
++            surface=[
++                {"type": "text_field", "id": "f", "label": "F", "validation": {"regex": "("}},
++                {"type": "button", "id": "s", "label": "S"},
++            ],
++        )
++        resp = InteractiveResponse(request_id="r1", kind="form", payload={"values": {"f": "x"}})
++        with pytest.raises(ValueError):
++            validate_response_values(resp, req)
++
++    def test_overlong_field_value_rejected(self):
++        req = InteractiveRequest(
++            request_id="r1",
++            surface=[
++                {"type": "text_field", "id": "f", "label": "F", "validation": {"regex": "^a+$"}},
++                {"type": "button", "id": "s", "label": "S"},
++            ],
++        )
++        resp = InteractiveResponse(request_id="r1", kind="form", payload={"values": {"f": "a" * 20000}})
++        with pytest.raises(ValueError, match="too long"):
++            validate_response_values(resp, req)
++
++    def test_overlong_regex_pattern_rejected(self):
++        req = InteractiveRequest(
++            request_id="r1",
++            surface=[
++                {"type": "text_field", "id": "f", "label": "F", "validation": {"regex": "a" * 2000}},
++                {"type": "button", "id": "s", "label": "S"},
++            ],
++        )
++        resp = InteractiveResponse(request_id="r1", kind="form", payload={"values": {"f": "aaa"}})
++        with pytest.raises(ValueError, match="pattern"):
++            validate_response_values(resp, req)
++
++    def test_selected_not_a_list_raises_value_error(self):
++        req = InteractiveRequest(
++            request_id="r1",
++            surface=[
++                {
++                    "type": "multiple_choice",
++                    "id": "c",
++                    "max_allowed_selections": 1,
++                    "options": [{"value": "a", "label": "A"}],
++                }
++            ],
++        )
++        resp = InteractiveResponse(request_id="r1", kind="choice", payload={"selected": 5})
++        with pytest.raises(ValueError, match="list"):
++            validate_response_values(resp, req)
++
++    def test_values_not_a_dict_raises_value_error(self):
++        req = InteractiveRequest(
++            request_id="r1",
++            surface=[
++                {"type": "text_field", "id": "f", "label": "F"},
++                {"type": "button", "id": "s", "label": "S"},
++            ],
++        )
++        resp = InteractiveResponse(request_id="r1", kind="form", payload={"values": "oops"})
++        with pytest.raises(ValueError, match="object"):
++            validate_response_values(resp, req)
++
++
++class TestRedosAndPayloadHardening:
++    def test_catastrophic_regex_times_out_as_value_error(self):
++        req = InteractiveRequest(
++            request_id="r1",
++            surface=[
++                {"type": "text_field", "id": "f", "label": "F", "validation": {"regex": r"(a|a)*$"}},
++                {"type": "button", "id": "s", "label": "S"},
++            ],
++        )
++        resp = InteractiveResponse(request_id="r1", kind="form", payload={"values": {"f": "a" * 40 + "X"}})
++        with pytest.raises(ValueError):
++            validate_response_values(resp, req)
++
++    def test_unhashable_selected_item_raises_value_error(self):
++        req = InteractiveRequest(
++            request_id="r1",
++            surface=[
++                {
++                    "type": "multiple_choice",
++                    "id": "c",
++                    "max_allowed_selections": 2,
++                    "options": [{"value": "a", "label": "A"}],
++                }
++            ],
++        )
++        resp = InteractiveResponse(request_id="r1", kind="choice", payload={"selected": [{"nested": 1}]})
++        with pytest.raises(ValueError):
++            validate_response_values(resp, req)
++
++    def test_oversized_total_payload_rejected(self):
++        req = InteractiveRequest(
++            request_id="r1",
++            surface=[{"type": "button", "id": "ok", "label": "OK"}],
++        )
++        resp = InteractiveResponse(request_id="r1", kind="action", payload={"action": "ok", "junk": "z" * 200000})
++        with pytest.raises(ValueError, match="[Pp]ayload"):
++            validate_response_values(resp, req)
++
++
++class TestKindAndSurfaceValidation:
++    def _surface_button(self):
++        return InteractiveRequest(request_id="r1", surface=[{"type": "button", "id": "ok", "label": "OK"}])
++
++    def test_action_unknown_id_rejected(self):
++        resp = InteractiveResponse(request_id="r1", kind="action", payload={"action": "nope"})
++        with pytest.raises(ValueError, match="[Aa]ction"):
++            validate_response_values(resp, self._surface_button())
++
++    def test_action_known_id_passes(self):
++        resp = InteractiveResponse(request_id="r1", kind="action", payload={"action": "ok"})
++        validate_response_values(resp, self._surface_button())
++
++    def test_text_fallback_with_structured_payload_rejected(self):
++        # A client must not smuggle structured data past validation via kind=text_fallback
++        resp = InteractiveResponse(request_id="r1", kind="text_fallback", payload={"text": "hi", "values": {"x": "y"}})
++        with pytest.raises(ValueError):
++            validate_response_values(resp, self._surface_button())
++
++    def test_text_fallback_plain_text_passes(self):
++        resp = InteractiveResponse(request_id="r1", kind="text_fallback", payload={"text": "free"})
++        validate_response_values(resp, self._surface_button())
++
++    def test_form_unknown_field_key_rejected(self):
++        req = InteractiveRequest(
++            request_id="r1",
++            surface=[
++                {"type": "text_field", "id": "name", "label": "Name"},
++                {"type": "button", "id": "s", "label": "S"},
++            ],
++        )
++        resp = InteractiveResponse(request_id="r1", kind="form", payload={"values": {"name": "a", "sneaky": "z"}})
++        with pytest.raises(ValueError, match="[Uu]nknown"):
++            validate_response_values(resp, req)
++
++    def test_required_not_satisfied_by_falsy_nonstring(self):
++        req = InteractiveRequest(
++            request_id="r1",
++            surface=[
++                {"type": "text_field", "id": "n", "label": "N", "validation": {"required": True}},
++                {"type": "button", "id": "s", "label": "S"},
++            ],
++        )
++        resp = InteractiveResponse(request_id="r1", kind="form", payload={"values": {"n": 0}})
++        with pytest.raises(ValueError, match="required|string"):
++            validate_response_values(resp, req)
++
++
++class TestSurfaceDepthLimits:
++    def test_deeply_nested_surface_rejected_as_value_error(self):
++        node = {"type": "text", "content": "x"}
++        for _ in range(30):
++            node = {"type": "column", "children": [node]}
++        with pytest.raises(ValueError, match="[Dd]epth|[Nn]est"):
++            validate_surface([node], CFG_ALL)
++
++    def test_too_many_elements_rejected(self):
++        surface = [{"type": "button", "id": f"b{i}", "label": str(i)} for i in range(500)]
++        with pytest.raises(ValueError, match="[Cc]ount|too many|max"):
++            validate_surface(surface, CFG_ALL)
++
++    def test_reasonable_surface_still_accepted(self):
++        surface = [{"type": "column", "children": [{"type": "button", "id": "ok", "label": "OK"}]}]
++        validate_surface(surface, CFG_ALL)
++
++
++class TestDynamicSchemaSurfaceRevalidation:
++    def test_column_surface_from_tool_args_schema_revalidates(self):
++        # Reproduces the tool path: args parsed via build_surface_args_schema produce
++        # DYNAMIC ColumnElement instances; validate_surface must accept them, not raise
++        # a pydantic model_type mismatch against the module-level ColumnElement.
++        from codemie.core.interactive import build_surface_args_schema
++
++        schema_cls = build_surface_args_schema(CFG_ALL)
++        parsed = schema_cls(
++            surface=[
++                {"type": "text", "content": "Plan:"},
++                {
++                    "type": "column",
++                    "children": [
++                        {"type": "text", "content": "step 1"},
++                        {"type": "button", "id": "ok", "label": "Approve", "style": "secondary"},
++                    ],
++                },
++            ]
++        )
++        # parsed.surface elements are dynamic-class instances (Text/Column)
++        elements = validate_surface(parsed.surface, CFG_ALL)
++        assert elements[1].type == "column"
++        assert elements[1].children[1].id == "ok"
++
++
++class TestCombinedSubmitResponse:
++    def _multi_block_request(self):
++        return InteractiveRequest(
++            request_id="r1",
++            surface=[
++                {
++                    "type": "multiple_choice",
++                    "id": "db",
++                    "max_allowed_selections": 1,
++                    "options": [{"value": "postgresql", "label": "PostgreSQL"}, {"value": "mysql", "label": "MySQL"}],
++                },
++                {
++                    "type": "multiple_choice",
++                    "id": "feats",
++                    "max_allowed_selections": 2,
++                    "options": [{"value": "auth", "label": "Auth"}, {"value": "billing", "label": "Billing"}],
++                },
++                {
++                    "type": "text_field",
++                    "id": "email",
++                    "label": "Email",
++                    "validation": {"required": True, "email": True},
++                },
++                {"type": "button", "id": "approve", "label": "Approve"},
++            ],
++        )
++
++    def test_combined_submit_validates_each_answer_against_its_element(self):
++        # The key bug: a value valid for one choice must NOT be rejected because it is
++        # unknown to another choice. Combined answers-by-id fix that.
++        resp = InteractiveResponse(
++            request_id="r1",
++            kind="submit",
++            payload={
++                "action": "approve",
++                "answers": {
++                    "db": {"selected": ["postgresql"]},
++                    "feats": {"selected": ["auth", "billing"]},
++                    "email": {"value": "a@b.co"},
++                },
++            },
++        )
++        validate_response_values(resp, self._multi_block_request())
++
++    def test_combined_choice_value_checked_against_correct_element(self):
++        resp = InteractiveResponse(
++            request_id="r1",
++            kind="submit",
++            payload={
++                "answers": {"db": {"selected": ["auth"]}},  # 'auth' belongs to feats, not db
++            },
++        )
++        with pytest.raises(ValueError, match="[Uu]nknown choice"):
++            validate_response_values(resp, self._multi_block_request())
++
++    def test_combined_over_cap_rejected(self):
++        resp = (
++            InteractiveResponse(
++                request_id="r1",
++                kind="submit",
++                payload={
++                    "answers": {
++                        "feats": {"selected": ["auth", "billing"]},
++                        "db": {"selected": ["postgresql", "mysql"]},
++                    },
++                    "email": None,
++                },
++            )
++            if False
++            else InteractiveResponse(
++                request_id="r1",
++                kind="submit",
++                payload={
++                    "answers": {"db": {"selected": ["postgresql", "mysql"]}},  # db cap=1
++                },
++            )
++        )
++        with pytest.raises(ValueError, match="max"):
++            validate_response_values(resp, self._multi_block_request())
++
++    def test_combined_required_field_missing_rejected(self):
++        resp = InteractiveResponse(
++            request_id="r1",
++            kind="submit",
++            payload={
++                "answers": {"db": {"selected": ["postgresql"]}},  # email required but absent
++            },
++        )
++        with pytest.raises(ValueError, match="email|required"):
++            validate_response_values(resp, self._multi_block_request())
++
++    def test_combined_unknown_answer_id_rejected(self):
++        resp = InteractiveResponse(
++            request_id="r1",
++            kind="submit",
++            payload={
++                "answers": {"ghost": {"selected": ["x"]}, "email": {"value": "a@b.co"}},
++            },
++        )
++        with pytest.raises(ValueError, match="[Uu]nknown answer"):
++            validate_response_values(resp, self._multi_block_request())
++
++    def test_combined_unknown_action_rejected(self):
++        resp = InteractiveResponse(
++            request_id="r1",
++            kind="submit",
++            payload={
++                "action": "nope",
++                "answers": {"email": {"value": "a@b.co"}},
++            },
++        )
++        with pytest.raises(ValueError, match="[Aa]ction"):
++            validate_response_values(resp, self._multi_block_request())
++
++    def test_combined_submit_field_without_validation_does_not_crash(self):
++        # Regression: a text_field / checkbox with NO validation block must not raise
++        # AttributeError ('NoneType' has no attribute 'required') on combined submit.
++        req = InteractiveRequest(
++            request_id="r1",
++            surface=[
++                {
++                    "type": "multiple_choice",
++                    "id": "c",
++                    "max_allowed_selections": 1,
++                    "options": [{"value": "a", "label": "A"}],
++                },
++                {"type": "text_field", "id": "note", "label": "Note"},
++                {"type": "checkbox", "id": "agree", "label": "Agree"},
++                {"type": "button", "id": "send", "label": "Send"},
++            ],
++        )
++        resp = InteractiveResponse(
++            request_id="r1",
++            kind="submit",
++            payload={
++                "action": "send",
++                "answers": {"c": {"selected": ["a"]}, "note": {"value": "hi"}, "agree": {"value": True}},
++            },
++        )
++        validate_response_values(resp, req)
++
++
++class TestKindCoverageHardening:
++    def _required_field_surface(self):
++        return InteractiveRequest(
++            request_id="r1",
++            surface=[
++                {
++                    "type": "text_field",
++                    "id": "email",
++                    "label": "Email",
++                    "validation": {"required": True, "email": True},
++                },
++                {"type": "button", "id": "send", "label": "Send"},
++            ],
++        )
++
++    def test_action_kind_cannot_skip_required_field(self):
++        # Attack: answer a form that has a required field via kind='action' (a valid
++        # button id) to skip the required/email validation entirely.
++        resp = InteractiveResponse(request_id="r1", kind="action", payload={"action": "send"})
++        with pytest.raises(ValueError, match="cannot answer required"):
++            validate_response_values(resp, self._required_field_surface())
++
++    def test_form_kind_cannot_skip_required_dropdown(self):
++        req = InteractiveRequest(
++            request_id="r1",
++            surface=[
++                {
++                    "type": "dropdown",
++                    "id": "db",
++                    "label": "DB",
++                    "required": True,
++                    "options": [{"value": "pg", "label": "PG"}],
++                },
++                {"type": "button", "id": "send", "label": "Send"},
++            ],
++        )
++        resp = InteractiveResponse(request_id="r1", kind="form", payload={"values": {}})
++        with pytest.raises(ValueError, match="cannot answer required"):
++            validate_response_values(resp, req)
++
++    def test_action_kind_ok_when_no_required_inputs(self):
++        req = InteractiveRequest(request_id="r1", surface=[{"type": "button", "id": "ok", "label": "OK"}])
++        resp = InteractiveResponse(request_id="r1", kind="action", payload={"action": "ok"})
++        validate_response_values(resp, req)
++
++    def test_text_fallback_exempt_from_required_coverage(self):
++        resp = InteractiveResponse(request_id="r1", kind="text_fallback", payload={"text": "free"})
++        validate_response_values(resp, self._required_field_surface())
++
++
++class TestArgsSchemaDepthGuard:
++    def test_args_schema_rejects_deeply_nested_surface(self):
++        # The tool framework validates args against build_surface_args_schema BEFORE
++        # execute()/validate_surface runs, so the depth cap must apply here too — a
++        # clean ValidationError, never a RecursionError.
++        schema_cls = build_surface_args_schema(CFG_ALL)
++        node = {"type": "text", "content": "x"}
++        for _ in range(30):
++            node = {"type": "column", "children": [node]}
++        with pytest.raises(ValidationError):
++            schema_cls(surface=[node])
++
++    def test_args_schema_rejects_too_many_elements(self):
++        schema_cls = build_surface_args_schema(CFG_ALL)
++        surface = [{"type": "button", "id": f"b{i}", "label": str(i)} for i in range(500)]
++        with pytest.raises(ValidationError):
++            schema_cls(surface=surface)
++
++
++class TestDropdownElement:
++    def test_dropdown_enabled_by_choice(self):
++        assert "dropdown" in enabled_element_types(CFG_CHOICE_ONLY)
++        assert "dropdown" not in enabled_element_types(CFG_FORMS_ONLY)
++
++    def test_schema_includes_dropdown_under_choice(self):
++        json_schema = str(build_surface_args_schema(CFG_CHOICE_ONLY).model_json_schema())
++        assert "dropdown" in json_schema
++
++    def test_surface_accepts_dropdown(self):
++        surface = [
++            {
++                "type": "dropdown",
++                "id": "db",
++                "label": "Database",
++                "options": [{"value": "postgresql", "label": "PostgreSQL"}, {"value": "mysql", "label": "MySQL"}],
++            }
++        ]
++        elements = validate_surface(surface, CFG_CHOICE_ONLY)
++        assert elements[0].type == "dropdown"
++
++    def _dropdown_request(self, required=False):
++        return InteractiveRequest(
++            request_id="r1",
++            surface=[
++                {
++                    "type": "dropdown",
++                    "id": "db",
++                    "label": "Database",
++                    "required": required,
++                    "options": [{"value": "postgresql", "label": "PostgreSQL"}, {"value": "mysql", "label": "MySQL"}],
++                },
++                {"type": "button", "id": "ok", "label": "OK"},
++            ],
++        )
++
++    def test_valid_dropdown_value_passes(self):
++        resp = InteractiveResponse(
++            request_id="r1", kind="submit", payload={"action": "ok", "answers": {"db": {"value": "mysql"}}}
++        )
++        validate_response_values(resp, self._dropdown_request())
++
++    def test_unknown_dropdown_value_rejected(self):
++        resp = InteractiveResponse(request_id="r1", kind="submit", payload={"answers": {"db": {"value": "oracle"}}})
++        with pytest.raises(ValueError, match="[Uu]nknown dropdown"):
++            validate_response_values(resp, self._dropdown_request())
++
++    def test_required_dropdown_missing_rejected(self):
++        resp = InteractiveResponse(request_id="r1", kind="submit", payload={"answers": {"db": {"value": ""}}})
++        with pytest.raises(ValueError, match="required"):
++            validate_response_values(resp, self._dropdown_request(required=True))
++
++    def test_optional_dropdown_empty_passes(self):
++        resp = InteractiveResponse(request_id="r1", kind="submit", payload={"answers": {"db": {"value": ""}}})
++        validate_response_values(resp, self._dropdown_request(required=False))
++
++
++class TestDatePickerElement:
++    def test_date_picker_enabled_by_short_forms(self):
++        assert "date_picker" in enabled_element_types(CFG_FORMS_ONLY)
++        assert "date_picker" not in enabled_element_types(CFG_CHOICE_ONLY)
++
++    def test_schema_includes_date_picker_under_short_forms(self):
++        json_schema = str(build_surface_args_schema(CFG_FORMS_ONLY).model_json_schema())
++        assert "date_picker" in json_schema
++
++    def test_surface_accepts_date_picker(self):
++        surface = [{"type": "date_picker", "id": "d", "label": "When"}]
++        elements = validate_surface(surface, CFG_FORMS_ONLY)
++        assert elements[0].type == "date_picker"
++
++    def _date_request(self, required=False, dmin=None, dmax=None):
++        element = {"type": "date_picker", "id": "d", "label": "When", "required": required}
++        if dmin:
++            element["min"] = dmin
++        if dmax:
++            element["max"] = dmax
++        return InteractiveRequest(request_id="r1", surface=[element, {"type": "button", "id": "ok", "label": "OK"}])
++
++    def test_valid_date_passes(self):
++        resp = InteractiveResponse(
++            request_id="r1", kind="submit", payload={"action": "ok", "answers": {"d": {"value": "2026-07-20"}}}
++        )
++        validate_response_values(resp, self._date_request())
++
++    def test_malformed_date_rejected(self):
++        resp = InteractiveResponse(request_id="r1", kind="submit", payload={"answers": {"d": {"value": "20-07-2026"}}})
++        with pytest.raises(ValueError, match="ISO date"):
++            validate_response_values(resp, self._date_request())
++
++    def test_date_before_min_rejected(self):
++        resp = InteractiveResponse(request_id="r1", kind="submit", payload={"answers": {"d": {"value": "2026-01-01"}}})
++        with pytest.raises(ValueError, match="on or after"):
++            validate_response_values(resp, self._date_request(dmin="2026-06-01"))
++
++    def test_date_after_max_rejected(self):
++        resp = InteractiveResponse(request_id="r1", kind="submit", payload={"answers": {"d": {"value": "2026-12-31"}}})
++        with pytest.raises(ValueError, match="on or before"):
++            validate_response_values(resp, self._date_request(dmax="2026-08-01"))
++
++    def test_required_date_missing_rejected(self):
++        resp = InteractiveResponse(request_id="r1", kind="submit", payload={"answers": {"d": {"value": ""}}})
++        with pytest.raises(ValueError, match="required"):
++            validate_response_values(resp, self._date_request(required=True))
++
++    def test_optional_date_empty_passes(self):
++        resp = InteractiveResponse(request_id="r1", kind="submit", payload={"answers": {"d": {"value": ""}}})
++        validate_response_values(resp, self._date_request(required=False))
+diff --git a/tests/codemie/rest_api/handlers/test_assistant_handlers_interactive.py b/tests/codemie/rest_api/handlers/test_assistant_handlers_interactive.py
+new file mode 100644
+index 000000000..1c487a6c5
+--- /dev/null
++++ b/tests/codemie/rest_api/handlers/test_assistant_handlers_interactive.py
+@@ -0,0 +1,210 @@
++# Copyright 2026 EPAM Systems, Inc. (“EPAM”)
++#
++# Licensed under the Apache License, Version 2.0 (the "License");
++# you may not use this file except in compliance with the License.
++# You may obtain a copy of the License at
++#
++#     http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing, software
++# distributed under the License is distributed on an "AS IS" BASIS,
++# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++# See the License for the specific language governing permissions and
++# limitations under the License.
++
++"""Tests for interactive request capture in the streaming drain loop and persistence."""
++
++from time import time
++from unittest.mock import MagicMock, Mock, patch
++
++import pytest
++
++from codemie.chains.base import StreamedGenerationResult
++from codemie.core.interactive import InteractiveRequest, InteractiveResponse
++from codemie.core.models import AssistantChatRequest
++from codemie.core.thread import ThreadedGenerator
++from codemie.rest_api.handlers.assistant_handlers import StandardAssistantHandler
++from codemie.rest_api.security.user import User
++
++
++@pytest.fixture
++def mock_user():
++    user = Mock(spec=User)
++    user.id = "user-123"
++    user.username = "testuser"
++    user.name = "Test User"
++    return user
++
++
++@pytest.fixture
++def mock_assistant():
++    assistant = MagicMock()
++    assistant.id = "assistant-123"
++    assistant.name = "Test Assistant"
++    assistant.project = "test-project"
++    return assistant
++
++
++def _drain(handler, generator_queue, request):
++    stream = MagicMock()
++    with patch("codemie.rest_api.handlers.assistant_handlers.run_assistant_in_thread_pool"):
++        chunks = list(
++            handler._serve_data(
++                stream,
++                generator_queue,
++                request,
++                execution_start=time(),
++            )
++        )
++    return chunks
++
++
++def test_serve_data_captures_interactive_request(mock_assistant, mock_user):
++    handler = StandardAssistantHandler(assistant=mock_assistant, user=mock_user, request_uuid="test-uuid")
++    generator_queue = ThreadedGenerator()
++    interactive_request = InteractiveRequest(request_id="r1", surface=[{"type": "button", "id": "ok", "label": "OK"}])
++    generator_queue.send(StreamedGenerationResult(interactive_request=interactive_request).model_dump_json())
++    generator_queue.send(StreamedGenerationResult(generated="done").model_dump_json())
++    generator_queue.close()
++
++    request = AssistantChatRequest(text="hi", stream=True)
++    with patch.object(handler, "save_chat_history") as save_mock:
++        chunks = _drain(handler, generator_queue, request)
++
++    assert any('"interactive_request"' in chunk and '"r1"' in chunk for chunk in chunks)
++    saved = save_mock.call_args[0][0]
++    assert saved.interactive_request is not None
++    assert saved.interactive_request.request_id == "r1"
++
++
++def test_serve_data_without_interactive_chunk_saves_none(mock_assistant, mock_user):
++    handler = StandardAssistantHandler(assistant=mock_assistant, user=mock_user, request_uuid="test-uuid")
++    generator_queue = ThreadedGenerator()
++    generator_queue.send(StreamedGenerationResult(generated="plain text").model_dump_json())
++    generator_queue.close()
++
++    request = AssistantChatRequest(text="hi", stream=True)
++    with patch.object(handler, "save_chat_history") as save_mock:
++        _drain(handler, generator_queue, request)
++
++    assert save_mock.call_args[0][0].interactive_request is None
++
++
++def test_build_chat_history_messages_persists_interactive_fields():
++    from codemie.rest_api.models.conversation import ChatTurnData, Conversation
++
++    interactive_request = InteractiveRequest(request_id="r1", surface=[{"type": "button", "id": "ok", "label": "OK"}])
++    interactive_response = InteractiveResponse(request_id="r0", kind="action", payload={"action": "ok"})
++    user_message, assistant_message = Conversation._build_chat_history_messages(
++        ChatTurnData(
++            user_query="✓ OK",
++            user_query_raw="✓ OK",
++            assistant_id="a1",
++            assistant_response="",
++            thoughts=[],
++            history_index=0,
++            time_elapsed=1.0,
++            input_tokens=1,
++            output_tokens=1,
++            file_names=[],
++            money_spent=0.0,
++            interactive_request=interactive_request,
++            interactive_response=interactive_response,
++        )
++    )
++    assert user_message.interactive_response.request_id == "r0"
++    assert assistant_message.interactive_request.request_id == "r1"
++
++
++def test_build_chat_history_messages_defaults_interactive_fields_to_none():
++    from codemie.rest_api.models.conversation import ChatTurnData, Conversation
++
++    user_message, assistant_message = Conversation._build_chat_history_messages(
++        ChatTurnData(
++            user_query="hi",
++            user_query_raw="hi",
++            assistant_id="a1",
++            assistant_response="hello",
++            thoughts=[],
++            history_index=0,
++            time_elapsed=1.0,
++            input_tokens=1,
++            output_tokens=1,
++            file_names=[],
++            money_spent=0.0,
++        )
++    )
++    assert user_message.interactive_response is None
++    assert assistant_message.interactive_request is None
++
++
++class TestValidationCoverageAcrossHandlers:
++    def test_base_validate_rejects_unknown_request_id(self, mock_assistant, mock_user):
++        from codemie.core.exceptions import ExtendedHTTPException
++        from codemie.core.interactive import InteractiveResponse
++
++        handler = StandardAssistantHandler(assistant=mock_assistant, user=mock_user, request_uuid="test-uuid")
++        request = AssistantChatRequest(
++            text="x",
++            conversation_id="c-none",
++            interactive_response=InteractiveResponse(request_id="ghost", kind="action", payload={"action": "ok"}),
++        )
++        with patch("codemie.rest_api.handlers.assistant_handlers.Conversation.find_by_id", return_value=None):
++            with pytest.raises(ExtendedHTTPException):
++                handler._validate_interactive_response(request)
++
++    def test_a2a_handler_wires_validation_into_process_request(self):
++        import inspect
++
++        from codemie.rest_api.handlers.assistant_handlers import A2AAssistantHandler
++
++        source = inspect.getsource(A2AAssistantHandler.process_request)
++        assert "_validate_interactive_response" in source
++
++    def test_validate_is_noop_when_response_absent(self, mock_assistant, mock_user):
++        """A plain (non-interactive) request must pass validation untouched — no DB read."""
++        handler = StandardAssistantHandler(assistant=mock_assistant, user=mock_user, request_uuid="test-uuid")
++        request = AssistantChatRequest(text="plain message", conversation_id="c1")
++        with patch("codemie.rest_api.handlers.assistant_handlers.Conversation.find_by_id") as find_mock:
++            handler._validate_interactive_response(request)  # must not raise
++        find_mock.assert_not_called()
++
++    def test_a2a_handler_accepts_plain_request(self, mock_user):
++        """A2AAssistantHandler must not break on a request without interactive_response."""
++        from codemie.rest_api.handlers.assistant_handlers import A2AAssistantHandler
++
++        a2a_assistant = MagicMock()
++        with patch("codemie.rest_api.handlers.assistant_handlers.RemoteAgentConnections"):
++            handler = A2AAssistantHandler(assistant=a2a_assistant, user=mock_user, request_uuid="test-uuid")
++        request = AssistantChatRequest(text="plain a2a", conversation_id="c1")
++        # The shared validation helper (invoked first in process_request) must no-op.
++        with patch("codemie.rest_api.handlers.assistant_handlers.Conversation.find_by_id") as find_mock:
++            handler._validate_interactive_response(request)
++        find_mock.assert_not_called()
++
++
++class TestInteractiveResponseOwnership:
++    def test_foreign_conversation_denied_before_reading_history(self, mock_assistant, mock_user):
++        from codemie.core.exceptions import ExtendedHTTPException
++        from codemie.core.interactive import InteractiveResponse
++
++        handler = StandardAssistantHandler(assistant=mock_assistant, user=mock_user, request_uuid="u")
++        request = AssistantChatRequest(
++            text="x",
++            conversation_id="foreign",
++            interactive_response=InteractiveResponse(request_id="r1", kind="action", payload={"action": "ok"}),
++        )
++        foreign_conv = MagicMock()
++        foreign_conv.history = [MagicMock()]  # would be an oracle if read without authz
++        with (
++            patch("codemie.rest_api.handlers.assistant_handlers.Conversation.find_by_id", return_value=foreign_conv),
++            patch("codemie.rest_api.handlers.assistant_handlers.Ability") as ability_cls,
++        ):
++            ability_cls.return_value.can.return_value = False  # user cannot READ this conversation
++            with pytest.raises(ExtendedHTTPException) as exc:
++                handler._validate_interactive_response(request)
++        assert (
++            exc.value.code in (403, "403")
++            or getattr(exc.value, "status_code", None) == 403
++            or "denied" in str(exc.value).lower()
++        )
+diff --git a/tests/codemie/rest_api/models/test_assistant_interactive_features.py b/tests/codemie/rest_api/models/test_assistant_interactive_features.py
+new file mode 100644
+index 000000000..42199463b
+--- /dev/null
++++ b/tests/codemie/rest_api/models/test_assistant_interactive_features.py
+@@ -0,0 +1,34 @@
++# Copyright 2026 EPAM Systems, Inc. (“EPAM”)
++#
++# Licensed under the Apache License, Version 2.0 (the "License");
++# you may not use this file except in compliance with the License.
++# You may obtain a copy of the License at
++#
++#     http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing, software
++# distributed under the License is distributed on an "AS IS" BASIS,
++# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++# See the License for the specific language governing permissions and
++# limitations under the License.
++
++from codemie.core.interactive import InteractiveFeaturesConfig
++from codemie.rest_api.models.assistant import AssistantBase, AssistantRequest
++
++
++def test_assistant_request_accepts_interactive_features():
++    req = AssistantRequest(
++        name="a", system_prompt="prompt", llm_model_type="gpt-4o", interactive_features={"choice": True}
++    )
++    assert isinstance(req.interactive_features, InteractiveFeaturesConfig)
++    assert req.interactive_features.choice is True
++    assert req.interactive_features.action_buttons is False
++
++
++def test_assistant_request_defaults_to_none():
++    assert AssistantRequest(name="a", system_prompt="prompt", llm_model_type="gpt-4o").interactive_features is None
++
++
++def test_assistant_base_declares_interactive_features_column():
++    field = AssistantBase.model_fields["interactive_features"]
++    assert field.default is None
+diff --git a/tests/codemie/rest_api/models/test_conversation_model.py b/tests/codemie/rest_api/models/test_conversation_model.py
+index 6187858dd..0faa796b7 100644
+--- a/tests/codemie/rest_api/models/test_conversation_model.py
++++ b/tests/codemie/rest_api/models/test_conversation_model.py
+@@ -14,7 +14,7 @@
+ 
+ from unittest.mock import patch, MagicMock
+ 
+-from codemie.rest_api.models.conversation import Conversation, ConversationListItem, GeneratedMessage
++from codemie.rest_api.models.conversation import ChatTurnData, Conversation, ConversationListItem, GeneratedMessage
+ from datetime import datetime
+ from codemie.core.models import ChatRole
+ 
+@@ -52,18 +52,20 @@ def test_update_chat_history_replaces_only_latest_variant_for_same_turn():
+     )
+ 
+     conversation.update_chat_history(
+-        user_query="User Msg 3",
+-        user_query_raw="User Msg 3",
+-        assistant_id="assistant-id",
++        ChatTurnData(
++            user_query="User Msg 3",
++            user_query_raw="User Msg 3",
++            assistant_id="assistant-id",
++            assistant_response="AI Msg 3",
++            thoughts=[],
++            history_index=20,
++            time_elapsed=0,
++            input_tokens=0,
++            output_tokens=0,
++            file_names=[],
++            money_spent=0.0,
++        ),
+         project="test-project",
+-        assistant_response="AI Msg 3",
+-        thoughts=[],
+-        history_index=20,
+-        time_elapsed=0,
+-        input_tokens=0,
+-        output_tokens=0,
+-        file_names=[],
+-        money_spent=0.0,
+         replace_latest_variant=True,
+     )
+ 
+diff --git a/tests/codemie/service/conversation/test_interactive_intake.py b/tests/codemie/service/conversation/test_interactive_intake.py
+new file mode 100644
+index 000000000..2eed4669a
+--- /dev/null
++++ b/tests/codemie/service/conversation/test_interactive_intake.py
+@@ -0,0 +1,124 @@
++# Copyright 2026 EPAM Systems, Inc. (“EPAM”)
++#
++# Licensed under the Apache License, Version 2.0 (the "License");
++# you may not use this file except in compliance with the License.
++# You may obtain a copy of the License at
++#
++#     http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing, software
++# distributed under the License is distributed on an "AS IS" BASIS,
++# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++# See the License for the specific language governing permissions and
++# limitations under the License.
++
++import pytest
++
++from codemie.core.exceptions import ExtendedHTTPException
++from codemie.core.interactive import InteractiveRequest, InteractiveResponse
++from codemie.rest_api.models.conversation import GeneratedMessage
++from codemie.service.conversation.interactive_intake import (
++    materialize_interactive_message_text,
++    validate_interactive_intake,
++)
++
++
++def _history_with_request(request_id="r1", answered=False):
++    request = InteractiveRequest(request_id=request_id, surface=[{"type": "button", "id": "ok", "label": "OK"}])
++    history = [GeneratedMessage(role="Assistant", message="", history_index=0, interactive_request=request)]
++    if answered:
++        history.append(
++            GeneratedMessage(
++                role="User",
++                message="✓ OK",
++                history_index=1,
++                interactive_response=InteractiveResponse(
++                    request_id=request_id, kind="action", payload={"action": "ok"}
++                ),
++            )
++        )
++    return history
++
++
++def test_unknown_request_id_rejected():
++    response = InteractiveResponse(request_id="nope", kind="action", payload={"action": "ok"})
++    with pytest.raises(ExtendedHTTPException):
++        validate_interactive_intake(_history_with_request(), response)
++
++
++def test_duplicate_answer_rejected():
++    response = InteractiveResponse(request_id="r1", kind="action", payload={"action": "ok"})
++    with pytest.raises(ExtendedHTTPException):
++        validate_interactive_intake(_history_with_request(answered=True), response)
++
++
++def test_valid_answer_accepted():
++    response = InteractiveResponse(request_id="r1", kind="action", payload={"action": "ok"})
++    request = validate_interactive_intake(_history_with_request(), response)
++    assert request.request_id == "r1"
++
++
++def test_resubmit_allowed_when_replacing_answered_turn():
++    # Re-answering a form mirrors editing the previous user request: the stored
++    # response at the turn being replaced (history_index >= replacing index) is
++    # being overwritten, so it must not count as "already answered".
++    response = InteractiveResponse(request_id="r1", kind="action", payload={"action": "ok"})
++    history = _history_with_request(answered=True)  # request @0, response @1
++    request = validate_interactive_intake(history, response, replacing_history_index=1)
++    assert request.request_id == "r1"
++
++
++def test_resubmit_still_rejects_genuinely_earlier_answer():
++    # A response at a turn BEFORE the one being replaced is a real prior answer.
++    response = InteractiveResponse(request_id="r1", kind="action", payload={"action": "ok"})
++    history = _history_with_request(answered=True)  # response @1
++    with pytest.raises(ExtendedHTTPException):
++        validate_interactive_intake(history, response, replacing_history_index=5)
++
++
++def test_resubmit_low_history_index_cannot_bypass_already_answered():
++    # Attack: the answer is stored at index 1, but the client sends a low replacing
++    # index (0) hoping message_index >= 0 marks it "being replaced". Strict equality
++    # (== not >=) must keep rejecting it as already answered.
++    response = InteractiveResponse(request_id="r1", kind="action", payload={"action": "ok"})
++    history = _history_with_request(answered=True)  # response @1
++    with pytest.raises(ExtendedHTTPException):
++        validate_interactive_intake(history, response, replacing_history_index=0)
++
++
++def test_server_side_revalidation_rejects_invalid_form():
++    request = InteractiveRequest(
++        request_id="r2",
++        surface=[
++            {
++                "type": "text_field",
++                "id": "email",
++                "label": "Email",
++                "validation": {"required": True, "email": True},
++            },
++            {"type": "button", "id": "submit", "label": "Submit"},
++        ],
++    )
++    history = [GeneratedMessage(role="Assistant", message="", interactive_request=request)]
++    response = InteractiveResponse(request_id="r2", kind="form", payload={"values": {"email": "not-an-email"}})
++    with pytest.raises(ExtendedHTTPException):
++        validate_interactive_intake(history, response)
++
++
++def test_materialized_text_contains_display_and_payload():
++    response = InteractiveResponse(request_id="r1", kind="action", payload={"action": "approve"})
++    text = materialize_interactive_message_text("✓ Approve", response)
++    assert "✓ Approve" in text
++    assert "r1" in text
++    assert '"action": "approve"' in text
++
++
++def test_to_chat_history_materializes_interactive_response():
++    from codemie.rest_api.models.conversation import Conversation
++
++    history = _history_with_request(answered=True)
++    conversation = Conversation(id="c1", conversation_id="c1", user_id="u1", history=history, assistant_ids=["a1"])
++    chat_messages = conversation.to_chat_history()
++    user_texts = [m.message for m in chat_messages if m.role.value == "User"]
++    assert any("Structured response to interactive request r1" in t for t in user_texts)
++    assert any('"action": "ok"' in t for t in user_texts)
+diff --git a/tests/codemie/service/test_assistant_service_methods.py b/tests/codemie/service/test_assistant_service_methods.py
+index bfdb06081..e3ba0a8ae 100644
+--- a/tests/codemie/service/test_assistant_service_methods.py
++++ b/tests/codemie/service/test_assistant_service_methods.py
+@@ -447,6 +447,7 @@ class TestPrepareSystemPrompt:
+ 
+         assistant = Mock(spec=Assistant)
+         assistant.skill_ids = []
++        assistant.interactive_features = None
+         user = Mock(spec=User)
+         user.id = 'user-123'
+         user.username = "test@email.com"
+@@ -499,6 +500,7 @@ class TestPrepareSystemPrompt:
+ 
+         assistant = Mock(spec=Assistant)
+         assistant.skill_ids = []
++        assistant.interactive_features = None
+         user = Mock(spec=User)
+         user.id = 'user-123'
+         user.username = "test@email.com"
+@@ -523,6 +525,7 @@ class TestPrepareSystemPrompt:
+ 
+         assistant = Mock(spec=Assistant)
+         assistant.skill_ids = []
++        assistant.interactive_features = None
+         assistant.suggested_json_prompt = "JSON format: {schema}"
+ 
+         user = Mock(spec=User)
+@@ -753,6 +756,7 @@ class TestPrepareWorkflowSystemPrompt:
+ 
+         assistant = Mock(spec=Assistant)
+         assistant.skill_ids = []
++        assistant.interactive_features = None
+         user = Mock(spec=User)
+ 
+         # Act
+@@ -782,6 +786,7 @@ class TestPrepareWorkflowSystemPrompt:
+ 
+         assistant = Mock(spec=Assistant)
+         assistant.skill_ids = []
++        assistant.interactive_features = None
+         user = Mock(spec=User)
+         user.id = 'user-123'
+         user.username = "test@email.com"
+@@ -846,6 +851,7 @@ class TestPrepareWorkflowSystemPrompt:
+ 
+         assistant = Mock(spec=Assistant)
+         assistant.skill_ids = []
++        assistant.interactive_features = None
+         user = Mock(spec=User)
+         user.id = 'user-123'
+         user.username = "test@email.com"
+@@ -981,3 +987,31 @@ class TestEnsureUniqueSlug:
+             result = AssistantService.ensure_unique_slug("knowledge-companion", empty_project)
+             assert result == "knowledge-companion"
+         mock_get_by_fields.assert_not_called()
++
++
++class TestInteractivePromptGating:
++    @patch('codemie.service.assistant_service.AssistantService.get_system_prompt')
++    def test_prompt_injected_only_with_thread_generator(self, mock_get_prompt):
++        from unittest.mock import MagicMock, patch as _patch
++        from codemie.core.interactive import InteractiveFeaturesConfig
++        from codemie.service.assistant_service import AssistantService
++
++        mock_get_prompt.return_value = "Base"
++        assistant = Mock(spec=Assistant)
++        assistant.skill_ids = []
++        assistant.interactive_features = InteractiveFeaturesConfig(action_buttons=True)
++        user = Mock(spec=User)
++        user.id = "u"
++        user.username = "u@e.com"
++        request = AssistantChatRequest(text="hi", file_names=[])
++
++        flag = MagicMock()
++        flag.is_feature_enabled.return_value = True
++        with _patch("codemie.service.assistant_service.customer_config", flag):
++            # Non-streaming (no thread_generator): tool absent -> prompt must NOT advertise it
++            without = AssistantService._prepare_system_prompt(assistant, user, request, None)
++            # Streaming (thread_generator present): prompt advertises the tool
++            with_tg = AssistantService._prepare_system_prompt(assistant, user, request, MagicMock())
++
++        assert "request_user_input" not in without
++        assert "request_user_input" in with_tg
+diff --git a/tests/codemie/service/test_conversation_service.py b/tests/codemie/service/test_conversation_service.py
+index 0c703f68a..ec729c84e 100644
+--- a/tests/codemie/service/test_conversation_service.py
++++ b/tests/codemie/service/test_conversation_service.py
+@@ -311,9 +311,8 @@ def test_upsert_chat_history_with_missing_history_index(
+ 
+     # Verify that update_chat_history was called with history_index=2
+     mock_update_chat_history.assert_called_once()
+-    args, kwargs = mock_update_chat_history.call_args
+-    assert 'history_index' in kwargs, "history_index not found in kwargs"
+-    assert kwargs['history_index'] == 2, f"Expected history_index to be 2, got {kwargs['history_index']}"
++    turn = mock_update_chat_history.call_args.args[0]
++    assert turn.history_index == 2, f"Expected history_index to be 2, got {turn.history_index}"
+ 
+     # Verify other mocks were called
+     mock_conv_update.assert_called_once()
+@@ -676,5 +675,5 @@ def test_upsert_chat_history_content_raw_fallback(
+     )
+ 
+     mock_update_chat_history.assert_called_once()
+-    _, kwargs = mock_update_chat_history.call_args
+-    assert kwargs["user_query_raw"] == expected_raw
++    turn = mock_update_chat_history.call_args.args[0]
++    assert turn.user_query_raw == expected_raw

@@ -20,7 +20,11 @@ import pytest
 from unittest.mock import patch, MagicMock
 from datetime import datetime, UTC
 
-from codemie.rest_api.models.usage.assistant_user_mapping import AssistantUserMappingSQL, ToolConfig
+from codemie.rest_api.models.usage.assistant_user_mapping import (
+    ASSISTANT_SCOPE,
+    AssistantUserMappingSQL,
+    ToolConfig,
+)
 from codemie.repository.assistants.assistant_user_mapping_repository import SQLAssistantUserMappingRepository
 
 
@@ -208,3 +212,57 @@ def test_get_mappings_by_user(repository):
         mock_session_instance.exec.assert_called_once_with(mock_where_result)
         mock_session_instance.exec.return_value.all.assert_called_once()
         assert result == expected_mappings
+
+
+def test_get_mapping_filters_on_the_workflow_scope(repository):
+    # Arrange
+    mock_session = MagicMock()
+    mock_session.return_value.__enter__.return_value.exec.return_value.first.return_value = MagicMock()
+
+    with (
+        patch("codemie.repository.assistants.assistant_user_mapping_repository.Session", mock_session),
+        patch.object(AssistantUserMappingSQL, "get_engine", return_value="mock_engine"),
+    ):
+        # Act
+        repository.get_mapping("test-assistant-id", "test-user-id", "workflow-1")
+
+    # Assert on the bound value, not on the rendered SQL: the scope predicate is the invariant
+    # that keeps a workflow-scoped row out of chat, so the test must fail if the wrong value is
+    # bound, not merely if the column name disappears.
+    executed_query = mock_session.return_value.__enter__.return_value.exec.call_args[0][0]
+    assert "workflow-1" in executed_query.compile().params.values()
+
+
+def test_get_mapping_defaults_to_the_assistant_scope(repository):
+    # Arrange
+    mock_session = MagicMock()
+    mock_session.return_value.__enter__.return_value.exec.return_value.first.return_value = MagicMock()
+
+    with (
+        patch("codemie.repository.assistants.assistant_user_mapping_repository.Session", mock_session),
+        patch.object(AssistantUserMappingSQL, "get_engine", return_value="mock_engine"),
+    ):
+        # Act
+        repository.get_mapping("test-assistant-id", "test-user-id")
+
+    # Assert
+    executed_query = mock_session.return_value.__enter__.return_value.exec.call_args[0][0]
+    assert ASSISTANT_SCOPE in executed_query.compile().params.values()
+
+
+def test_create_or_update_mapping_stores_the_workflow_scope(repository, sample_tools_config):
+    # Arrange
+    mock_session = MagicMock()
+
+    with (
+        patch("codemie.repository.assistants.assistant_user_mapping_repository.Session", mock_session),
+        patch.object(AssistantUserMappingSQL, "get_engine", return_value="mock_engine"),
+        patch.object(SQLAssistantUserMappingRepository, "get_mapping", return_value=None),
+    ):
+        # Act
+        result = repository.create_or_update_mapping(
+            "test-assistant-id", "test-user-id", sample_tools_config, "workflow-1"
+        )
+
+    # Assert
+    assert result.workflow_id == "workflow-1"

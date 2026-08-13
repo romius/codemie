@@ -149,6 +149,11 @@ class ToolDetails(Tool):
     settings_config: bool = False
     settings: Optional[SettingsBase] = None
     user_description: Optional[str] = None
+    # Author's choice for slots they did not pin: when enabled, resolution falls through to the
+    # consuming user's own integration of that type; when disabled, nothing is resolved and the tool
+    # reports a missing integration. Defaults to enabled so assistants created before this field
+    # keep resolving exactly as they do today.
+    auto_credentials_lookup: bool = True
 
 
 class ToolKitDetails(ToolKit):
@@ -158,6 +163,9 @@ class ToolKitDetails(ToolKit):
     settings_config: bool = False
     settings: Optional[SettingsBase] = None
     is_external: Optional[bool] = False
+    # Toolkit-level counterpart of ToolDetails.auto_credentials_lookup, used for toolkits that carry
+    # a single integration for all their tools.
+    auto_credentials_lookup: bool = True
 
     def get_tool_configs(self) -> list[ToolConfig]:
         return [ToolConfig(name=tool.name, integration_id=tool.settings.id) for tool in self.tools if tool.settings]

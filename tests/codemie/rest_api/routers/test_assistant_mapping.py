@@ -23,6 +23,7 @@ from unittest.mock import patch, MagicMock
 
 from codemie.rest_api.main import app
 from codemie.rest_api.models.usage.assistant_user_mapping import (
+    ASSISTANT_SCOPE,
     AssistantMappingRequest,
     AssistantMappingResponse,
     AssistantUserMappingSQL,
@@ -123,7 +124,11 @@ async def test_create_or_update_mapping_success(assistant_id, sample_mapping_req
 
         # Verify mapping was created with correct parameters
         mock_create_update.assert_called_once_with(
-            assistant_id=assistant_id, user_id=user.id, tools_config=sample_mapping_request.tools_config
+            assistant_id=assistant_id,
+            user_id=user.id,
+            tools_config=sample_mapping_request.tools_config,
+            workflow_id=ASSISTANT_SCOPE,
+            apply_to_assistant=False,
         )
 
 
@@ -358,3 +363,176 @@ async def test_get_assistant_mapping_extended_http_exception(assistant_id, user)
         response_data = response.json()
         assert response_data["error"]["message"] == "Access denied"
         assert response_data["error"]["details"] == "You do not have permission to access this resource"
+
+
+@pytest.mark.asyncio
+async def test_create_or_update_mapping_forwards_the_workflow_scope(assistant_id, user):
+    # Arrange
+    with (
+        patch("codemie.rest_api.routers.assistant_mapping._get_assistant_by_id_or_raise") as mock_get_assistant,
+        patch("codemie.rest_api.routers.assistant_mapping.search_settings_by_id") as mock_search_settings,
+        patch("codemie.rest_api.routers.assistant_mapping.user_can_access_setting", return_value=True),
+        patch(
+            "codemie.service.assistant.assistant_user_mapping_service.assistant_user_mapping_service.create_or_update_mapping"
+        ) as mock_create_update,
+    ):
+        mock_get_assistant.return_value = MagicMock()
+        mock_search_settings.return_value = MagicMock()
+        tools_config = [{"name": "Git", "integration_id": "git-integration-id"}]
+
+        # Act
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+            response = await ac.post(
+                f"/v1/assistants/{assistant_id}/users/mapping",
+                json={"tools_config": tools_config, "workflow_id": "workflow-1", "apply_to_assistant": False},
+                headers={"Authorization": "Bearer testtoken"},
+            )
+
+        # Assert
+        assert response.status_code == status.HTTP_200_OK
+        mock_create_update.assert_called_once_with(
+            assistant_id=assistant_id,
+            user_id=user.id,
+            tools_config=tools_config,
+            workflow_id="workflow-1",
+            apply_to_assistant=False,
+        )
+
+
+@pytest.mark.asyncio
+async def test_create_or_update_mapping_without_workflow_stays_assistant_scoped(assistant_id, user):
+    # Arrange: existing clients that never send a workflow must keep today's behaviour.
+    with (
+        patch("codemie.rest_api.routers.assistant_mapping._get_assistant_by_id_or_raise") as mock_get_assistant,
+        patch("codemie.rest_api.routers.assistant_mapping.search_settings_by_id") as mock_search_settings,
+        patch("codemie.rest_api.routers.assistant_mapping.user_can_access_setting", return_value=True),
+        patch(
+            "codemie.service.assistant.assistant_user_mapping_service.assistant_user_mapping_service.create_or_update_mapping"
+        ) as mock_create_update,
+    ):
+        mock_get_assistant.return_value = MagicMock()
+        mock_search_settings.return_value = MagicMock()
+
+        # Act
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+            await ac.post(
+                f"/v1/assistants/{assistant_id}/users/mapping",
+                json={"tools_config": [{"name": "Git", "integration_id": "git-integration-id"}]},
+                headers={"Authorization": "Bearer testtoken"},
+            )
+
+        # Assert
+        call_kwargs = mock_create_update.call_args.kwargs
+        assert call_kwargs["workflow_id"] == ASSISTANT_SCOPE
+        assert call_kwargs["apply_to_assistant"] is False
+
+
+@pytest.mark.asyncio
+async def test_get_mapping_with_workflow_returns_the_effective_config(assistant_id, user):
+    # Arrange
+    with (
+        patch("codemie.rest_api.routers.assistant_mapping._get_assistant_by_id_or_raise"),
+        patch(
+            "codemie.service.assistant.assistant_user_mapping_service.assistant_user_mapping_service.get_effective_tools_config"
+        ) as mock_effective,
+    ):
+        mock_effective.return_value = ([ToolConfig(name="Git", integration_id="workflow-git")], True)
+
+        # Act
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+            response = await ac.get(
+                f"/v1/assistants/{assistant_id}/users/mapping?workflow_id=workflow-1",
+                headers={"Authorization": "Bearer testtoken"},
+            )
+
+        # Assert
+        body = response.json()
+        assert response.status_code == status.HTTP_200_OK
+        assert body["tools_config"] == [{"name": "Git", "integration_id": "workflow-git"}]
+        assert body["workflow_id"] == "workflow-1"
+        assert body["has_assistant_scope_selection"] is True
+        mock_effective.assert_called_once_with(assistant_id=assistant_id, user_id=user.id, workflow_id="workflow-1")
+
+
+@pytest.mark.asyncio
+async def test_get_mapping_reports_what_auto_lookup_would_resolve(assistant_id, user):
+    # The panel pre-selects these values, so the same resolution chain that runs at execution time
+    # must answer the question "what applies to this slot right now".
+    with (
+        patch("codemie.rest_api.routers.assistant_mapping._get_assistant_by_id_or_raise") as mock_get_assistant,
+        patch(
+            "codemie.service.assistant.assistant_user_mapping_service.assistant_user_mapping_service.get_mapping"
+        ) as mock_get_mapping,
+        patch("codemie.rest_api.routers.assistant_mapping.SettingsService.retrieve_setting") as mock_retrieve,
+        patch("codemie.rest_api.routers.assistant_mapping.user_can_access_setting", return_value=True),
+    ):
+        assistant = MagicMock()
+        assistant.project = "project-1"
+        assistant.is_global = False
+        mock_get_assistant.return_value = assistant
+        mock_get_mapping.return_value = None
+        resolved = MagicMock()
+        resolved.id = "auto-jira"
+        mock_retrieve.return_value = resolved
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+            response = await ac.get(
+                f"/v1/assistants/{assistant_id}/users/mapping?credential_types=Jira",
+                headers={"Authorization": "Bearer testtoken"},
+            )
+
+        body = response.json()
+        assert response.status_code == status.HTTP_200_OK
+        assert body["auto_resolved"] == [{"credential_type": "Jira", "integration_id": "auto-jira"}]
+
+
+@pytest.mark.asyncio
+async def test_get_mapping_hides_auto_resolved_the_user_cannot_access(assistant_id, user):
+    with (
+        patch("codemie.rest_api.routers.assistant_mapping._get_assistant_by_id_or_raise") as mock_get_assistant,
+        patch(
+            "codemie.service.assistant.assistant_user_mapping_service.assistant_user_mapping_service.get_mapping"
+        ) as mock_get_mapping,
+        patch("codemie.rest_api.routers.assistant_mapping.SettingsService.retrieve_setting") as mock_retrieve,
+        patch("codemie.rest_api.routers.assistant_mapping.user_can_access_setting", return_value=False),
+    ):
+        assistant = MagicMock()
+        assistant.project = "project-1"
+        assistant.is_global = False
+        mock_get_assistant.return_value = assistant
+        mock_get_mapping.return_value = None
+        mock_retrieve.return_value = MagicMock(id="foreign-integration")
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+            response = await ac.get(
+                f"/v1/assistants/{assistant_id}/users/mapping?credential_types=Jira",
+                headers={"Authorization": "Bearer testtoken"},
+            )
+
+        # Never surface an integration the user has no access to — that was CR-001 in EPMCDME-13337.
+        assert response.json()["auto_resolved"] == []
+
+
+@pytest.mark.asyncio
+async def test_get_mapping_without_credential_types_reports_nothing(assistant_id, user):
+    with (
+        patch("codemie.rest_api.routers.assistant_mapping._get_assistant_by_id_or_raise"),
+        patch(
+            "codemie.service.assistant.assistant_user_mapping_service.assistant_user_mapping_service.get_mapping"
+        ) as mock_get_mapping,
+    ):
+        mock_get_mapping.return_value = None
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+            response = await ac.get(
+                f"/v1/assistants/{assistant_id}/users/mapping",
+                headers={"Authorization": "Bearer testtoken"},
+            )
+
+        assert response.json()["auto_resolved"] == []

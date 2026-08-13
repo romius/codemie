@@ -31,6 +31,8 @@ Exceptions:
 """
 
 import uuid
+from typing import Optional
+
 import yaml
 from codemie.core.workflow_models import WorkflowConfig, WorkflowTool
 from codemie.rest_api.security.user import User
@@ -455,6 +457,12 @@ def _collect_missing_for_referenced_assistant(
         return []
 
     missing_integrations = _safely_collect_missing_integrations(db_assistant, user, workflow_config.project)
+    # A slot the author left to the consumer resolves per user at execution time: the person running
+    # the workflow picks their own integration or gets one through automatic lookup. The author not
+    # owning such an integration is therefore not a configuration error and must not block the save.
+    missing_integrations = [
+        missing for missing in missing_integrations if not _is_slot_left_to_the_user(db_assistant, missing.tool, user)
+    ]
     if not missing_integrations:
         return []
 
@@ -466,6 +474,80 @@ def _collect_missing_for_referenced_assistant(
         for missing in missing_integrations
         for state_id in states
     ]
+
+
+def collect_consumer_slot_integration_warnings(workflow_config: WorkflowConfig, user: User) -> list[dict]:
+    """Report slots whose integration depends on whoever runs the workflow.
+
+    These never block saving: the slot is offered in "Your Integration Settings" and resolved per
+    user, so the author having no such integration is legitimate. The author is still told about it,
+    because for users without one the tool will report a missing integration at runtime.
+    """
+    warnings: list[dict] = []
+
+    for assistant in workflow_config.assistants or []:
+        if not getattr(assistant, "assistant_id", None):
+            continue
+
+        db_assistant = _load_referenced_assistant(user, assistant.assistant_id)
+        if db_assistant is None:
+            continue
+
+        for missing in _safely_collect_missing_integrations(db_assistant, user, workflow_config.project) or []:
+            if not _is_slot_left_to_the_user(db_assistant, missing.tool, user):
+                continue
+
+            warnings.append(
+                {
+                    "assistant_ref": assistant.id,
+                    "tool_name": missing.tool,
+                    "credential_type": missing.credential_type or missing.toolkit or "Unknown",
+                }
+            )
+
+    return warnings
+
+
+def _is_slot_left_to_the_user(db_assistant, tool_name: str, user: User = None) -> bool:
+    """Whether the assistant leaves this tool's integration to the consuming user.
+
+    True whenever the author did not pin an integration for the slot. Such a slot is offered in
+    "Your Integration Settings", so the person running the workflow can pick their own integration —
+    and with automatic credentials lookup enabled one is resolved for them without any picking. In
+    both cases the workflow author's own integrations say nothing about whether the slot will work,
+    so a missing one is worth a warning, never a blocked save.
+
+    Sub-assistants are searched too, because missing integrations are collected for them as well.
+    A missing integration only carries the tool name, so when a parent and a sub-assistant expose a
+    tool of the same name the first match decides — the parent's own slot.
+    """
+    own = _slot_is_unpinned(db_assistant, tool_name)
+    if own is not None:
+        return own
+
+    for sub_assistant_id in getattr(db_assistant, "assistant_ids", None) or []:
+        sub_assistant = _load_referenced_assistant(user, sub_assistant_id)
+        if sub_assistant is None:
+            continue
+        sub = _slot_is_unpinned(sub_assistant, tool_name)
+        if sub is not None:
+            return sub
+
+    return False
+
+
+def _slot_is_unpinned(db_assistant, tool_name: str) -> Optional[bool]:
+    """Whether this assistant's own slot for ``tool_name`` is unpinned; None when it has no such slot."""
+    for toolkit in getattr(db_assistant, "toolkits", None) or []:
+        toolkit_pinned = bool(getattr(toolkit, "settings", None))
+
+        for tool in getattr(toolkit, "tools", None) or []:
+            if getattr(tool, "name", None) != tool_name:
+                continue
+
+            return not (toolkit_pinned or bool(getattr(tool, "settings", None)))
+
+    return None
 
 
 def _load_referenced_assistant(user: User, assistant_id: str):

@@ -28,6 +28,10 @@ from codemie.service.settings.settings_handler import (
     build_settings_handlers,
 )
 
+from codemie.rest_api.models.usage.assistant_user_mapping import ToolConfig
+from codemie.rest_api.security.workflow_context import (
+    set_current_workflow_id,
+)
 from codemie.service.settings.base_settings import SearchFields
 
 
@@ -59,10 +63,12 @@ class TestSettingsHandler:
 class TestAssistantUserMappingSettingsHandler:
     @patch("codemie.service.settings.settings_handler.search_assistant")
     @patch("codemie.rest_api.models.settings.Settings.get_by_fields")
-    @patch(
-        'codemie.repository.assistants.assistant_user_mapping_repository.AssistantUserMappingRepositoryImpl.get_mapping'
-    )
-    def test_handle_found(self, mock_mapping, mock_get_settings, mock_search_asst):
+    @patch('codemie.service.settings.settings_handler.assistant_user_mapping_service.get_mapping')
+    @patch("codemie.service.settings.settings_handler.get_current_user")
+    @patch("codemie.service.settings.settings_handler.user_can_access_setting", return_value=True)
+    def test_handle_found(
+        self, _mock_can_access, _mock_current_user, mock_mapping, mock_get_settings, mock_search_asst
+    ):
         """Test when settings are found through the assistant-user mapping."""
         mock_search_asst.return_value = PropertyMock(is_global=False)
         mock_config = MagicMock()
@@ -310,3 +316,169 @@ def test_handlers_order():
     assert isinstance(handlers[5], UserSettingsHandler)
     assert isinstance(handlers[6], GlobalUserSettingsHandler)
     assert isinstance(handlers[7], ProjectSettingsHandler)
+
+
+class TestAssistantUserMappingSettingsHandlerScope:
+    """Scope resolution must match the mapping API and the MCP path: merge per slot."""
+
+    @staticmethod
+    def _search_fields():
+        return {SearchFields.USER_ID: "test_user_id", SearchFields.CREDENTIAL_TYPE: "test_credential_type"}
+
+    @staticmethod
+    def _handler():
+        handler = AssistantUserMappingSettingsHandler()
+        handler | MagicMock(spec=SettingsHandler)
+        return handler
+
+    @patch("codemie.service.settings.settings_handler.search_assistant")
+    @patch("codemie.service.settings.settings_handler.assistant_user_mapping_service.get_effective_tools_config")
+    @patch("codemie.service.settings.settings_handler.assistant_user_mapping_service.get_mapping")
+    def test_reads_assistant_scope_outside_a_workflow(self, mock_get_mapping, mock_effective, mock_search_asst):
+        mock_search_asst.return_value = PropertyMock(is_global=False)
+        mock_get_mapping.return_value = None
+
+        self._handler().handle(self._search_fields(), assistant_id="test_assistant_id")
+
+        mock_get_mapping.assert_called_once_with(assistant_id="test_assistant_id", user_id="test_user_id")
+        mock_effective.assert_not_called()
+
+    @patch("codemie.service.settings.settings_handler.search_assistant")
+    @patch("codemie.rest_api.models.settings.Settings.get_by_fields")
+    @patch("codemie.service.settings.settings_handler.assistant_user_mapping_service.get_effective_tools_config")
+    def test_resolves_the_merged_view_inside_a_workflow(self, mock_effective, mock_get_settings, mock_search_asst):
+        mock_search_asst.return_value = PropertyMock(is_global=False)
+        mock_effective.return_value = ([ToolConfig(name="Git", integration_id="workflow_integration_id")], True)
+        mock_get_settings.return_value = MagicMock()
+
+        set_current_workflow_id("workflow-1")
+        try:
+            self._handler().handle(self._search_fields(), assistant_id="test_assistant_id")
+        finally:
+            set_current_workflow_id(None)
+
+        mock_effective.assert_called_once_with(
+            assistant_id="test_assistant_id", user_id="test_user_id", workflow_id="workflow-1"
+        )
+        mock_get_settings.assert_called_once_with(
+            {"id": "workflow_integration_id", "credential_type": "test_credential_type"}
+        )
+
+    @patch("codemie.service.settings.settings_handler.search_assistant")
+    @patch("codemie.rest_api.models.settings.Settings.get_by_fields")
+    @patch("codemie.service.settings.settings_handler.assistant_user_mapping_service.get_effective_tools_config")
+    def test_assistant_scoped_slot_survives_an_unrelated_workflow_row(
+        self, mock_effective, mock_get_settings, mock_search_asst
+    ):
+        # A workflow row that overrides only one slot must not hide the slots the user selected
+        # assistant-wide: the merged view keeps them, so the run and the panel agree.
+        mock_search_asst.return_value = PropertyMock(is_global=False)
+        mock_effective.return_value = (
+            [
+                ToolConfig(name="MCP:jira", integration_id="workflow_jira"),
+                ToolConfig(name="Git", integration_id="assistant_git"),
+            ],
+            True,
+        )
+        mock_get_settings.side_effect = lambda fields: MagicMock() if fields["id"] == "assistant_git" else None
+
+        set_current_workflow_id("workflow-1")
+        try:
+            result = self._handler().handle(self._search_fields(), assistant_id="test_assistant_id")
+        finally:
+            set_current_workflow_id(None)
+
+        assert result is not None
+        assert [call.args[0]["id"] for call in mock_get_settings.call_args_list] == [
+            "workflow_jira",
+            "assistant_git",
+        ]
+
+
+class TestAssistantUserMappingSettingsHandlerAccess:
+    """A mapped integration is only honoured while the user may still use it (fail closed)."""
+
+    @staticmethod
+    def _search_fields():
+        return {SearchFields.USER_ID: "test_user_id", SearchFields.CREDENTIAL_TYPE: "test_credential_type"}
+
+    @staticmethod
+    def _handler():
+        handler = AssistantUserMappingSettingsHandler()
+        next_handler = MagicMock(spec=SettingsHandler)
+        next_handler.handle.return_value = "from_next_handler"
+        handler | next_handler
+        return handler, next_handler
+
+    @patch("codemie.service.settings.settings_handler.search_assistant")
+    @patch("codemie.rest_api.models.settings.Settings.get_by_fields")
+    @patch("codemie.service.settings.settings_handler.assistant_user_mapping_service.get_mapping")
+    @patch("codemie.service.settings.settings_handler.get_current_user")
+    @patch("codemie.service.settings.settings_handler.user_can_access_setting")
+    def test_skips_a_mapped_setting_the_user_may_no_longer_use(
+        self, mock_can_access, mock_current_user, mock_get_mapping, mock_get_settings, mock_search_asst
+    ):
+        assistant = PropertyMock(is_global=False)
+        assistant.project = "project-1"
+        mock_search_asst.return_value = assistant
+        mapping = MagicMock()
+        mapping.tools_config = [MagicMock(integration_id="revoked-integration")]
+        mock_get_mapping.return_value = mapping
+        mock_get_settings.return_value = MagicMock()
+        mock_current_user.return_value = MagicMock()
+        mock_can_access.return_value = False
+
+        handler, next_handler = self._handler()
+        result = handler.handle(self._search_fields(), assistant_id="test_assistant_id")
+
+        assert result == "from_next_handler"
+        next_handler.handle.assert_called_once()
+
+    @patch("codemie.service.settings.settings_handler.search_assistant")
+    @patch("codemie.rest_api.models.settings.Settings.get_by_fields")
+    @patch("codemie.service.settings.settings_handler.assistant_user_mapping_service.get_mapping")
+    @patch("codemie.service.settings.settings_handler.get_current_user")
+    def test_skips_the_mapping_without_a_user_in_context(
+        self, mock_current_user, mock_get_mapping, mock_get_settings, mock_search_asst
+    ):
+        assistant = PropertyMock(is_global=False)
+        assistant.project = "project-1"
+        mock_search_asst.return_value = assistant
+        mapping = MagicMock()
+        mapping.tools_config = [MagicMock(integration_id="some-integration")]
+        mock_get_mapping.return_value = mapping
+        mock_get_settings.return_value = MagicMock()
+        mock_current_user.return_value = None
+
+        handler, next_handler = self._handler()
+        result = handler.handle(self._search_fields(), assistant_id="test_assistant_id")
+
+        assert result == "from_next_handler"
+
+    @patch("codemie.service.settings.settings_handler.search_assistant")
+    @patch("codemie.rest_api.models.settings.Settings.get_by_fields")
+    @patch("codemie.service.settings.settings_handler.assistant_user_mapping_service.get_mapping")
+    @patch("codemie.service.settings.settings_handler.get_current_user")
+    @patch("codemie.service.settings.settings_handler.user_can_access_setting")
+    def test_returns_a_mapped_setting_the_user_may_use(
+        self, mock_can_access, mock_current_user, mock_get_mapping, mock_get_settings, mock_search_asst
+    ):
+        assistant = PropertyMock(is_global=True)
+        assistant.project = "project-1"
+        mock_search_asst.return_value = assistant
+        mapping = MagicMock()
+        mapping.tools_config = [MagicMock(integration_id="allowed-integration")]
+        mock_get_mapping.return_value = mapping
+        expected = MagicMock()
+        mock_get_settings.return_value = expected
+        mock_current_user.return_value = MagicMock()
+        mock_can_access.return_value = True
+
+        handler, next_handler = self._handler()
+        result = handler.handle(self._search_fields(), assistant_id="test_assistant_id")
+
+        assert result == expected
+        next_handler.handle.assert_not_called()
+        # The gate keys off the assistant's project and its marketplace flag, as on save.
+        assert mock_can_access.call_args.args[2] == "project-1"
+        assert mock_can_access.call_args.kwargs["marketplace"] is True

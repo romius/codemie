@@ -518,8 +518,13 @@ class ToolConfig(ConfiguredModel):
 
         At least one of these fields must be specified for the tool configuration
         to be valid. This ensures that the tool has a way to obtain credentials.
+
+        An empty integration id is the exception: it is the stored form of the user's explicit
+        "no integration" choice, so it is a decision rather than a missing value. Rejecting it
+        would stop the whole agent from starting instead of letting the tool report the missing
+        integration when it is used.
         """
-        if not self.tool_creds and not self.integration_id:
+        if not self.tool_creds and self.integration_id is None:
             raise ValueError("Either tool_creds or integration_id must be provided")
         if self.tool_creds and self.integration_id:
             raise ValueError("Either tool_creds or integration_id must be provided, but not both")

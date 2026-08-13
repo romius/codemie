@@ -33,6 +33,7 @@ from codemie.core.models import AssistantChatRequest, IdeChatRequest, ToolConfig
 from codemie.core.workflow_models import WorkflowAssistant
 from codemie.rest_api.models.assistant import Assistant
 from codemie.rest_api.security.user import User
+from codemie.rest_api.security.workflow_context import set_current_workflow_id
 from codemie.service.assistant_service import AssistantService
 
 
@@ -147,11 +148,15 @@ class TestApplyMarketplaceToolMappings:
         assert request.tools_config is None
 
     @patch('codemie.service.assistant_service.assistant_user_mapping_service')
-    def test_apply_marketplace_tool_mappings_shared_non_global_applies_only_mcp(
+    def test_apply_marketplace_tool_mappings_shared_non_global_applies_every_mapping(
         self,
         mock_mapping_service,
     ):
-        """Shared, non-global assistants only receive extended-gate (MCP) mappings."""
+        """Shared, non-global assistants receive the user's selection for MCP and regular tools.
+
+        Regular tools used to be filtered out here while the settings-handler chain resolved them
+        anyway, so the two paths disagreed about the same slot.
+        """
         # Arrange
         mcp_tool_config = Mock()
         mcp_tool_config.name = 'MCP:server1'
@@ -179,18 +184,19 @@ class TestApplyMarketplaceToolMappings:
         # Act
         AssistantService._apply_marketplace_tool_mappings(assistant, user, request)
 
-        # Assert — only the MCP mapping is applied; the regular tool mapping is skipped
+        # Assert — both mappings are applied
         assert request.tools_config is not None
-        assert len(request.tools_config) == 1
-        assert request.tools_config[0].name == 'MCP:server1'
-        assert request.tools_config[0].integration_id == 'mcp-int'
+        assert sorted((tc.name, tc.integration_id) for tc in request.tools_config) == [
+            ('Git', 'git-int'),
+            ('MCP:server1', 'mcp-int'),
+        ]
 
     @patch('codemie.service.assistant_service.assistant_user_mapping_service')
-    def test_apply_marketplace_tool_mappings_shared_non_global_without_mcp_noop(
+    def test_apply_marketplace_tool_mappings_shared_non_global_regular_only(
         self,
         mock_mapping_service,
     ):
-        """Shared, non-global assistants with only regular mappings apply nothing."""
+        """A project-shared assistant with only a regular-tool mapping still applies it."""
         # Arrange
         regular_tool_config = Mock()
         regular_tool_config.name = 'Git'
@@ -215,7 +221,8 @@ class TestApplyMarketplaceToolMappings:
         AssistantService._apply_marketplace_tool_mappings(assistant, user, request)
 
         # Assert
-        assert request.tools_config is None
+        assert request.tools_config is not None
+        assert [(tc.name, tc.integration_id) for tc in request.tools_config] == [('Git', 'git-int')]
 
     @patch('codemie.service.assistant_service.assistant_user_mapping_service')
     def test_apply_marketplace_tool_mappings_with_no_mapping(
@@ -1015,3 +1022,98 @@ class TestInteractivePromptGating:
 
         assert "request_user_input" not in without
         assert "request_user_input" in with_tg
+
+
+class TestApplyMarketplaceToolMappingsWorkflowScope:
+    """A workflow run resolves the user's workflow scope; chat keeps the assistant scope."""
+
+    @staticmethod
+    def _shared_assistant():
+        assistant = Mock(spec=Assistant)
+        assistant.id = 'assistant-1'
+        assistant.is_global = True
+        assistant.shared = True
+        assistant.mcp_servers = []
+        return assistant
+
+    @patch('codemie.service.assistant_service.assistant_user_mapping_service')
+    def test_workflow_run_uses_the_effective_scope(self, mock_mapping_service):
+        # Arrange
+        workflow_config = Mock()
+        workflow_config.name = 'MCP:server1'
+        workflow_config.integration_id = 'workflow-int'
+        mock_mapping_service.get_effective_tools_config.return_value = ([workflow_config], True)
+
+        user = Mock(spec=User)
+        user.id = 'user-1'
+        request = AssistantChatRequest(text='Test', file_names=[])
+
+        # Act — the workflow being executed is read from the context bound for the run, the same
+        # source the settings-handler chain uses, so there is one scope for the whole execution.
+        set_current_workflow_id('workflow-1')
+        try:
+            AssistantService._apply_marketplace_tool_mappings(self._shared_assistant(), user, request)
+        finally:
+            set_current_workflow_id(None)
+
+        # Assert
+        mock_mapping_service.get_effective_tools_config.assert_called_once_with(
+            assistant_id='assistant-1', user_id='user-1', workflow_id='workflow-1'
+        )
+        mock_mapping_service.get_mapping.assert_not_called()
+        assert [tc.integration_id for tc in request.tools_config] == ['workflow-int']
+
+    @patch('codemie.service.assistant_service.assistant_user_mapping_service')
+    def test_chat_still_reads_the_assistant_scope(self, mock_mapping_service):
+        # Arrange
+        mock_mapping_service.get_mapping.return_value = None
+
+        user = Mock(spec=User)
+        user.id = 'user-1'
+        request = AssistantChatRequest(text='Test', file_names=[])
+
+        # Act
+        AssistantService._apply_marketplace_tool_mappings(self._shared_assistant(), user, request)
+
+        # Assert
+        mock_mapping_service.get_mapping.assert_called_once_with(assistant_id='assistant-1', user_id='user-1')
+        mock_mapping_service.get_effective_tools_config.assert_not_called()
+
+
+class TestPerUserMappingAppliesToSharedAssistants:
+    """Per-user selection applies to any shared assistant, for MCP and regular tools alike.
+
+    The settings-handler chain already resolved regular-tool mappings for project-shared
+    assistants, so filtering them out of request.tools_config left the two resolution paths
+    disagreeing about the same slot.
+    """
+
+    @patch('codemie.service.assistant_service.assistant_user_mapping_service')
+    def test_project_shared_assistant_applies_regular_tool_mappings(self, mock_mapping_service):
+        # Arrange
+        regular = Mock()
+        regular.name = 'jira'
+        regular.integration_id = 'jira-int'
+        mcp = Mock()
+        mcp.name = 'MCP:server1'
+        mcp.integration_id = 'mcp-int'
+
+        mapping = Mock()
+        mapping.tools_config = [regular, mcp]
+        mock_mapping_service.get_mapping.return_value = mapping
+
+        assistant = Mock(spec=Assistant)
+        assistant.id = 'assistant-1'
+        assistant.is_global = False
+        assistant.shared = True
+        assistant.mcp_servers = []
+
+        user = Mock(spec=User)
+        user.id = 'user-1'
+        request = AssistantChatRequest(text='Test', file_names=[])
+
+        # Act
+        AssistantService._apply_marketplace_tool_mappings(assistant, user, request)
+
+        # Assert
+        assert sorted(tc.name for tc in request.tools_config) == ['MCP:server1', 'jira']

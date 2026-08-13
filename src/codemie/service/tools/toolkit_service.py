@@ -88,6 +88,24 @@ from codemie_tools.data_management.workspace.tools_vars import AGENT_WORKSPACE_T
 MCP_AUTH_WARNINGS_METADATA_KEY = "mcp_auth_warnings"
 
 
+class MissingIntegrationTool(BaseTool):
+    """Stands in for a tool whose slot is deliberately left without an integration.
+
+    Kept in the tool set so the model still sees the capability and the failure is explainable:
+    calling it reports the missing integration instead of the tool quietly not existing.
+    """
+
+    name: str
+    description: str
+
+    def _run(self, *args, **kwargs):
+        raise ToolException(
+            f"No integration is configured for '{self.name}'. Select one in "
+            f"\"Your Integration Settings\", or ask the assistant author to enable automatic "
+            f"credentials lookup for this tool."
+        )
+
+
 class ToolkitService:
     """Service for managing and collecting tools for assistants.
 
@@ -634,6 +652,7 @@ class ToolkitService:
                 is_admin,
                 llm_model=llm_model,
                 request_uuid=request_uuid,
+                toolkit_details=assistant_toolkit,
             )
             tools.extend(toolkit_tools)
         return tools
@@ -651,6 +670,7 @@ class ToolkitService:
         is_admin: bool = False,
         llm_model: Optional[str] = None,
         request_uuid: Optional[str] = None,
+        toolkit_details=None,
     ) -> list[BaseTool]:
         """Process tools from a single toolkit and initialize them.
 
@@ -660,6 +680,8 @@ class ToolkitService:
             project_name: Project name for configuration lookup
             assistant_id: Assistant ID for configuration lookup
             tools_config: Optional list of tool configurations from request
+            toolkit_details: The assistant's toolkit entry, carrying the decisions the author made
+                for the whole toolkit (a pinned integration, automatic lookup on or off)
 
         Returns:
             List of initialized tool instances from this toolkit
@@ -677,6 +699,7 @@ class ToolkitService:
                 is_admin,
                 llm_model=llm_model,
                 request_uuid=request_uuid,
+                toolkit_details=toolkit_details,
             )
             if tool:
                 toolkit_tools.append(tool)
@@ -695,6 +718,7 @@ class ToolkitService:
         is_admin: bool = False,
         llm_model: Optional[str] = None,
         request_uuid: Optional[str] = None,
+        toolkit_details=None,
     ) -> Optional[BaseTool]:
         """Initialize a single tool if its configuration is available.
 
@@ -712,6 +736,8 @@ class ToolkitService:
             is_admin: Whether this is an admin request
             llm_model: Optional LLM model name for tools that support chat_model injection
             request_uuid: Optional request UUID for LLM tracking
+            toolkit_details: The assistant's toolkit entry; toolkits that carry one integration for
+                all their tools hold the author's decisions there rather than on the tool
 
         Returns:
             Initialized tool instance or None if initialization failed
@@ -743,6 +769,14 @@ class ToolkitService:
             )
             return tool_definition.tool_class()
 
+        tool_config = cls._find_tool_config_by_name(tools_config, tool_definition.name)
+
+        reporting_tool = cls._tool_reporting_the_missing_integration(
+            assistant_tool, tool_definition, tool_config, toolkit_details
+        )
+        if reporting_tool is not None:
+            return reporting_tool
+
         # Use SettingsService.get_config directly (similar to ToolConfigResolver but with is_admin support)
         from codemie.service.settings.settings import SettingsService
 
@@ -750,7 +784,7 @@ class ToolkitService:
             user_id=user_id,
             project_name=project_name,
             assistant_id=assistant_id,
-            tool_config=cls._find_tool_config_by_name(tools_config, tool_definition.name),
+            tool_config=tool_config,
             config_class=tool_definition.config_class,
             is_admin=is_admin,
         )
@@ -783,6 +817,49 @@ class ToolkitService:
                 logger.debug(f"Failed to inject chat_model into '{assistant_tool.name}': {e}")
 
         return tool_definition.tool_class(config=stored_config)
+
+    @classmethod
+    def _tool_reporting_the_missing_integration(
+        cls, assistant_tool, tool_definition, tool_config, toolkit_details
+    ) -> Optional[BaseTool]:
+        """Stand-in tool for a slot deliberately left without credentials, or None when it has some.
+
+        Two deliberate states lead here: the author turned auto lookup off for the slot, or the user
+        picked "no integration" explicitly. Both must stay visible and fail on use — dropping the
+        tool silently leaves the user guessing why the assistant cannot do what it advertises.
+        An integration pinned by the author, on the tool or on the toolkit, always wins and is
+        resolved as usual.
+        """
+        author_pinned = bool(getattr(assistant_tool, 'settings', None)) or bool(
+            getattr(toolkit_details, 'settings', None)
+        )
+        if author_pinned or not cls._integration_deliberately_absent(assistant_tool, tool_config, toolkit_details):
+            return None
+
+        logger.info(f"Tool '{assistant_tool.name}' has no integration by choice; it will report that on use.")
+        return MissingIntegrationTool(
+            name=tool_definition.name,
+            description=(
+                f"{getattr(tool_definition, 'description', '') or assistant_tool.name} (no integration configured)"
+            ),
+        )
+
+    @classmethod
+    def _integration_deliberately_absent(cls, assistant_tool, tool_config, toolkit_details=None) -> bool:
+        """Whether the slot is meant to run without an integration.
+
+        True when the user explicitly chose "no integration" (a stored slot with no id and no inline
+        credentials), or when the author disabled automatic credentials lookup and the user has not
+        chosen anything. The author can disable it on the tool or, for toolkits that carry one
+        integration for all their tools, on the toolkit — either switch governs the slot.
+        """
+        if tool_config is not None:
+            return not tool_config.integration_id and not tool_config.tool_creds
+
+        auto_lookup = getattr(assistant_tool, 'auto_credentials_lookup', True) and getattr(
+            toolkit_details, 'auto_credentials_lookup', True
+        )
+        return not auto_lookup
 
     @classmethod
     def _find_tool_config_by_name(cls, tools_config: Optional[List[ToolConfig]], name: str) -> Optional[ToolConfig]:
