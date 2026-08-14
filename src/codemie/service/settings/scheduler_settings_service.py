@@ -254,7 +254,7 @@ class SchedulerSettingsService(BaseSettingsService):
             CredentialValues(key="schedule", value=cron_expression),
             CredentialValues(key="resource_type", value=RESOURCE_TYPE_DATASOURCE),
             CredentialValues(key="resource_id", value=resource_id),
-            CredentialValues(key="is_enabled", value=True),
+            CredentialValues(key="is_enabled", value=is_enabled),
         ]
         if timezone is not None:
             credential_values.append(CredentialValues(key="timezone", value=timezone))

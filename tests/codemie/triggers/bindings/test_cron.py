@@ -689,11 +689,12 @@ def _setting(setting_id="s1", creds=None):
     return setting
 
 
-def test_absent_is_enabled_is_treated_as_enabled(cron_instance):
-    """A scheduler setting saved without the is_enabled key must still run.
+def test_absent_is_enabled_is_treated_as_disabled(cron_instance):
+    """A scheduler setting saved without the is_enabled key must not run.
 
-    Rows created through the Integration page may omit the flag entirely; treating that
-    as 'disabled' left them permanently inert with no feedback to the user.
+    The Integration form omits the flag when the user never touches the toggle, and the
+    integration list renders such rows as Disabled — firing them enabled a schedule the
+    user never enabled (EPMCDME-14128).
     """
     setting = _setting(
         creds=[
@@ -710,11 +711,11 @@ def test_absent_is_enabled_is_treated_as_enabled(cron_instance):
         mock_validate.return_value = MagicMock(name="assistant")
         result = cron_instance._Cron__valid_setting(setting)
 
-    assert result["is_enabled"] is True
+    assert result["is_enabled"] is False
 
 
 def test_explicit_false_is_enabled_still_disables(cron_instance):
-    """An explicit false must keep disabling the schedule — only absence defaults to true."""
+    """An explicit false must keep disabling the schedule."""
     setting = _setting(
         creds=[
             MagicMock(key="is_enabled", value=False),

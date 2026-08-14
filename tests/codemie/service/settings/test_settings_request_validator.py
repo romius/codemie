@@ -131,6 +131,7 @@ def test_validate_timezone_value_invalid(tz):
 
 # ---------------------------------------------------------------------------
 # EPMCDME-13171 — a scheduler setting must never be stored without is_enabled
+# EPMCDME-14128 — and an omitted flag means "left disabled", not "enabled"
 # ---------------------------------------------------------------------------
 
 
@@ -145,8 +146,8 @@ def _scheduler_request(creds):
     )
 
 
-def test_normalize_is_enabled_defaults_missing_flag_to_true():
-    """A request omitting the flag used to be accepted and then never run."""
+def test_normalize_is_enabled_defaults_missing_flag_to_false():
+    """The form omits the key when the toggle is never touched — that means disabled."""
     from codemie.rest_api.models.settings import CredentialValues
     from codemie.service.settings.settings_request_validator import normalize_is_enabled
 
@@ -160,7 +161,7 @@ def test_normalize_is_enabled_defaults_missing_flag_to_true():
 
     normalize_is_enabled(request)
 
-    assert {c.key: c.value for c in request.credential_values}["is_enabled"] is True
+    assert {c.key: c.value for c in request.credential_values}["is_enabled"] is False
 
 
 def test_normalize_is_enabled_preserves_explicit_false():

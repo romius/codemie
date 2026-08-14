@@ -402,10 +402,10 @@ class Cron:
 
         is_enabled = self.__get_cred_value(setting, "is_enabled")
         if is_enabled is None:
-            # An absent key is not the same as an explicit `false`. Scheduler settings
-            # created through the Integration page may omit it entirely, and treating
-            # those as disabled left them permanently inert with no feedback.
-            is_enabled = True
+            # An absent key means the user left the toggle off: the Integration form omits
+            # it in that case, and the integration list renders such rows as Disabled.
+            # Treating absence as enabled fired schedules nobody enabled (EPMCDME-14128).
+            is_enabled = False
         resource_type = self.__get_cred_value(setting, "resource_type")
 
         schedule = self.__get_cred_value(setting, "schedule")

@@ -219,14 +219,15 @@ def validate_scheduler_request(request: SettingRequest) -> None:
 
 
 def normalize_is_enabled(request: SettingRequest) -> None:
-    """Default `is_enabled` to true when the client omits it.
+    """Default `is_enabled` to false when the client omits it.
 
-    The trigger engine treats a schedule as disabled unless the flag says otherwise, so a
-    request without it used to be accepted with 200 OK and then never run. Nobody creates
-    a schedule in order for it not to run, and the datasource page already hard-codes true.
+    The Integration form drops the key entirely when the user never touches the toggle, so
+    an omitted flag means "left disabled" — that is also how the integration list renders
+    it. Defaulting to true here enabled schedules the user never enabled (EPMCDME-14128).
+    The flag is still written explicitly so the trigger engine never has to guess.
     """
     if not any(cred.key == "is_enabled" for cred in request.credential_values):
-        request.credential_values.append(CredentialValues(key="is_enabled", value=True))
+        request.credential_values.append(CredentialValues(key="is_enabled", value=False))
 
 
 def validate_datasource_type_for_scheduler(datasource: IndexInfo) -> None:
