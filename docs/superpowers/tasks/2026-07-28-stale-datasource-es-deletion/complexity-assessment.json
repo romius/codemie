@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "task": "Implement ES index deletion phase for stale datasources with STALE→ARCHIVED lifecycle transition, shared-index guard, circuit-breaker cap, reactivation hook in IndexInfo.complete_progress(), two new config flags, Helm values entries, and lock ID collision fix",
+  "generated": "2026-07-28T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 21,
+  "size": "L",
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "StaleDatasourceService (new _delete_stale_indexes method), IndexInfo (complete_progress reactivation hook), AppConfig (two new flags), StaleDatasourceScheduler (stats logging), AgentMonitoringService + MetricName (new deletion metric), ElasticSearchClient (direct index deletion call), deploy-templates/values.yaml (Helm entries), and stale_datasource/config.py (lock ID fix) — six-plus components across Service, DB-Persistence, External, Config/Infrastructure, and Monitoring layers. Red flag applied: IndexInfo.complete_progress() is a core shared model method called by all datasource indexing completion flows throughout the application."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "ES index deletion is destructive and not reversible without full reindexing; lock ID collision (987654324 shared with spend-tracking reconciliation scheduler) is a live production bug causing silent nightly failure of one of the two jobs; complete_progress() reactivation hook has a non-trivial implementation risk — _build_progress_update_kwargs does not currently accept lifecycle_state or marked_stale_at, and incorrect write ordering could silently discard the lifecycle reset. Feature flag STALE_DATASOURCE_DELETION_ENABLED defaults to False, partially mitigating deployment risk."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "Nine files modified across six directories: src/codemie/configs/config.py, src/codemie/rest_api/models/index.py, src/codemie/service/stale_datasource/stale_datasource_service.py, src/codemie/service/stale_datasource/config.py, src/codemie/service/stale_datasource/scheduler.py, deploy-templates/values.yaml, src/codemie/service/analytics/metric_names.py, tests/codemie/service/stale_datasource/test_stale_datasource_service.py, and tests/codemie/rest_api/models/test_index_info.py. No new files; all are modifications to existing files."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "Service (StaleDatasourceService), DB-Persistence (IndexInfo model modification), External (ElasticSearchClient ES index deletion), Config/Infrastructure (AppConfig new config fields and Helm values) — four distinct architectural layers. No API, UI, or workflow layers are touched."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from L (4) to XL (5): IndexInfo.complete_progress() is a core shared model method invoked by all datasource indexing completions across the application — qualifies as touching a core shared utility"
+  ],
+  "split_recommendation": null
+}

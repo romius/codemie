@@ -18,6 +18,5 @@ from __future__ import annotations
 
 
 # Advisory lock ID for stale datasource scheduler.
-# Must differ from other lock IDs:
-# ConversationAnalysis: 987654321, SpendTracking: 987654322, Leaderboard: 987654323
-STALE_DATASOURCE_LOCK_ID = 987654324
+# Full lock registry: CA=987654321, Spend=987654322/323/324, LB=987654325, Activity=987654326, Rotation=987654327
+STALE_DATASOURCE_LOCK_ID = 987654328

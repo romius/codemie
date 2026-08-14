@@ -66,6 +66,22 @@ def test_authorized_apps_allowed_key_domains_env_override(monkeypatch):
     assert config.AUTHORIZED_APPS_ALLOWED_KEY_DOMAINS == ["trusted.example", "keys.trusted.example"]
 
 
+def test_deletion_enabled_without_stale_detection_fails_validation():
+    with pytest.raises(ValidationError):
+        Config(
+            STALE_DATASOURCE_ENABLED=False,
+            STALE_DATASOURCE_DELETION_ENABLED=True,
+        )
+
+
+def test_deletion_enabled_with_detection_enabled_passes_validation():
+    cfg = Config(
+        STALE_DATASOURCE_ENABLED=True,
+        STALE_DATASOURCE_DELETION_ENABLED=True,
+    )
+    assert cfg.STALE_DATASOURCE_DELETION_ENABLED is True
+
+
 def test_config_model_config_includes_env_local():
     env_files = Config.model_config.get("env_file", ())
     assert any(

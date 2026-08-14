@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import secrets
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Literal, Optional, List, ClassVar, Dict, Sequence
@@ -245,6 +246,27 @@ class BedrockKnowledgeBaseData(BaseModel):
     bedrock_aws_settings_id: str
 
 
+@dataclass
+class ProgressUpdate:
+    """Parameter object for IndexInfo.update_progress() to avoid long parameter lists."""
+
+    current_state: Optional[int] = None
+    complete_state: Optional[int] = None
+    completed: Optional[bool] = None
+    error: Optional[bool] = None
+    is_fetching: Optional[bool] = None
+    is_queued: Optional[bool] = None
+    current__chunks_state: Optional[int] = None
+    processing_info: Optional[dict] = None
+    processed_files: Optional[list] = None
+    uploaded_files: Optional[list] = None
+    text: Optional[str] = None
+    last_reindex_triggered_at: Optional[datetime] = None
+    tokens_usage: Optional[dict] = None
+    lifecycle_state: Optional["LifecycleState"] = None
+    clear_marked_stale_at: bool = False
+
+
 class IndexInfo(BaseModelWithSQLSupport, Owned, table=True):
     """
     A base class for both Code and KnowledgeBase index types
@@ -454,14 +476,16 @@ class IndexInfo(BaseModelWithSQLSupport, Owned, table=True):
     def start_fetching(self, is_incremental: bool = False):
         self._reset_state(is_incremental=is_incremental, is_fetching=True)
         self.update_progress(
-            completed=self.completed,
-            error=self.error,
-            is_fetching=self.is_fetching,
-            is_queued=self.is_queued,
-            current_state=self.current_state,
-            complete_state=self.complete_state,
-            current__chunks_state=self.current__chunks_state,
-            processed_files=self.processed_files,
+            ProgressUpdate(
+                completed=self.completed,
+                error=self.error,
+                is_fetching=self.is_fetching,
+                is_queued=self.is_queued,
+                current_state=self.current_state,
+                complete_state=self.complete_state,
+                current__chunks_state=self.current__chunks_state,
+                processed_files=self.processed_files,
+            )
         )
 
     def start_progress(self, complete_state: int, processing_info=None, is_incremental: bool = False):
@@ -470,15 +494,17 @@ class IndexInfo(BaseModelWithSQLSupport, Owned, table=True):
 
         self.processing_info = processing_info or {}
         self.update_progress(
-            completed=self.completed,
-            error=self.error,
-            is_fetching=self.is_fetching,
-            is_queued=self.is_queued,
-            current_state=self.current_state,
-            complete_state=self.complete_state,
-            current__chunks_state=self.current__chunks_state,
-            processed_files=self.processed_files,
-            processing_info=self.processing_info,
+            ProgressUpdate(
+                completed=self.completed,
+                error=self.error,
+                is_fetching=self.is_fetching,
+                is_queued=self.is_queued,
+                current_state=self.current_state,
+                complete_state=self.complete_state,
+                current__chunks_state=self.current__chunks_state,
+                processed_files=self.processed_files,
+                processing_info=self.processing_info,
+            )
         )
 
     def _reset_state(self, is_incremental: bool = False, is_fetching: bool = False, complete_state: int = 0):
@@ -509,11 +535,13 @@ class IndexInfo(BaseModelWithSQLSupport, Owned, table=True):
             self.complete_state = complete_state
 
         self.update_progress(
-            current_state=self.current_state,
-            current__chunks_state=self.current__chunks_state,
-            is_fetching=False,
-            processed_files=self.processed_files,
-            complete_state=self.complete_state if complete_state is not None else None,
+            ProgressUpdate(
+                current_state=self.current_state,
+                current__chunks_state=self.current__chunks_state,
+                is_fetching=False,
+                processed_files=self.processed_files,
+                complete_state=self.complete_state if complete_state is not None else None,
+            )
         )
 
     def decrease_progress(self, count=1, chunks_count=1, processed_file: str = None, complete_state: int = None):
@@ -544,11 +572,13 @@ class IndexInfo(BaseModelWithSQLSupport, Owned, table=True):
             self.complete_state = max(0, self.complete_state - count)
 
         self.update_progress(
-            current_state=self.current_state,
-            current__chunks_state=self.current__chunks_state,
-            is_fetching=False,
-            processed_files=self.processed_files,
-            complete_state=self.complete_state,
+            ProgressUpdate(
+                current_state=self.current_state,
+                current__chunks_state=self.current__chunks_state,
+                is_fetching=False,
+                processed_files=self.processed_files,
+                complete_state=self.complete_state,
+            )
         )
 
     def gather_stats(self, count=1, chunks_count=1, processed_document: str = None):
@@ -587,10 +617,12 @@ class IndexInfo(BaseModelWithSQLSupport, Owned, table=True):
             f"ProcessedChunks={self.current__chunks_state}"
         )
         self.update_progress(
-            current_state=self.current_state,
-            current__chunks_state=self.current__chunks_state,
-            complete_state=self.complete_state,
-            processed_files=self.processed_files,
+            ProgressUpdate(
+                current_state=self.current_state,
+                current__chunks_state=self.current__chunks_state,
+                complete_state=self.complete_state,
+                processed_files=self.processed_files,
+            )
         )
 
     def complete_progress(self, complete_state: int = None):
@@ -603,13 +635,19 @@ class IndexInfo(BaseModelWithSQLSupport, Owned, table=True):
         self.is_fetching = False
         self.is_queued = False
         self.error = False
+        self.lifecycle_state = LifecycleState.ACTIVE
+        self.marked_stale_at = None
         self.update_progress(
-            current_state=self.current_state,
-            complete_state=self.complete_state,
-            completed=True,
-            is_fetching=False,
-            is_queued=False,
-            error=False,
+            ProgressUpdate(
+                current_state=self.current_state,
+                complete_state=self.complete_state,
+                completed=True,
+                is_fetching=False,
+                is_queued=False,
+                error=False,
+                lifecycle_state=LifecycleState.ACTIVE,
+                clear_marked_stale_at=True,
+            )
         )
 
     def set_error(self, message: str):
@@ -617,7 +655,7 @@ class IndexInfo(BaseModelWithSQLSupport, Owned, table=True):
         self.text = message
         self.is_fetching = False
         self.is_queued = False
-        self.update_progress(error=True, text=self.text, is_fetching=False, is_queued=False)
+        self.update_progress(ProgressUpdate(error=True, text=self.text, is_fetching=False, is_queued=False))
 
     def set_queued(self):
         self.is_queued = True
@@ -1053,22 +1091,7 @@ class IndexInfo(BaseModelWithSQLSupport, Owned, table=True):
             session.execute(stmt)
             session.commit()
 
-    def update_progress(
-        self,
-        current_state: int | None = None,
-        complete_state: int | None = None,
-        completed: bool | None = None,
-        error: bool | None = None,
-        is_fetching: bool | None = None,
-        is_queued: bool | None = None,
-        current__chunks_state: int | None = None,
-        processing_info: dict | None = None,
-        processed_files: list | None = None,
-        uploaded_files: list | None = None,
-        text: str | None = None,
-        last_reindex_triggered_at: datetime | None = None,
-        tokens_usage: dict | None = None,
-    ) -> None:
+    def update_progress(self, update: ProgressUpdate) -> None:
         """Update progress fields only, preserving metadata (description, project_space_visible).
 
         Uses targeted SQL UPDATE to avoid overwriting user-edited metadata during async reindexing.
@@ -1078,21 +1101,7 @@ class IndexInfo(BaseModelWithSQLSupport, Owned, table=True):
         in-memory metadata values back to the database during long-running async processes.
         Only provided fields are updated; None values are skipped.
         """
-        update_kwargs = self._build_progress_update_kwargs(
-            current_state,
-            complete_state,
-            completed,
-            error,
-            is_fetching,
-            is_queued,
-            current__chunks_state,
-            processing_info,
-            processed_files,
-            uploaded_files,
-            text,
-            last_reindex_triggered_at,
-            tokens_usage,
-        )
+        update_kwargs = self._build_progress_update_kwargs(update)
 
         if not update_kwargs:
             return
@@ -1110,50 +1119,39 @@ class IndexInfo(BaseModelWithSQLSupport, Owned, table=True):
                 raise IndexDeletedException(f"Index {self.id} was deleted during update")
             raise
 
-    def _build_progress_update_kwargs(
-        self,
-        current_state,
-        complete_state,
-        completed,
-        error,
-        is_fetching,
-        is_queued,
-        current__chunks_state,
-        processing_info,
-        processed_files,
-        uploaded_files,
-        text,
-        last_reindex_triggered_at,
-        tokens_usage,
-    ) -> dict:
+    def _build_progress_update_kwargs(self, update: ProgressUpdate) -> dict:
         """Build kwargs dict for update_progress, skipping None values."""
         update_kwargs = {}
-        if current_state is not None:
-            update_kwargs['current_state'] = current_state
-        if complete_state is not None:
-            update_kwargs['complete_state'] = complete_state
-        if completed is not None:
-            update_kwargs['completed'] = completed
-        if error is not None:
-            update_kwargs['error'] = error
-        if is_fetching is not None:
-            update_kwargs['is_fetching'] = is_fetching
-        if is_queued is not None:
-            update_kwargs['is_queued'] = is_queued
-        if current__chunks_state is not None:
-            update_kwargs['current__chunks_state'] = current__chunks_state
-        if processing_info is not None:
-            update_kwargs['processing_info'] = processing_info
-        if processed_files is not None:
-            update_kwargs['processed_files'] = processed_files
-        if uploaded_files is not None:
-            update_kwargs['uploaded_files'] = uploaded_files
-        if text is not None:
-            update_kwargs['text'] = text
-        if last_reindex_triggered_at is not None:
-            update_kwargs['last_reindex_triggered_at'] = last_reindex_triggered_at
-        if tokens_usage is not None:
-            update_kwargs['tokens_usage'] = tokens_usage
+        if update.current_state is not None:
+            update_kwargs['current_state'] = update.current_state
+        if update.complete_state is not None:
+            update_kwargs['complete_state'] = update.complete_state
+        if update.completed is not None:
+            update_kwargs['completed'] = update.completed
+        if update.error is not None:
+            update_kwargs['error'] = update.error
+        if update.is_fetching is not None:
+            update_kwargs['is_fetching'] = update.is_fetching
+        if update.is_queued is not None:
+            update_kwargs['is_queued'] = update.is_queued
+        if update.current__chunks_state is not None:
+            update_kwargs['current__chunks_state'] = update.current__chunks_state
+        if update.processing_info is not None:
+            update_kwargs['processing_info'] = update.processing_info
+        if update.processed_files is not None:
+            update_kwargs['processed_files'] = update.processed_files
+        if update.uploaded_files is not None:
+            update_kwargs['uploaded_files'] = update.uploaded_files
+        if update.text is not None:
+            update_kwargs['text'] = update.text
+        if update.last_reindex_triggered_at is not None:
+            update_kwargs['last_reindex_triggered_at'] = update.last_reindex_triggered_at
+        if update.tokens_usage is not None:
+            update_kwargs['tokens_usage'] = update.tokens_usage
+        if update.lifecycle_state is not None:
+            update_kwargs['lifecycle_state'] = update.lifecycle_state
+        if update.clear_marked_stale_at:
+            update_kwargs['marked_stale_at'] = None
 
         update_kwargs['update_date'] = datetime.now()
         return update_kwargs

@@ -765,6 +765,8 @@ class Config(BaseSettings):
     STALE_DATASOURCE_NO_UPDATE_DAYS: int = 120  # Days without update (fallback criterion when no usage metrics)
     STALE_DATASOURCE_GRACE_DAYS: int = 7  # Grace period: newly created datasources are never marked stale
     STALE_DATASOURCE_BATCH_SIZE: int = 100  # Elasticsearch query batch size for metrics aggregation
+    STALE_DATASOURCE_DELETION_ENABLED: bool = False  # Enables ES index deletion phase
+    STALE_DATASOURCE_MAX_DELETIONS_PER_RUN: int = 100  # Circuit-breaker cap
 
     # Derived from PROJECT_ROOT (src/codemie) rather than a fresh parents[N]
     # literal, so there's a single named anchor instead of a second magic index.
@@ -891,6 +893,9 @@ class Config(BaseSettings):
                     f"STALE_DATASOURCE_SCHEDULE is not a valid cron expression: "
                     f"{self.STALE_DATASOURCE_SCHEDULE!r} ({exc})"
                 ) from exc
+
+        if self.STALE_DATASOURCE_DELETION_ENABLED and not self.STALE_DATASOURCE_ENABLED:
+            raise ValueError("STALE_DATASOURCE_DELETION_ENABLED=True requires STALE_DATASOURCE_ENABLED=True")
         return self
 
     @computed_field

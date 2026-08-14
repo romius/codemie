@@ -46,6 +46,8 @@ class MetricName(str, Enum):
     DATASOURCE_RESUME_DOCUMENTS = "datasource_resume_documents"
     DATASOURCE_RESUME_ERRORS_TOTAL = "datasource_resume_errors_total"
     UPDATE_DATASOURCE = "update_datasource"
+    # Stale datasource deletion
+    STALE_DATASOURCE_INDEX_DELETED = "stale_datasource_index_deleted"
 
     # Tools and integrations
     CODEMIE_TOOLS_USAGE_TOTAL = "codemie_tools_usage_total"

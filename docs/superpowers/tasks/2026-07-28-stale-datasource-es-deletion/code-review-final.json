@@ -1,0 +1,71 @@
+{
+  "decision": "request-changes",
+  "rationale": "Three-lens review: acceptance passed all 16 spec criteria; no security or public API issues. Four patch findings remain: (1) archive UPDATE missing lifecycle_state predicate allows a concurrent complete_progress() to be overwritten to ARCHIVED (critical); (2) error-state rows not excluded from the deletion query, inconsistent with marking phase (major); (3) TOCTOU race between stale snapshot and ES delete allows in-flight protection bypass (major); (4) metrics emitted before PG commit causes double-counting on commit failure (major).",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    {"id": "AC-1", "requirement": "Deletion runs after marking phase commits when STALE_DATASOURCE_DELETION_ENABLED=True", "status": "pass", "notes": "Confirmed: _delete_stale_indexes() called after session.commit() in detect_and_mark_stale_datasources()."},
+    {"id": "AC-2", "requirement": "Three-state lifecycle ACTIVE→STALE→ARCHIVED, ES-only deletion, PG row preserved", "status": "pass", "notes": "sa_update sets lifecycle_state=ARCHIVED; no PG row deleted; GitRepo/integrations untouched."},
+    {"id": "AC-3", "requirement": "Write ordering: ES delete first (ignore_unavailable=True), PG ARCHIVED second", "status": "pass", "notes": "asyncio.to_thread ES delete precedes the bulk sa_update + commit."},
+    {"id": "AC-4", "requirement": "Shared-index guard skips STALE rows whose index is used by an ACTIVE row", "status": "pass", "notes": "active_index_names set built from all ACTIVE rows; stale row skipped if get_index_identifier() present in set."},
+    {"id": "AC-5", "requirement": "Circuit breaker aborts if len(candidates) > STALE_DATASOURCE_MAX_DELETIONS_PER_RUN", "status": "pass", "notes": "Returns deletion_aborted=True before any delete when cap exceeded."},
+    {"id": "AC-6", "requirement": "Multiple STALE rows on same index: single ES delete, all rows archived", "status": "pass", "notes": "defaultdict(list) groups rows by index_name; single to_thread call per group; all IDs in rows_to_archive."},
+    {"id": "AC-7", "requirement": "Per-item ES failure does not stop sweep; failed row stays STALE", "status": "pass", "notes": "Per-index except block increments deletion_errors and continues; failed rows never added to rows_to_archive."},
+    {"id": "AC-8", "requirement": "complete_progress() reactivates any lifecycle state to ACTIVE, clears marked_stale_at", "status": "pass", "notes": "Sets self.lifecycle_state=ACTIVE, self.marked_stale_at=None; passes lifecycle_state=ACTIVE + clear_marked_stale_at=True to update_progress()."},
+    {"id": "AC-9", "requirement": "set_error() does NOT reactivate a STALE/ARCHIVED datasource", "status": "pass", "notes": "set_error() passes no lifecycle_state to update_progress()."},
+    {"id": "AC-10", "requirement": "STALE_DATASOURCE_DELETION_ENABLED=True with STALE_DATASOURCE_ENABLED=False raises ValueError", "status": "pass", "notes": "finalize_settings() guard confirmed at config.py lines 875-878."},
+    {"id": "AC-11", "requirement": "Two new config fields: STALE_DATASOURCE_DELETION_ENABLED (bool=False) + STALE_DATASOURCE_MAX_DELETIONS_PER_RUN (int=100)", "status": "pass", "notes": "Both fields present with correct defaults."},
+    {"id": "AC-12", "requirement": "Metric stale_datasource_index_deleted emitted per deleted index with {project, repo_name, datasource_type}", "status": "pass", "notes": "MetricName enum entry present; send_count_metric called per row with correct attributes."},
+    {"id": "AC-13", "requirement": "All 8 STALE_DATASOURCE_* env vars added to Helm values with safe defaults", "status": "pass", "notes": "values.yaml: all 8 vars present, STALE_DATASOURCE_ENABLED='false', STALE_DATASOURCE_DELETION_ENABLED='false'."},
+    {"id": "AC-14", "requirement": "Advisory lock ID collision fixed: 987654324 → 987654326", "status": "pass", "notes": "stale_datasource/config.py: STALE_DATASOURCE_LOCK_ID = 987654326; comment records full registry."},
+    {"id": "AC-15", "requirement": "In-flight protection: completed=False, is_fetching=True, is_queued=True excluded from deletion", "status": "pass", "notes": "stale_stmt filters completed==True and is_fetching/is_queued == False or NULL."},
+    {"id": "AC-16", "requirement": "Dead already_stale code removed from detect_and_mark_stale_datasources()", "status": "pass", "notes": "Key removed from stats dict; tracking block removed from evaluation loop; scheduler log updated."}
+  ],
+  "standards_review": [
+    {"check": "commit-format", "status": "pass", "notes": "All 8 commits follow feat/fix(EPMCDME-13161): Conventional Commits format."},
+    {"check": "code-quality", "status": "pass", "notes": "asyncio.to_thread for sync ES client, noqa E712 annotations on ORM boolean comparisons, type hints present throughout."},
+    {"check": "security", "status": "pass", "notes": "No injection risks; no secrets in code; ES deletion uses ignore_unavailable safely; no public API surface changes."}
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/codemie/service/stale_datasource/stale_datasource_service.py",
+      "line": 487,
+      "problem": "Archive UPDATE lacks `WHERE lifecycle_state = STALE` predicate",
+      "impact": "If complete_progress() fires on a concurrent reindex between the ES delete call and the PG commit, the sa_update blindly overwrites lifecycle_state=ARCHIVED on a row that is now ACTIVE. The datasource ends up ARCHIVED with a live rebuilt ES index — silently inaccessible until manual repair.",
+      "recommendation": "Add `.where(IndexInfo.lifecycle_state == LifecycleState.STALE)` to the archive UPDATE: `sa_update(IndexInfo).where(IndexInfo.id.in_(rows_to_archive)).where(IndexInfo.lifecycle_state == LifecycleState.STALE).values(lifecycle_state=LifecycleState.ARCHIVED)`. This makes the UPDATE a no-op for any row that transitioned out of STALE between deletion and commit."
+    },
+    {
+      "id": "CR-002",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/service/stale_datasource/stale_datasource_service.py",
+      "line": 401,
+      "problem": "stale_stmt does not exclude error=True rows, inconsistent with the marking phase",
+      "impact": "A STALE datasource with error=True (recoverable error state, user planning to retry) has its ES index permanently deleted. The marking phase (_get_candidate_datasources) explicitly skips error=True rows, but the deletion phase does not, creating asymmetric lifecycle handling.",
+      "recommendation": "Add `.where(or_(IndexInfo.error == False, IndexInfo.error.is_(None)))` to the stale_stmt query in _delete_stale_indexes(), matching the error-exclusion logic in _get_candidate_datasources."
+    },
+    {
+      "id": "CR-003",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/service/stale_datasource/stale_datasource_service.py",
+      "line": 401,
+      "problem": "TOCTOU race: in-flight protection bypassed if reindex queued after stale snapshot is captured",
+      "impact": "A reindex triggered between the stale snapshot (step 1) and the ES delete loop is not visible in the captured stale rows. The ES index is deleted for a datasource that is now is_queued=True in the DB. While complete_progress() will reactivate from ARCHIVED and the reindex rebuilds the index (full indexing fallback), this causes temporary data unavailability during the rebuild.",
+      "recommendation": "The CR-001 fix (WHERE lifecycle_state = STALE on the archive UPDATE) provides meaningful partial mitigation — the archive UPDATE becomes a no-op if the row has already transitioned to ACTIVE. For full in-flight protection, add a per-candidate state re-check inside the for loop before the asyncio.to_thread call: re-query `SELECT lifecycle_state, is_fetching, is_queued FROM index_info WHERE id = row.id` and skip deletion if the row is no longer STALE or is now in-flight."
+    },
+    {
+      "id": "CR-004",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/service/stale_datasource/stale_datasource_service.py",
+      "line": 465,
+      "problem": "Metrics emitted before archiving commit — double-counted on commit failure",
+      "impact": "AgentMonitoringService.send_count_metric is called immediately after each successful ES deletion, before session.commit() persists ARCHIVED state. If the commit fails, ES index is gone, metric is sent, but PG rows remain STALE. On the next run, ES deletion is a no-op but a second metric is emitted, then rows are archived. The stale_datasource_index_deleted counter is inflated by one per affected row per commit failure.",
+      "recommendation": "Collect row metadata for all successfully deleted indexes into a pending_metrics list during the ES delete loop. After session.commit() succeeds (line 492), emit all pending metrics in a post-commit step."
+    }
+  ]
+}

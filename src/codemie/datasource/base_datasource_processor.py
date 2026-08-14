@@ -42,7 +42,7 @@ from codemie.datasource.datasources_config import STORAGE_CONFIG, CODE_CONFIG
 from codemie.datasource.exceptions import NoChunksImportedException
 from codemie.datasource.loader.base_datasource_loader import BaseDatasourceLoader
 from codemie.rest_api.models.guardrail import GuardrailAssignmentItem, GuardrailEntity, GuardrailSource
-from codemie.rest_api.models.index import GuardrailBlockedException, IndexInfo, IndexDeletedException
+from codemie.rest_api.models.index import GuardrailBlockedException, IndexInfo, IndexDeletedException, ProgressUpdate
 from codemie.rest_api.security.user import User
 from codemie.rest_api.utils.default_applications import ensure_application_exists
 from codemie.service.llm_service.llm_service import llm_service
@@ -330,7 +330,7 @@ class BaseDatasourceProcessor(ABC):
             self.index.processing_info = merged
         else:
             self.index.processing_info = {**existing, **load_stats}
-        self.index.update_progress(processing_info=self.index.processing_info)
+        self.index.update_progress(ProgressUpdate(processing_info=self.index.processing_info))
         return load_stats
 
     def _create_or_update_scheduler(self, cron_expression: Optional[str] = None, timezone: Optional[str] = None):
@@ -713,7 +713,7 @@ class BaseDatasourceProcessor(ABC):
 
                     # Check if datasource was deleted during batch processing
                     try:
-                        index.update_progress(complete_state=index.complete_state)
+                        index.update_progress(ProgressUpdate(complete_state=index.complete_state))
                     except IndexDeletedException:
                         logger.info(f"Datasource {index.id} was deleted during batch processing, stopping")
                         raise
@@ -729,7 +729,7 @@ class BaseDatasourceProcessor(ABC):
 
                 # Check if datasource was deleted during final batch
                 try:
-                    index.update_progress(complete_state=index.complete_state)
+                    index.update_progress(ProgressUpdate(complete_state=index.complete_state))
                 except IndexDeletedException:
                     logger.info(f"Datasource {index.id} was deleted during final batch, stopping")
                     raise

@@ -20,7 +20,7 @@ from langchain_core.documents import Document
 
 from codemie.core.utils import calculate_tokens
 from codemie.datasource.callback.base_datasource_callback import DatasourceProcessorCallback
-from codemie.rest_api.models.index import IndexDeletedException, IndexInfo
+from codemie.rest_api.models.index import IndexDeletedException, IndexInfo, ProgressUpdate
 from codemie.rest_api.security.user import User
 from codemie.service.llm_service.llm_service import llm_service
 from codemie.service.monitoring.datasource_monitoring_service import DatasourceMonitoringService
@@ -86,7 +86,7 @@ class DatasourceMonitoringCallback(DatasourceProcessorCallback):
             usage_summary = request_summary_manager.get_summary(self.request_uuid)
             self.index.tokens_usage = usage_summary.tokens_usage if usage_summary else None
             try:
-                self.index.update_progress(tokens_usage=self.index.tokens_usage)
+                self.index.update_progress(ProgressUpdate(tokens_usage=self.index.tokens_usage))
             except IndexDeletedException:
                 request_summary_manager.clear_summary(self.request_uuid)
                 return
@@ -144,7 +144,7 @@ class DatasourceMonitoringCallback(DatasourceProcessorCallback):
             usage_summary = request_summary_manager.get_summary(self.request_uuid)
             self.index.tokens_usage = usage_summary.tokens_usage if usage_summary else None
             try:
-                self.index.update_progress(tokens_usage=self.index.tokens_usage)
+                self.index.update_progress(ProgressUpdate(tokens_usage=self.index.tokens_usage))
             except IndexDeletedException:
                 request_summary_manager.clear_summary(self.request_uuid)
                 return

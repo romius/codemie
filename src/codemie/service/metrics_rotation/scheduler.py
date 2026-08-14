@@ -22,7 +22,9 @@ from codemie.configs import logger
 from codemie.service.metrics_rotation.es_index_rotation_service import MetricsIndexRotationService
 from codemie.utils.leader_lock import async_leader_lock
 
-_ROTATION_LOCK_ID = 987654327  # sequence: CA=987654321, Spend=987654322/323/324, LB=987654325, Activity=987654326
+# Sequence: CA=987654321, Spend=987654322/323/324, LB=987654325,
+# Activity=987654326, Stale=987654328
+_ROTATION_LOCK_ID = 987654327
 _QUARTERLY_TRIGGER = {
     "minute": "0",
     "hour": "0",

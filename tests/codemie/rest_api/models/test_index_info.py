@@ -19,7 +19,7 @@ import pytest
 from sqlalchemy.orm.exc import StaleDataError
 from unittest.mock import MagicMock, patch
 
-from codemie.rest_api.models.index import IndexInfo, IndexDeletedException
+from codemie.rest_api.models.index import IndexInfo, IndexDeletedException, LifecycleState, ProgressUpdate
 from codemie.rest_api.security.user import User
 
 NULLABLE_DEFAULT_FIELDS = (
@@ -429,3 +429,56 @@ def test_create_from_file_processor_empty_uploaded_files(mock_new):
 
     _, kwargs = mock_new.call_args
     assert kwargs["uploaded_files"] == []
+
+
+class TestBuildProgressUpdateKwargsLifecycle:
+    def test_lifecycle_state_included_when_provided(self, index_info):
+        kwargs = index_info._build_progress_update_kwargs(ProgressUpdate(lifecycle_state=LifecycleState.ARCHIVED))
+        assert kwargs.get("lifecycle_state") == LifecycleState.ARCHIVED
+
+    def test_lifecycle_state_excluded_when_none(self, index_info):
+        kwargs = index_info._build_progress_update_kwargs(ProgressUpdate())
+        assert "lifecycle_state" not in kwargs
+
+    def test_clear_marked_stale_at_adds_marked_stale_at_none(self, index_info):
+        kwargs = index_info._build_progress_update_kwargs(ProgressUpdate(clear_marked_stale_at=True))
+        assert "marked_stale_at" in kwargs
+        assert kwargs["marked_stale_at"] is None
+
+    def test_clear_marked_stale_at_false_does_not_include_marked_stale_at(self, index_info):
+        kwargs = index_info._build_progress_update_kwargs(ProgressUpdate())
+        assert "marked_stale_at" not in kwargs
+
+
+class TestCompleteProgressReactivation:
+    def test_complete_progress_reactivates_stale_datasource(self, mocker, index_info):
+        mocker.patch("codemie.rest_api.models.base.BaseModelWithSQLSupport.update")
+        from datetime import datetime
+
+        index_info.lifecycle_state = LifecycleState.STALE
+        index_info.marked_stale_at = datetime(2026, 1, 1)
+
+        index_info.complete_progress()
+
+        assert index_info.lifecycle_state == LifecycleState.ACTIVE
+        assert index_info.marked_stale_at is None
+
+    def test_complete_progress_reactivates_archived_datasource(self, mocker, index_info):
+        mocker.patch("codemie.rest_api.models.base.BaseModelWithSQLSupport.update")
+        from datetime import datetime
+
+        index_info.lifecycle_state = LifecycleState.ARCHIVED
+        index_info.marked_stale_at = datetime(2026, 1, 1)
+
+        index_info.complete_progress()
+
+        assert index_info.lifecycle_state == LifecycleState.ACTIVE
+        assert index_info.marked_stale_at is None
+
+    def test_set_error_does_not_reactivate_stale_datasource(self, mocker, index_info):
+        mocker.patch("codemie.rest_api.models.base.BaseModelWithSQLSupport.update")
+        index_info.lifecycle_state = LifecycleState.STALE
+
+        index_info.set_error("some error")
+
+        assert index_info.lifecycle_state == LifecycleState.STALE

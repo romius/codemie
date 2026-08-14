@@ -73,12 +73,23 @@ class StaleDatasourceScheduler:
                 async with get_async_session() as session:
                     service = StaleDatasourceService(session, MetricsElasticRepository())
                     stats = await service.detect_and_mark_stale_datasources()
+                    deletion_info = ""
+                    if stats.get("deletion_aborted"):
+                        deletion_info = ", deletion=ABORTED (circuit breaker)"
+                    elif stats.get("stale_rows_swept") is not None:
+                        deletion_info = (
+                            f", swept={stats['stale_rows_swept']}, "
+                            f"deleted={stats['indexes_deleted']}, "
+                            f"archived={stats['datasources_archived']}, "
+                            f"skipped_shared={stats['skipped_shared_index']}, "
+                            f"deletion_errors={stats['deletion_errors']}"
+                        )
                     logger.info(
                         f"Stale datasource detection completed: "
                         f"evaluated={stats['total_evaluated']}, "
                         f"newly_stale={stats['newly_marked_stale']}, "
-                        f"already_stale={stats['already_stale']}, "
                         f"errors={stats['errors']}"
+                        f"{deletion_info}"
                     )
             except Exception as e:
                 logger.error(f"Stale datasource detection failed: {e}", exc_info=True)
