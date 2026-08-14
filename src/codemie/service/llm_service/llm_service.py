@@ -408,7 +408,22 @@ class LLMService:
             List of LLMModel instances accessible to user, filtered by visibility rules
         """
         user_models = self.get_allowed_models(user)
-        return self._filter_models_by_visibility(user_models.chat_models, include_all)
+        models = self._filter_models_by_visibility(user_models.chat_models, include_all)
+        return self._apply_premium_flags(models)
+
+    @staticmethod
+    def _apply_premium_flags(models: List[LLMModel]) -> List[LLMModel]:
+        """Set is_premium on each model when the premium-models budget feature is enabled.
+
+        When no premium_models budget is configured the field stays None and is omitted
+        from API responses (response_model_exclude_none=True on the router).
+        """
+        from codemie.enterprise.litellm.dependencies import is_premium_model, is_premium_models_enabled
+
+        if is_premium_models_enabled():
+            for model in models:
+                model.is_premium = is_premium_model(model.base_name)
+        return models
 
     def get_allowed_image_generation_models(self, user: 'User', include_all: bool = False) -> List[LLMModel]:
         """Get list of image generation models allowed for user.

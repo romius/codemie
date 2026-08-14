@@ -366,3 +366,24 @@ class TestIncludeAllParameter:
         assert response.status_code == 200
         call_args = mock_llm_service.get_allowed_chat_models.call_args
         assert call_args.kwargs['include_all'] is True
+
+
+def test_llm_models_is_premium_serialization(mock_llm_service):
+    """is_premium appears in JSON only when set (response_model_exclude_none)."""
+    mock_llm_service.get_allowed_chat_models.return_value = [
+        LLMModel(
+            base_name="claude-opus-4-1",
+            deployment_name="claude-opus-4-1",
+            enabled=True,
+            label="Claude Opus 4.1",
+            is_premium=True,
+        ),
+        LLMModel(base_name="gpt-4o", deployment_name="gpt-4o", enabled=True, label="GPT-4o"),
+    ]
+
+    response = client.get("/v1/llm_models")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload[0]["is_premium"] is True
+    assert "is_premium" not in payload[1]

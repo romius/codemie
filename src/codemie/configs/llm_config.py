@@ -100,6 +100,8 @@ class LLMModel(BaseModel):
         False  # Controls whether model should be hidden from web/UI (defaults to False - visible)
     )
     api_version: Optional[str] = None  # Azure OpenAI specific: overrides global OPENAI_API_VERSION when set
+    # Set only when a premium_models budget is configured; True if base_name matches LITELLM_PREMIUM_MODELS_ALIASES
+    is_premium: Optional[bool] = None
 
     @model_validator(mode='after')
     def populate_default_field(self):

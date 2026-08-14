@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
+from unittest.mock import Mock, patch
+
 import pytest
 from pathlib import Path
 from codemie.service.llm_service.llm_service import LLMService, LLMModel, LLMConfig
@@ -309,3 +312,70 @@ class TestModelVisibilityFiltering:
 
         all_models = llm_service.get_allowed_image_generation_models(user, include_all=True)
         assert [model.base_name for model in all_models] == ['visible-image-model', 'hidden-image-model']
+
+
+class TestApplyPremiumFlags:
+    """Tests for is_premium population in get_allowed_chat_models."""
+
+    @pytest.fixture(autouse=True)
+    def clear_premium_caches(self):
+        from codemie.enterprise.litellm.dependencies import is_premium_model, is_premium_models_enabled
+
+        is_premium_models_enabled.cache_clear()
+        is_premium_model.cache_clear()
+        yield
+        is_premium_models_enabled.cache_clear()
+        is_premium_model.cache_clear()
+
+    @contextlib.contextmanager
+    def _premium_budget(self, enabled: bool):
+        from codemie.configs.budget_config import budget_config
+        from codemie.configs.config import PredefinedBudgetConfig
+
+        current = [b for b in budget_config.predefined_budgets if b.budget_category != "premium_models"]
+        if enabled:
+            current.append(
+                PredefinedBudgetConfig(
+                    budget_id="premium_models",
+                    name="Premium",
+                    description=None,
+                    soft_budget=0.0,
+                    max_budget=0.0,
+                    budget_duration="30d",
+                    budget_category="premium_models",
+                )
+            )
+        with patch.object(budget_config, "predefined_budgets", current):
+            yield
+
+    def _models(self):
+        return [
+            LLMModel(base_name="claude-opus-4-1", deployment_name="claude-opus-4-1", enabled=True),
+            LLMModel(base_name="gpt-4o", deployment_name="gpt-4o", enabled=True),
+        ]
+
+    def test_premium_flag_set_when_feature_enabled_and_alias_matches(self):
+        from codemie.configs.config import config
+        from codemie.configs.llm_config import LiteLLMModels
+        from codemie.service.llm_service.llm_service import llm_service
+
+        with self._premium_budget(True), patch.object(config, "LITELLM_PREMIUM_MODELS_ALIASES", ["opus"]):
+            with patch.object(llm_service, "get_allowed_models") as mock_allowed:
+                mock_allowed.return_value = LiteLLMModels(chat_models=self._models(), embedding_models=[])
+                result = llm_service.get_allowed_chat_models(user=Mock())
+
+        by_name = {m.base_name: m for m in result}
+        assert by_name["claude-opus-4-1"].is_premium is True
+        assert by_name["gpt-4o"].is_premium is False
+
+    def test_premium_flag_none_when_feature_disabled(self):
+        from codemie.configs.config import config
+        from codemie.configs.llm_config import LiteLLMModels
+        from codemie.service.llm_service.llm_service import llm_service
+
+        with self._premium_budget(False), patch.object(config, "LITELLM_PREMIUM_MODELS_ALIASES", ["opus"]):
+            with patch.object(llm_service, "get_allowed_models") as mock_allowed:
+                mock_allowed.return_value = LiteLLMModels(chat_models=self._models(), embedding_models=[])
+                result = llm_service.get_allowed_chat_models(user=Mock())
+
+        assert all(m.is_premium is None for m in result)
