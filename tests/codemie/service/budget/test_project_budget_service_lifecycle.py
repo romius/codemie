@@ -569,6 +569,7 @@ async def test_resync_member_allocation_syncs_litellm_for_equal_mode_members():
             budget=budget,
             alloc=equal_alloc,
             new_amounts=(25.0, 20.0),
+            effective_max_budget=None,
             provider=mock_provider,
         )
 
@@ -577,6 +578,7 @@ async def test_resync_member_allocation_syncs_litellm_for_equal_mode_members():
     call_kwargs = mock_provider.sync_member_allocation.await_args.kwargs
     assert call_kwargs["allocation"] is equal_alloc
     assert call_kwargs["budget"] is budget
+    assert call_kwargs["effective_max_budget"] is None
 
     # Must still return amounts so _ensure_shared_child_budget_after_resync can run.
     assert result == (25.0, 20.0)

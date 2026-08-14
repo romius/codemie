@@ -1445,12 +1445,16 @@ class BudgetService:
         allocations: list,
         project_name: str,
         category: str,
+        enforce_limit: bool,
         project_member_budget_assignment_repository,
         project_budget_service,
     ) -> None:
         for alloc in allocations:
             try:
-                member_state = await provider.sync_member_allocation(allocation=alloc, budget=budget)
+                effective_max_budget = alloc.allocated_max_budget if enforce_limit else budget.max_budget
+                member_state = await provider.sync_member_allocation(
+                    allocation=alloc, budget=budget, effective_max_budget=effective_max_budget
+                )
                 await project_member_budget_assignment_repository.update_provider_metadata(
                     session,
                     allocation_id=alloc.id,
@@ -1483,6 +1487,9 @@ class BudgetService:
         project_budget_service,
         project_budget_assignment_model,
     ) -> tuple[str, int]:
+        from codemie.service.settings.settings import SettingsService
+
+        enforce_limit = SettingsService.get_enforce_member_spend_limits(project_name)
         async with session.begin_nested():
             budget_id = f"{project_name}-{category}-{uuid4().hex[:8]}"
             budget = Budget(
@@ -1532,7 +1539,9 @@ class BudgetService:
                 per_member_soft_budget=allocation_rows[0].allocated_soft_budget
                 if allocation_rows
                 else state.soft_budget,
-                per_member_max_budget=allocation_rows[0].allocated_max_budget if allocation_rows else state.max_budget,
+                per_member_max_budget=allocation_rows[0].allocated_max_budget
+                if (enforce_limit and allocation_rows)
+                else state.max_budget,
             )
             for row in allocation_rows:
                 row.shared_budget_id = shared_budget.budget_id
@@ -1545,6 +1554,7 @@ class BudgetService:
                 allocations=allocations,
                 project_name=project_name,
                 category=category,
+                enforce_limit=enforce_limit,
                 project_member_budget_assignment_repository=project_member_budget_assignment_repository,
                 project_budget_service=project_budget_service,
             )

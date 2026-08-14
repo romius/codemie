@@ -476,6 +476,7 @@ class ProjectBudgetService:
         provider,
         budget: Budget,
         allocations: list[ProjectMemberBudgetAssignment],
+        enforce_limit: bool,
     ) -> None:
         for alloc in allocations:
             provider_name = getattr(provider, "provider_name", "unknown")
@@ -496,7 +497,10 @@ class ProjectBudgetService:
                     f"allocated_max_budget={getattr(alloc, 'allocated_max_budget', None)!r} "
                     f"allocated_soft_budget={getattr(alloc, 'allocated_soft_budget', None)!r}"
                 )
-                member_state = await provider.sync_member_allocation(allocation=alloc, budget=budget)
+                effective_max_budget = alloc.allocated_max_budget if enforce_limit else budget.max_budget
+                member_state = await provider.sync_member_allocation(
+                    allocation=alloc, budget=budget, effective_max_budget=effective_max_budget
+                )
                 await self._persist_child_budget_provider_state(
                     session,
                     budget_id=effective_budget_id,
@@ -554,6 +558,7 @@ class ProjectBudgetService:
         budget_duration: str,
         models: list[str] | None,
         allocations: list[ProjectMemberBudgetAssignment],
+        enforce_limit: bool,
     ) -> Budget:
         try:
             provider_name = getattr(provider, "provider_name", "unknown")
@@ -616,6 +621,7 @@ class ProjectBudgetService:
             provider=provider,
             budget=updated_budget,
             allocations=allocations,
+            enforce_limit=enforce_limit,
         )
         return updated_budget
 
@@ -857,13 +863,18 @@ class ProjectBudgetService:
             f"budget_category={data.budget_category.value!r} allocation_count={len(allocation_rows)} "
             f"allocation_mode={data.allocation_mode!r}"
         )
+        from codemie.service.settings.settings import SettingsService
+
+        enforce_limit = SettingsService.get_enforce_member_spend_limits(data.project_name)
         shared_budget = await self._ensure_shared_child_budget(
             session,
             main_budget=budget,
             project_name=data.project_name,
             actor_id=actor_id,
             per_member_soft_budget=allocation_rows[0].allocated_soft_budget if allocation_rows else budget.soft_budget,
-            per_member_max_budget=allocation_rows[0].allocated_max_budget if allocation_rows else budget.max_budget,
+            per_member_max_budget=allocation_rows[0].allocated_max_budget
+            if (enforce_limit and allocation_rows)
+            else budget.max_budget,
         )
         logger.debug(
             f"budget_event=project_shared_child_budget_selected component=project_budget_service "
@@ -888,6 +899,7 @@ class ProjectBudgetService:
             budget_duration=data.budget_duration,
             models=data.models,
             allocations=allocations,
+            enforce_limit=enforce_limit,
         )
 
         member_count = len(allocations)
@@ -1013,6 +1025,7 @@ class ProjectBudgetService:
         budget: Budget,
         alloc: ProjectMemberBudgetAssignment,
         new_amounts: tuple[float, float] | None,
+        effective_max_budget: float | None,
         provider: BudgetEnforcementProvider,
     ) -> tuple[float, float] | None:
         if new_amounts is None:
@@ -1030,8 +1043,12 @@ class ProjectBudgetService:
             if updated.allocation_mode == AllocationMode.FIXED.value:
                 await self._sync_fixed_allocation(session, budget, alloc.id, updated, provider)
                 return None
-            await provider.sync_member_allocation(allocation=updated, budget=budget)
-            return updated.allocated_max_budget, updated.allocated_soft_budget
+            await provider.sync_member_allocation(
+                allocation=updated, budget=budget, effective_max_budget=effective_max_budget
+            )
+            return (
+                effective_max_budget if effective_max_budget is not None else updated.allocated_max_budget
+            ), updated.allocated_soft_budget
         except Exception as exc:
             logger.warning(
                 f"budget_event=provider_member_budget_sync_failed component=project_budget_service "
@@ -1081,6 +1098,9 @@ class ProjectBudgetService:
             new_alloc_map = self._equal_amounts_with_fixed_overrides(allocations, eff_max, eff_soft)
         except ValidationException as exc:
             raise ExtendedHTTPException(code=400, message=str(exc)) from exc
+        from codemie.service.settings.settings import SettingsService
+
+        enforce_limit = SettingsService.get_enforce_member_spend_limits(allocations[0].project_name)
         shared_sample: tuple[float, float] | None = None
         for alloc in allocations:
             sample = await self._resync_member_allocation(
@@ -1089,6 +1109,7 @@ class ProjectBudgetService:
                 budget=budget,
                 alloc=alloc,
                 new_amounts=new_alloc_map.get(alloc.user_id),
+                effective_max_budget=None if enforce_limit else eff_max,
                 provider=provider,
             )
             shared_sample = shared_sample or sample
