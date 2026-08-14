@@ -1710,21 +1710,20 @@ class ProjectBudgetService:
         )
         group = await project_budget_group_repository.insert(session, group)
 
+        from codemie.service.settings.settings import SettingsService
+
+        enforce_limit = SettingsService.get_enforce_member_spend_limits(data.project_name)
         provider = get_active_provider()
         member_user_ids = await self._get_active_member_user_ids(session, data.project_name)
 
         results: list[ProjectBudgetGroupCategoryResult] = []
         for cat_key, cat_spec in data.categories.items():
-            amount = float(Decimal(str(data.total_amount)) * Decimal(str(cat_spec.pct)) / Decimal("100"))
-            if cat_spec.soft_budget is not None:
-                soft_amount = cat_spec.soft_budget
-            else:
-                soft_amount = float(Decimal(str(amount)) * Decimal(str(DEFAULT_SOFT_LIMIT_PCT)) / Decimal("100"))
-
             # Skip budget creation for zero-allocation categories
             if cat_spec.pct <= 0:
                 continue
 
+            amount = float(Decimal(str(data.total_amount)) * Decimal(str(cat_spec.pct)) / Decimal("100"))
+            soft_amount = self._resolve_soft_amount(cat_spec, amount)
             budget_id = f"{data.project_name}-{cat_key}-{uuid.uuid4().hex[:8]}"
 
             budget = Budget(
@@ -1768,7 +1767,9 @@ class ProjectBudgetService:
                     project_name=data.project_name,
                     actor_id=actor_id,
                     per_member_soft_budget=allocation_rows[0].allocated_soft_budget,
-                    per_member_max_budget=allocation_rows[0].allocated_max_budget,
+                    per_member_max_budget=allocation_rows[0].allocated_max_budget
+                    if enforce_limit
+                    else budget.max_budget,
                 )
                 for row in allocation_rows:
                     row.shared_budget_id = shared_budget.budget_id
@@ -1787,6 +1788,7 @@ class ProjectBudgetService:
                 budget_duration=data.budget_duration,
                 models=None,
                 allocations=allocations,
+                enforce_limit=enforce_limit,
             )
             results.append(
                 ProjectBudgetGroupCategoryResult(budget=budget, assignment=assignment, allocations=allocations)
@@ -1929,6 +1931,9 @@ class ProjectBudgetService:
         actor_id: str,
     ) -> None:
         """Process per-category updates: delete (pct=0), update existing, or create new."""
+        from codemie.service.settings.settings import SettingsService
+
+        enforce_limit = SettingsService.get_enforce_member_spend_limits(group.project_name)
         provider = get_active_provider()
         member_user_ids = await self._get_active_member_user_ids(session, group.project_name)
 
@@ -1947,7 +1952,16 @@ class ProjectBudgetService:
                 )
             else:
                 await self._create_new_group_category(
-                    session, group, cat_key, amount, soft_amount, eff_duration, member_user_ids, provider, actor_id
+                    session,
+                    group,
+                    cat_key,
+                    amount,
+                    soft_amount,
+                    eff_duration,
+                    member_user_ids,
+                    provider,
+                    actor_id,
+                    enforce_limit=enforce_limit,
                 )
 
     @staticmethod
@@ -1989,6 +2003,7 @@ class ProjectBudgetService:
         member_user_ids: list[str],
         provider: Any,
         actor_id: str,
+        enforce_limit: bool = True,
     ) -> None:
         """Create a brand-new budget + assignment for a category added to an existing group."""
         budget_id = f"{group.project_name}-{cat_key}-{uuid.uuid4().hex[:8]}"
@@ -2031,7 +2046,7 @@ class ProjectBudgetService:
                 project_name=group.project_name,
                 actor_id=actor_id,
                 per_member_soft_budget=allocation_rows[0].allocated_soft_budget,
-                per_member_max_budget=allocation_rows[0].allocated_max_budget,
+                per_member_max_budget=allocation_rows[0].allocated_max_budget if enforce_limit else budget.max_budget,
             )
             for row in allocation_rows:
                 row.shared_budget_id = shared_budget.budget_id
@@ -2049,6 +2064,7 @@ class ProjectBudgetService:
             budget_duration=eff_duration,
             models=None,
             allocations=allocations,
+            enforce_limit=enforce_limit,
         )
 
     async def delete_project_budget_group(
