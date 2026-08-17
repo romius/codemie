@@ -757,6 +757,9 @@ class Config(BaseSettings):
     )
     LITELLM_BUDGET_RESET_RECONCILIATION_WINDOW_MINUTES: int = 10  # Allowed midnight UTC execution window
     BUDGET_USAGE_STALENESS_THRESHOLD_MS: int = 600000  # 10 minutes — lazy-refresh threshold for /budget_usage
+    BUDGET_MEMBER_SPEND_STALENESS_THRESHOLD_MS: int = (
+        600000  # 10 minutes — lazy-refresh threshold for member spend analytics
+    )
 
     # Stale Datasource Detection Configuration
     STALE_DATASOURCE_ENABLED: bool = False  # Enables nightly stale datasource detection job

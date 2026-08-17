@@ -18,11 +18,13 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
 
 import pytest
 from sqlalchemy.dialects import sqlite as sqlite_dialect
 
 from codemie.repository.project_spend_tracking_repository import ProjectSpendTrackingRepository
+from codemie.service.spend_tracking.spend_models import ProjectSpendTracking
 
 
 @pytest.mark.asyncio
@@ -462,3 +464,160 @@ async def test_get_latest_before_by_project_budget_ids_filters_spend_subject_typ
     assert (
         sql.count("project_budget") >= 2
     ), f"Expected spend_subject_type filter in both subquery and outer query, got SQL:\n{sql}"
+
+
+class TestGetLatestMemberRowsForUser:
+    """Tests for get_latest_member_rows_for_user."""
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_dict_when_no_rows(self):
+        repo = ProjectSpendTrackingRepository()
+        session = MagicMock()
+        result_mock = MagicMock()
+        result_mock.scalars.return_value.all.return_value = []
+        session.execute = AsyncMock(return_value=result_mock)
+
+        result = await repo.get_latest_member_rows_for_user(session, "u-1")
+
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_keys_rows_by_project_and_category(self):
+        repo = ProjectSpendTrackingRepository()
+        row = ProjectSpendTracking(
+            id=uuid4(),
+            project_name="atlas-core",
+            spend_date=datetime(2026, 8, 13, tzinfo=timezone.utc),
+            daily_spend=Decimal("1.0"),
+            cumulative_spend=Decimal("5.0"),
+            budget_period_spend=Decimal("4.0"),
+            budget_id="b-1",
+            budget_category="cli",
+            user_id="u-1",
+            spend_subject_type="member_budget",
+        )
+        session = MagicMock()
+        result_mock = MagicMock()
+        result_mock.scalars.return_value.all.return_value = [row]
+        session.execute = AsyncMock(return_value=result_mock)
+
+        result = await repo.get_latest_member_rows_for_user(session, "u-1")
+
+        assert result == {("atlas-core", "cli"): row}
+
+
+class TestGetLatestMemberRowsForProject:
+    """Tests for get_latest_member_rows_for_project."""
+
+    @pytest.mark.asyncio
+    async def test_keys_rows_by_user_and_category(self):
+        repo = ProjectSpendTrackingRepository()
+        row = ProjectSpendTracking(
+            id=uuid4(),
+            project_name="atlas-core",
+            spend_date=datetime(2026, 8, 13, tzinfo=timezone.utc),
+            daily_spend=Decimal("1.0"),
+            cumulative_spend=Decimal("5.0"),
+            budget_period_spend=Decimal("4.0"),
+            budget_id="b-1",
+            budget_category="platform",
+            user_id="u-7",
+            spend_subject_type="member_budget",
+        )
+        session = MagicMock()
+        result_mock = MagicMock()
+        result_mock.scalars.return_value.all.return_value = [row]
+        session.execute = AsyncMock(return_value=result_mock)
+
+        result = await repo.get_latest_member_rows_for_project(session, "atlas-core")
+
+        assert result == {("u-7", "platform"): row}
+
+
+class TestGetNewestMemberSpendDate:
+    """Tests for get_newest_member_spend_date."""
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_table_empty(self):
+        repo = ProjectSpendTrackingRepository()
+        session = MagicMock()
+        result_mock = MagicMock()
+        result_mock.scalar_one_or_none.return_value = None
+        session.execute = AsyncMock(return_value=result_mock)
+
+        assert await repo.get_newest_member_spend_date(session) is None
+
+    @pytest.mark.asyncio
+    async def test_returns_max_spend_date(self):
+        expected = datetime(2026, 8, 13, 10, 0, tzinfo=timezone.utc)
+        repo = ProjectSpendTrackingRepository()
+        session = MagicMock()
+        result_mock = MagicMock()
+        result_mock.scalar_one_or_none.return_value = expected
+        session.execute = AsyncMock(return_value=result_mock)
+
+        assert await repo.get_newest_member_spend_date(session) == expected
+
+    @pytest.mark.asyncio
+    async def test_scopes_to_member_budget_and_is_not_slice_scoped(self):
+        """Freshness marker is table-wide over member_budget rows only.
+
+        Per-slice scoping would read as permanently stale for members with no
+        recent spend, since the collector never writes zero-delta rows.
+        """
+        repo = ProjectSpendTrackingRepository()
+        session = MagicMock()
+        result_mock = MagicMock()
+        result_mock.scalar_one_or_none.return_value = None
+        session.execute = AsyncMock(return_value=result_mock)
+
+        await repo.get_newest_member_spend_date(session)
+
+        sql = _compile_sql(session.execute.call_args[0][0])
+        assert "member_budget" in sql
+        assert "max(project_spend_tracking.spend_date)" in sql.lower()
+        # No slice scoping: a user_id or project_name predicate would defeat the marker.
+        assert "user_id" not in sql
+        assert "project_name" not in sql
+
+
+@pytest.mark.asyncio
+async def test_get_latest_member_rows_for_user_filters_subject_type_in_both_queries():
+    """spend_subject_type must appear in subquery AND outer WHERE, or the join can match other types."""
+    repo = ProjectSpendTrackingRepository()
+    result_mock = MagicMock()
+    result_mock.scalars.return_value.all.return_value = []
+    session = AsyncMock()
+    session.execute.return_value = result_mock
+
+    await repo.get_latest_member_rows_for_user(session, "u-1")
+
+    sql = _compile_sql(session.execute.call_args[0][0])
+    assert (
+        sql.count("member_budget") >= 2
+    ), f"Expected spend_subject_type filter in both subquery and outer query, got SQL:\n{sql}"
+    assert sql.count("'u-1'") >= 2, f"Expected user scoping in both subquery and outer query, got SQL:\n{sql}"
+    assert (
+        "max(project_spend_tracking.created_at)" in sql.lower()
+    ), f"Expected MAX(created_at) tiebreaker so concurrent refreshes resolve deterministically, got SQL:\n{sql}"
+
+
+@pytest.mark.asyncio
+async def test_get_latest_member_rows_for_project_filters_subject_type_in_both_queries():
+    """spend_subject_type must appear in subquery AND outer WHERE, or the join can match other types."""
+    repo = ProjectSpendTrackingRepository()
+    result_mock = MagicMock()
+    result_mock.scalars.return_value.all.return_value = []
+    session = AsyncMock()
+    session.execute.return_value = result_mock
+
+    await repo.get_latest_member_rows_for_project(session, "atlas-core")
+
+    sql = _compile_sql(session.execute.call_args[0][0])
+    assert (
+        sql.count("member_budget") >= 2
+    ), f"Expected spend_subject_type filter in both subquery and outer query, got SQL:\n{sql}"
+    assert sql.count("'atlas-core'") >= 2, f"Expected project scoping in both subquery and outer query, got SQL:\n{sql}"
+    assert (
+        "max(project_spend_tracking.created_at)" in sql.lower()
+    ), f"Expected MAX(created_at) tiebreaker so concurrent refreshes resolve deterministically, got SQL:\n{sql}"

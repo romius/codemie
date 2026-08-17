@@ -594,6 +594,92 @@ class ProjectSpendTrackingRepository:
         result = await session.execute(stmt)
         return {row.budget_id: row for row in result.scalars().all()}
 
+    async def _get_latest_member_rows(
+        self,
+        session: AsyncSession,
+        scope_column,
+        scope_value: str,
+        group_column,
+    ) -> dict[tuple[str, str], ProjectSpendTracking]:
+        """Return the most recent member_budget row per (group_column, budget_category).
+
+        Rows are sparse: the collector skips zero-delta snapshots, so a missing key
+        means "spend unchanged since the last recorded snapshot", not "no spend".
+
+        ``spend_subject_type`` is filtered in both the subquery and the outer select;
+        omitting it from either lets the join match rows of other subject types.
+
+        MAX(created_at) is added as a tiebreaker: if two rows share the same
+        spend_date (e.g. concurrent refresh calls), the one inserted last wins.
+        """
+        latest_subq = (
+            select(
+                group_column,
+                ProjectSpendTracking.budget_category,
+                func.max(ProjectSpendTracking.spend_date).label("max_spend_date"),
+                func.max(ProjectSpendTracking.created_at).label("max_created_at"),
+            )
+            .where(scope_column == scope_value)
+            .where(ProjectSpendTracking.spend_subject_type == "member_budget")
+            .group_by(group_column, ProjectSpendTracking.budget_category)
+            .subquery()
+        )
+        group_name = group_column.key
+        stmt = (
+            select(ProjectSpendTracking)
+            .join(
+                latest_subq,
+                (group_column == latest_subq.c[group_name])
+                & (ProjectSpendTracking.budget_category == latest_subq.c.budget_category)
+                & (ProjectSpendTracking.spend_date == latest_subq.c.max_spend_date)
+                & (ProjectSpendTracking.created_at == latest_subq.c.max_created_at),
+            )
+            .where(scope_column == scope_value)
+            .where(ProjectSpendTracking.spend_subject_type == "member_budget")
+        )
+        result = await session.execute(stmt)
+        return {(getattr(row, group_name), row.budget_category): row for row in result.scalars().all()}
+
+    async def get_latest_member_rows_for_user(
+        self,
+        session: AsyncSession,
+        user_id: str,
+    ) -> dict[tuple[str, str], ProjectSpendTracking]:
+        """Return the most recent member_budget row per (project_name, budget_category) for a user."""
+        return await self._get_latest_member_rows(
+            session,
+            scope_column=ProjectSpendTracking.user_id,
+            scope_value=user_id,
+            group_column=ProjectSpendTracking.project_name,
+        )
+
+    async def get_latest_member_rows_for_project(
+        self,
+        session: AsyncSession,
+        project_name: str,
+    ) -> dict[tuple[str, str], ProjectSpendTracking]:
+        """Return the most recent member_budget row per (user_id, budget_category) for a project."""
+        return await self._get_latest_member_rows(
+            session,
+            scope_column=ProjectSpendTracking.project_name,
+            scope_value=project_name,
+            group_column=ProjectSpendTracking.user_id,
+        )
+
+    async def get_newest_member_spend_date(self, session: AsyncSession) -> datetime | None:
+        """Return the newest spend_date across all member_budget rows, or None if there are none.
+
+        This is the lazy-refresh freshness marker. It is deliberately table-wide rather
+        than per-slice: the refresh is global, so the newest row anywhere answers
+        "when did we last check?". A per-slice max would read as permanently stale for
+        members with no recent spend, since zero-delta rows are never written.
+        """
+        stmt = select(func.max(ProjectSpendTracking.spend_date)).where(
+            ProjectSpendTracking.spend_subject_type == "member_budget"
+        )
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def get_latest_before_today_by_budget_ids(
         self,
         session: AsyncSession,

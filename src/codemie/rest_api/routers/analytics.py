@@ -25,7 +25,7 @@ import hashlib
 import json
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import wraps
 from typing import Any, Literal
 
@@ -45,8 +45,11 @@ from codemie.rest_api.models.analytics import (
 )
 from codemie.rest_api.security.authentication import admin_access_only, authenticate
 from codemie.rest_api.security.user import User
+from codemie.clients.postgres import get_async_session
 from codemie.service.analytics.analytics_service import AnalyticsService
 from codemie.service.analytics.handlers.cli_handler import EnrichedUserScope
+from codemie.service.analytics.handlers.member_spend_service import member_spend_service
+from codemie.service.analytics.response_formatter import ResponseFormatter
 from codemie.service.analytics.queries.ai_adoption_framework.config import AIAdoptionConfig
 
 logger = logging.getLogger(__name__)
@@ -599,6 +602,33 @@ def _authorize_admin_budget_view(
         code=status.HTTP_403_FORBIDDEN,
         message=ERROR_MSG_ACCESS_DENIED,
         help=ERROR_MSG_ADMIN_HELP,
+    )
+
+
+def _paginate_tabular(
+    *,
+    columns: list[dict],
+    rows: list[dict],
+    filters_applied: dict,
+    start_time: datetime,
+    page: int,
+    per_page: int,
+) -> dict:
+    """Slice rows for the requested page and format the tabular response.
+
+    total_count is the unsliced row count so the client can page through the rest.
+    """
+    page_rows = rows[page * per_page : (page + 1) * per_page]
+    execution_time_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
+    return ResponseFormatter.format_tabular_response(
+        columns=columns,
+        rows=page_rows,
+        filters_applied=filters_applied,
+        execution_time_ms=execution_time_ms,
+        totals=None,
+        page=page,
+        per_page=per_page,
+        total_count=len(rows),
     )
 
 
@@ -3016,6 +3046,93 @@ async def get_user_budget_usage(
         filters_applied={},
         execution_time_ms=execution_time_ms,
         totals=None,
+    )
+
+
+@router.get(
+    "/user-project-spending",
+    status_code=status.HTTP_200_OK,
+    response_model=TabularResponse,
+    response_model_by_alias=True,
+    summary="Get a user's spend broken down by project",
+    description=(
+        "Returns one row per project the user belongs to, with spend and configured limit "
+        "per budget category for the current budget cycle. Requires the caller to be a global "
+        "admin, maintainer, or project admin for at least one project the target user belongs to."
+    ),
+)
+@handle_analytics_errors("user project spending analytics")
+async def get_user_project_spending(
+    user: User = Depends(authenticate),
+    users: str = Query(..., min_length=1, description="Target user email. Exactly one."),
+    page: int = Query(0, ge=0),
+    per_page: int = Query(config.ANALYTICS_DEFAULT_PAGE_SIZE, ge=1, le=1000),
+) -> TabularResponse:
+    start_time = datetime.now(timezone.utc)
+    target_email = users.split(",")[0].strip()
+
+    target_user, target_projects = await asyncio.to_thread(member_spend_service.resolve_spend_subject, target_email)
+    if target_user is None:
+        if not user.is_admin:
+            raise ExtendedHTTPException(
+                code=status.HTTP_403_FORBIDDEN,
+                message=ERROR_MSG_ACCESS_DENIED,
+                help=ERROR_MSG_ADMIN_HELP,
+            )
+        raise ExtendedHTTPException(
+            code=status.HTTP_404_NOT_FOUND,
+            message=f"User {target_email} not found.",
+            help="Verify the email and try again.",
+        )
+    _authorize_admin_budget_view(user, target_projects)
+
+    async with get_async_session() as session:
+        columns, rows = await member_spend_service.get_user_project_spend(session, str(target_user.id))
+
+    return _paginate_tabular(
+        columns=columns,
+        rows=rows,
+        filters_applied={"users": target_email},
+        start_time=start_time,
+        page=page,
+        per_page=per_page,
+    )
+
+
+@router.get(
+    "/project-member-spending",
+    status_code=status.HTTP_200_OK,
+    response_model=TabularResponse,
+    response_model_by_alias=True,
+    summary="Get each project member's spend in that project",
+    description=(
+        "Returns one row per project member, keyed by user_id, with spend and configured limit "
+        "per budget category for the current budget cycle. Requires the caller to be a global "
+        "admin, maintainer, or admin of the requested project."
+    ),
+)
+@handle_analytics_errors("project member spending analytics")
+async def get_project_member_spending(
+    user: User = Depends(authenticate),
+    projects: str = Query(..., min_length=1, description="Target project name. Exactly one."),
+    page: int = Query(0, ge=0),
+    per_page: int = Query(config.ANALYTICS_DEFAULT_PAGE_SIZE, ge=1, le=1000),
+) -> TabularResponse:
+    start_time = datetime.now(timezone.utc)
+    project_name = projects.split(",")[0].strip()
+
+    _authorize_admin_budget_view(user, {project_name})
+
+    async with get_async_session() as session:
+        columns, rows = await member_spend_service.get_project_member_spend(session, project_name)
+
+    return _paginate_tabular(
+        columns=columns,
+        rows=rows,
+        filters_applied={"projects": project_name},
+        start_time=start_time,
+        page=page,
+        per_page=per_page,
     )
 
 
