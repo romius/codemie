@@ -13,10 +13,10 @@
 # limitations under the License.
 
 from codemie_tools.base.models import ToolMetadata
-from codemie_tools.data_management.sharepoint.models import SharePointConfig
+from codemie_tools.sharepoint.models import SharePointConfig
 
 SHAREPOINT_TOOL = ToolMetadata(
-    name="sharepoint",
+    name="sharepoint_site",
     description="""
     SharePoint Tool for the Microsoft Graph REST API: read, search, create and update SharePoint site
     content (list items, documents, folders).
@@ -76,7 +76,7 @@ SHAREPOINT_TOOL = ToolMetadata(
     as a clickable link, so the user can open it. If a response has no 'webUrl', give the site or file
     path you used instead.
     """,
-    label="SharePoint",
+    label="SharePoint Site Tool",
     user_description="""
     Provides access to the Microsoft Graph API for SharePoint Online, enabling the AI assistant to read,
     create and update content on SharePoint sites: list items, documents and folders.

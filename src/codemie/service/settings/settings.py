@@ -32,7 +32,7 @@ from codemie_tools.azure_devops.wiki.models import AzureDevOpsWikiConfig
 from codemie_tools.azure_devops.work_item.models import AzureDevOpsWorkItemConfig
 from codemie_tools.azure_devops.test_plan.models import AzureDevOpsTestPlanConfig
 from codemie_tools.data_management.elastic.models import ElasticConfig
-from codemie_tools.data_management.sharepoint.models import SharePointConfig
+from codemie_tools.sharepoint.models import SharePointConfig
 from codemie_tools.data_management.sql.models import SQLConfig
 from codemie_tools.itsm.servicenow.models import ServiceNowConfig
 from codemie_tools.notification.email.models import EmailToolConfig

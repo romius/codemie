@@ -24,8 +24,8 @@ from pydantic import BaseModel, Field, PrivateAttr
 
 from codemie_tools.base.codemie_tool import CodeMieTool
 from codemie_tools.base.file_tool_mixin import FileToolMixin
-from codemie_tools.data_management.sharepoint.models import SharePointConfig
-from codemie_tools.data_management.sharepoint.tools_vars import SHAREPOINT_TOOL
+from codemie_tools.sharepoint.models import SharePointConfig
+from codemie_tools.sharepoint.tools_vars import SHAREPOINT_TOOL
 
 logger = logging.getLogger(__name__)
 

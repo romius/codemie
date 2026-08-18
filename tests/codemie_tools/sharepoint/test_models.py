@@ -14,13 +14,13 @@
 
 
 def test_sharepoint_config_is_importable():
-    from codemie_tools.data_management.sharepoint.models import SharePointConfig
+    from codemie_tools.sharepoint.models import SharePointConfig
 
     assert SharePointConfig is not None
 
 
 def test_sharepoint_url_placeholder_in_schema():
-    from codemie_tools.data_management.sharepoint.models import SharePointConfig
+    from codemie_tools.sharepoint.models import SharePointConfig
 
     schema = SharePointConfig.model_json_schema()
     assert schema["properties"]["url"].get("placeholder") == "SharePoint URL, e.g. https://yourtenant.sharepoint.com"
@@ -28,7 +28,7 @@ def test_sharepoint_url_placeholder_in_schema():
 
 
 def test_sharepoint_credential_type():
-    from codemie_tools.data_management.sharepoint.models import SharePointConfig
+    from codemie_tools.sharepoint.models import SharePointConfig
     from codemie_tools.base.models import CredentialTypes
 
     config = SharePointConfig(url="https://contoso.sharepoint.com")
@@ -36,7 +36,7 @@ def test_sharepoint_credential_type():
 
 
 def test_sharepoint_url_is_required_at_runtime():
-    from codemie_tools.data_management.sharepoint.models import SharePointConfig
+    from codemie_tools.sharepoint.models import SharePointConfig
 
     # default is empty when no tool_defaults configured; app enforces required_at_runtime at use time
     config = SharePointConfig()
@@ -44,7 +44,7 @@ def test_sharepoint_url_is_required_at_runtime():
 
 
 def test_app_auth_fields_are_required_at_runtime():
-    from codemie_tools.data_management.sharepoint.models import SharePointConfig
+    from codemie_tools.sharepoint.models import SharePointConfig
 
     schema = SharePointConfig.model_json_schema()
     for field in ("tenant_id", "client_id", "client_secret"):
@@ -52,21 +52,21 @@ def test_app_auth_fields_are_required_at_runtime():
 
 
 def test_client_secret_is_marked_sensitive():
-    from codemie_tools.data_management.sharepoint.models import SharePointConfig
+    from codemie_tools.sharepoint.models import SharePointConfig
 
     schema = SharePointConfig.model_json_schema()
     assert schema["properties"]["client_secret"].get("sensitive") is True
 
 
 def test_auth_type_defaults_to_app():
-    from codemie_tools.data_management.sharepoint.models import SharePointConfig
+    from codemie_tools.sharepoint.models import SharePointConfig
 
     assert SharePointConfig().auth_type == "app"
 
 
 def test_access_token_is_hidden_and_sensitive():
     """It comes from the sign-in flow; it must never render as an editable form input."""
-    from codemie_tools.data_management.sharepoint.models import SharePointConfig
+    from codemie_tools.sharepoint.models import SharePointConfig
 
     access_token = SharePointConfig.model_json_schema()["properties"]["access_token"]
     assert access_token.get("hidden") is True
@@ -76,7 +76,7 @@ def test_access_token_is_hidden_and_sensitive():
 def test_the_refresh_token_never_reaches_a_tool():
     """The platform renews the access token, so the long-lived credential stays on the
     setting. A tool that cannot hold it cannot leak it."""
-    from codemie_tools.data_management.sharepoint.models import SharePointConfig
+    from codemie_tools.sharepoint.models import SharePointConfig
 
     assert "refresh_token" not in SharePointConfig.model_fields
     assert "expires_at" not in SharePointConfig.model_fields
@@ -89,13 +89,13 @@ def test_config_is_a_file_config_so_chat_attachments_are_injected():
     "no files are attached" for a conversation that has them.
     """
     from codemie_tools.base.models import FileConfigMixin
-    from codemie_tools.data_management.sharepoint.models import SharePointConfig
+    from codemie_tools.sharepoint.models import SharePointConfig
 
     assert isinstance(SharePointConfig(url="https://contoso.sharepoint.com"), FileConfigMixin)
 
 
 def test_input_files_are_not_persisted_to_settings():
-    from codemie_tools.data_management.sharepoint.models import SharePointConfig
+    from codemie_tools.sharepoint.models import SharePointConfig
 
     config = SharePointConfig(url="https://contoso.sharepoint.com", input_files=["anything"])
 
@@ -104,7 +104,7 @@ def test_input_files_are_not_persisted_to_settings():
 
 def test_delegated_credential_keys_are_loaded():
     """A delegated integration is built from stored values; the refresh token is not one of them."""
-    from codemie_tools.data_management.sharepoint.models import SharePointConfig
+    from codemie_tools.sharepoint.models import SharePointConfig
 
     config = SharePointConfig(
         url="https://contoso.sharepoint.com",
@@ -122,7 +122,7 @@ def test_delegated_credential_keys_are_loaded():
 
 def test_unknown_stored_keys_are_still_ignored():
     """SettingsTester builds the config from every stored credential key."""
-    from codemie_tools.data_management.sharepoint.models import SharePointConfig
+    from codemie_tools.sharepoint.models import SharePointConfig
 
     config = SharePointConfig(
         url="https://contoso.sharepoint.com",

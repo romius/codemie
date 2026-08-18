@@ -141,6 +141,7 @@ class ToolSet(str, Enum):
     REPORT_PORTAL = "Report Portal"
     PLATFORM_TOOLS = "Platform Tools"
     HEDGING = "Request Hedging"
+    SHAREPOINT = "SharePoint"
 
 
 class Tool(BaseModel):

@@ -18,8 +18,8 @@ import pytest
 import requests
 from langchain_core.tools import ToolException
 
-from codemie_tools.data_management.sharepoint.models import SharePointConfig
-from codemie_tools.data_management.sharepoint.tools import SharePointInput, SharePointTool
+from codemie_tools.sharepoint.models import SharePointConfig
+from codemie_tools.sharepoint.tools import SharePointInput, SharePointTool
 
 from .conftest import DOCX_BYTES, DOCX_MIME, file_object, graph_response
 
@@ -29,7 +29,7 @@ TOKEN_URL = "https://login.microsoftonline.com/tenant-id/oauth2/v2.0/token"
 
 class TestSharePointToolDefinition:
     def test_tool_identity(self, sharepoint_tool):
-        assert sharepoint_tool.name == "sharepoint"
+        assert sharepoint_tool.name == "sharepoint_site"
         assert sharepoint_tool.args_schema is SharePointInput
 
     def test_description_is_populated(self, sharepoint_tool):
@@ -163,7 +163,7 @@ class TestBuildRequestKwargs:
 
 
 class TestAcquireAppToken:
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_uses_client_credentials_grant(self, mock_requests, sharepoint_tool, token_response):
         mock_requests.post.return_value = token_response
 
@@ -178,7 +178,7 @@ class TestAcquireAppToken:
             "grant_type": "client_credentials",
         }
 
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_token_request_is_time_bounded(self, mock_requests, sharepoint_tool, token_response):
         """An un-timed token call would block a worker indefinitely."""
         mock_requests.post.return_value = token_response
@@ -187,7 +187,7 @@ class TestAcquireAppToken:
 
         assert mock_requests.post.call_args.kwargs["timeout"] == 60
 
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_failure_names_the_fields_to_check(self, mock_requests, sharepoint_tool):
         mock_requests.post.return_value = graph_response(status_code=401)
 
@@ -197,7 +197,7 @@ class TestAcquireAppToken:
         assert "HTTP 401" in str(e.value)
         assert "tenant ID, client ID and client secret" in str(e.value)
 
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_failure_does_not_leak_credentials(self, mock_requests, sharepoint_tool):
         mock_requests.post.return_value = graph_response(status_code=401, text="secret leaked: client-secret")
 
@@ -206,7 +206,7 @@ class TestAcquireAppToken:
 
         assert "client-secret" not in str(e.value)
 
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_success_without_access_token_is_an_actionable_error(self, mock_requests, sharepoint_tool):
         """An HTTP 200 whose body carries no token must not surface as a KeyError."""
         response = graph_response(status_code=200)
@@ -218,7 +218,7 @@ class TestAcquireAppToken:
 
         assert "no access token" in str(e.value)
 
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_non_json_success_body_is_an_actionable_error(self, mock_requests, sharepoint_tool):
         response = graph_response(status_code=200, text="<html>gateway error</html>")
         response.json.side_effect = ValueError("not json")
@@ -239,14 +239,14 @@ class TestDelegatedToken:
         values.update(overrides)
         return SharePointTool(config=SharePointConfig(**values))
 
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_stored_token_is_used_without_contacting_microsoft(self, mock_requests):
         tool = self._delegated_tool(access_token="delegated-token")
 
         assert tool._get_token() == "delegated-token"
         mock_requests.post.assert_not_called()
 
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_missing_token_asks_the_user_to_reconnect(self, mock_requests):
         """The tool cannot mint a delegated token, so it must say what the user should do."""
         tool = self._delegated_tool(refresh_token="refresh-token")
@@ -257,7 +257,7 @@ class TestDelegatedToken:
         assert "sign-in has expired" in str(e.value)
         mock_requests.post.assert_not_called()
 
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_rejected_token_reports_reauthentication_not_a_raw_graph_error(self, mock_requests):
         """A 401 on a delegated token means the sign-in is gone - say so, and do not retry."""
         mock_requests.request.return_value = graph_response(status_code=401, text="unauthorized")
@@ -271,7 +271,7 @@ class TestDelegatedToken:
 
 
 class TestExecute:
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_get_sends_query_params_to_graph(self, mock_requests, sharepoint_tool, token_response):
         mock_requests.post.return_value = token_response
         mock_requests.request.return_value = graph_response(text='{"value": []}')
@@ -285,7 +285,7 @@ class TestExecute:
         assert call.kwargs["headers"]["Authorization"] == "Bearer graph-token"
         assert call.kwargs["timeout"] == 60
 
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_create_list_item_sends_json_body(self, mock_requests, sharepoint_tool, token_response):
         mock_requests.post.return_value = token_response
         mock_requests.request.return_value = graph_response(status_code=201, text='{"webUrl": "https://contoso/x"}')
@@ -295,7 +295,7 @@ class TestExecute:
         assert "webUrl" in result
         assert mock_requests.request.call_args.kwargs["json"] == {"fields": {"Title": "New"}}
 
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_document_upload_sends_raw_body(self, mock_requests, sharepoint_tool, token_response):
         mock_requests.post.return_value = token_response
         mock_requests.request.return_value = graph_response(status_code=201, text='{"webUrl": "https://contoso/f"}')
@@ -307,7 +307,7 @@ class TestExecute:
         assert call.kwargs["headers"]["Content-Type"] == "application/octet-stream"
         assert call.kwargs["headers"]["Authorization"] == "Bearer graph-token"
 
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_method_is_normalized_to_uppercase(self, mock_requests, sharepoint_tool, token_response):
         mock_requests.post.return_value = token_response
         mock_requests.request.return_value = graph_response()
@@ -316,7 +316,7 @@ class TestExecute:
 
         assert mock_requests.request.call_args.args[0] == "POST"
 
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_empty_body_returns_success_confirmation(self, mock_requests, sharepoint_tool, token_response):
         """DELETE returns 204 with no body; the agent still needs a confirmation to relay."""
         mock_requests.post.return_value = token_response
@@ -326,7 +326,7 @@ class TestExecute:
 
         assert result == "DELETE /sites/site-id/lists/list-id/items/1: HTTP 204 (success)"
 
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_graph_error_body_is_surfaced_for_self_correction(self, mock_requests, sharepoint_tool, token_response):
         mock_requests.post.return_value = token_response
         mock_requests.request.return_value = graph_response(
@@ -339,7 +339,7 @@ class TestExecute:
         assert "HTTP 400" in str(e.value)
         assert "Invalid column name" in str(e.value)
 
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_token_is_reused_across_calls(self, mock_requests, sharepoint_tool, token_response):
         mock_requests.post.return_value = token_response
         mock_requests.request.return_value = graph_response()
@@ -349,7 +349,7 @@ class TestExecute:
 
         assert mock_requests.post.call_count == 1
 
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_invalid_relative_url_is_rejected_before_any_request(self, mock_requests, sharepoint_tool, token_response):
         mock_requests.post.return_value = token_response
 
@@ -363,7 +363,7 @@ class TestExecute:
 class TestAttachmentUpload:
     """Uploading a file the user attached to the chat, including binary formats."""
 
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_binary_attachment_is_uploaded_byte_for_byte(self, mock_requests, tool_with_attachment, token_response):
         mock_requests.post.return_value = token_response
         mock_requests.request.return_value = graph_response(status_code=201, text='{"webUrl": "https://x"}')
@@ -377,7 +377,7 @@ class TestAttachmentUpload:
         assert call.kwargs["data"] == DOCX_BYTES, "attachment bytes must not be re-encoded"
         assert call.kwargs["headers"]["Content-Type"] == DOCX_MIME
 
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_attachment_takes_precedence_over_raw_content(self, mock_requests, tool_with_attachment, token_response):
         mock_requests.post.return_value = token_response
         mock_requests.request.return_value = graph_response(status_code=201)
@@ -394,7 +394,7 @@ class TestAttachmentUpload:
         assert call.kwargs["data"] == DOCX_BYTES
         assert "json" not in call.kwargs
 
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_unknown_attachment_name_lists_what_is_available(self, mock_requests, tool_with_attachment, token_response):
         """The agent must be able to self-correct after guessing a file name."""
         mock_requests.post.return_value = token_response
@@ -408,7 +408,7 @@ class TestAttachmentUpload:
         assert "report.docx" in str(e.value)
         mock_requests.request.assert_not_called()
 
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_no_attachments_asks_the_user_to_attach_one(self, mock_requests, sharepoint_tool, token_response):
         mock_requests.post.return_value = token_response
 
@@ -420,7 +420,7 @@ class TestAttachmentUpload:
         assert "attach the file to the chat" in str(e.value)
         mock_requests.request.assert_not_called()
 
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_attachment_without_mime_type_falls_back_to_octet_stream(
         self, mock_requests, sharepoint_config, token_response
     ):
@@ -433,7 +433,7 @@ class TestAttachmentUpload:
 
         assert mock_requests.request.call_args.kwargs["headers"]["Content-Type"] == "application/octet-stream"
 
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_named_attachment_is_selected_from_several(self, mock_requests, sharepoint_config, token_response):
         mock_requests.post.return_value = token_response
         mock_requests.request.return_value = graph_response(status_code=201)
@@ -447,8 +447,8 @@ class TestAttachmentUpload:
 
         assert mock_requests.request.call_args.kwargs["data"] == DOCX_BYTES
 
-    @patch("codemie_tools.data_management.sharepoint.tools.logger")
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.logger")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_upload_is_audit_logged_by_name_not_content(
         self, mock_requests, mock_logger, tool_with_attachment, token_response
     ):
@@ -464,7 +464,7 @@ class TestAttachmentUpload:
         assert f"{len(DOCX_BYTES)} bytes" in logged
         assert "binary body" not in logged, "file content must never reach the log"
 
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_requests_without_file_name_are_unaffected(self, mock_requests, tool_with_attachment, token_response):
         """An attached file must not leak into unrelated calls."""
         mock_requests.post.return_value = token_response
@@ -478,7 +478,7 @@ class TestAttachmentUpload:
 
 
 class TestRetryBehaviour:
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_expired_token_is_reminted_and_request_retried_once(self, mock_requests, sharepoint_tool, token_response):
         mock_requests.post.return_value = token_response
         mock_requests.request.side_effect = [
@@ -492,7 +492,7 @@ class TestRetryBehaviour:
         assert mock_requests.post.call_count == 2, "token should be re-minted after a 401"
         assert mock_requests.request.call_count == 2
 
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_persistent_401_is_surfaced_and_not_retried_forever(self, mock_requests, sharepoint_tool, token_response):
         mock_requests.post.return_value = token_response
         mock_requests.request.return_value = graph_response(status_code=401, text="unauthorized")
@@ -503,8 +503,8 @@ class TestRetryBehaviour:
         assert "HTTP 401" in str(e.value)
         assert mock_requests.request.call_count == 2
 
-    @patch("codemie_tools.data_management.sharepoint.tools.time")
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.time")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_throttling_honours_retry_after(self, mock_requests, mock_time, sharepoint_tool, token_response):
         mock_requests.post.return_value = token_response
         mock_requests.request.side_effect = [
@@ -517,8 +517,8 @@ class TestRetryBehaviour:
         assert result == '{"ok": true}'
         mock_time.sleep.assert_called_once_with(3)
 
-    @patch("codemie_tools.data_management.sharepoint.tools.time")
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.time")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_retry_after_is_capped(self, mock_requests, mock_time, sharepoint_tool, token_response):
         """A hostile or extreme Retry-After must not park a worker for hours."""
         mock_requests.post.return_value = token_response
@@ -531,8 +531,8 @@ class TestRetryBehaviour:
 
         mock_time.sleep.assert_called_once_with(60)
 
-    @patch("codemie_tools.data_management.sharepoint.tools.time")
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.time")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_throttling_without_retry_after_uses_default(
         self, mock_requests, mock_time, sharepoint_tool, token_response
     ):
@@ -543,8 +543,8 @@ class TestRetryBehaviour:
 
         mock_time.sleep.assert_called_once_with(5)
 
-    @patch("codemie_tools.data_management.sharepoint.tools.time")
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.time")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_http_date_retry_after_falls_back_to_default(
         self, mock_requests, mock_time, sharepoint_tool, token_response
     ):
@@ -559,8 +559,8 @@ class TestRetryBehaviour:
 
         mock_time.sleep.assert_called_once_with(5)
 
-    @patch("codemie_tools.data_management.sharepoint.tools.time")
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.time")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_negative_retry_after_is_clamped_to_zero(self, mock_requests, mock_time, sharepoint_tool, token_response):
         mock_requests.post.return_value = token_response
         mock_requests.request.side_effect = [
@@ -580,8 +580,8 @@ class TestAuditLogging:
     def _info_messages(mock_logger):
         return [call.args[0] for call in mock_logger.info.call_args_list]
 
-    @patch("codemie_tools.data_management.sharepoint.tools.logger")
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.logger")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_write_operations_are_logged(self, mock_requests, mock_logger, sharepoint_tool, token_response):
         """AC: all SharePoint actions are logged."""
         mock_requests.post.return_value = token_response
@@ -593,8 +593,8 @@ class TestAuditLogging:
             mock_logger
         )
 
-    @patch("codemie_tools.data_management.sharepoint.tools.logger")
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.logger")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_audit_log_never_contains_credentials(self, mock_requests, mock_logger, sharepoint_tool, token_response):
         mock_requests.post.return_value = token_response
         mock_requests.request.return_value = graph_response(status_code=201, text="{}")
@@ -606,8 +606,8 @@ class TestAuditLogging:
         assert "client-secret" not in logged
         assert "secret value" not in logged, "request bodies must not be written to the audit log"
 
-    @patch("codemie_tools.data_management.sharepoint.tools.logger")
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.logger")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_reads_are_audit_logged(self, mock_requests, mock_logger, sharepoint_tool, token_response):
         """AC: all SharePoint actions are logged - reads included."""
         mock_requests.post.return_value = token_response
@@ -621,7 +621,7 @@ class TestAuditLogging:
 
 
 class TestHealthcheck:
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_success_probes_the_configured_tenant_site(self, mock_requests, sharepoint_tool, token_response):
         mock_requests.post.return_value = token_response
         mock_requests.get.return_value = graph_response()
@@ -630,7 +630,7 @@ class TestHealthcheck:
         assert mock_requests.get.call_args.args[0] == f"{GRAPH_BASE}/sites/contoso.sharepoint.com"
         assert mock_requests.get.call_args.kwargs["timeout"] == 60
 
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_bad_credentials_report_which_fields_to_check(self, mock_requests, sharepoint_tool):
         mock_requests.post.return_value = graph_response(status_code=401)
 
@@ -639,7 +639,7 @@ class TestHealthcheck:
         assert ok is False
         assert "tenant ID, client ID and client secret" in message
 
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_missing_site_permission_is_reported(self, mock_requests, sharepoint_tool, token_response):
         mock_requests.post.return_value = token_response
         forbidden = graph_response(status_code=403)
@@ -651,7 +651,7 @@ class TestHealthcheck:
         assert ok is False
         assert "403" in message
 
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_delegated_integration_without_tokens_reports_not_signed_in(self, mock_requests):
         tool = SharePointTool(config=SharePointConfig(url="https://contoso.sharepoint.com", auth_type="oauth"))
 
@@ -661,7 +661,7 @@ class TestHealthcheck:
         assert "not signed in" in message
         mock_requests.post.assert_not_called()
 
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_delegated_integration_uses_stored_token(self, mock_requests):
         mock_requests.get.return_value = graph_response()
         tool = SharePointTool(
@@ -674,7 +674,7 @@ class TestHealthcheck:
         assert mock_requests.get.call_args.kwargs["headers"]["Authorization"] == "Bearer delegated-token"
         mock_requests.post.assert_not_called()
 
-    @patch("codemie_tools.data_management.sharepoint.tools.requests")
+    @patch("codemie_tools.sharepoint.tools.requests")
     def test_bare_hostname_url_still_validates_credentials(self, mock_requests, token_response):
         """A stored url without a scheme has no netloc; token acquisition alone proves the credentials."""
         mock_requests.post.return_value = token_response

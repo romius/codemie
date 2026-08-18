@@ -1,4 +1,4 @@
-# Copyright 2026 EPAM Systems, Inc. (“EPAM”)
+# Copyright 2026 EPAM Systems, Inc. ("EPAM")
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@ class TestDataManagementToolkit:
         toolkit_ui = DataManagementToolkit.get_definition()
         assert isinstance(toolkit_ui, DataManagementToolkitUI)
         assert toolkit_ui.toolkit == ToolSet.DATA_MANAGEMENT
-        assert len(toolkit_ui.tools) == 3
+        assert len(toolkit_ui.tools) == 2
         assert toolkit_ui.label == ToolSet.DATA_MANAGEMENT.value
 
 
@@ -32,10 +32,9 @@ class TestDataManagementToolkitUI:
 
     def test_tools_property(self):
         toolkit_ui = DataManagementToolkitUI()
-        assert len(toolkit_ui.tools) == 3
+        assert len(toolkit_ui.tools) == 2
 
         # Check that the tools are correctly defined
         tool_names = [tool.name for tool in toolkit_ui.tools]
         assert "elastic" in tool_names
         assert "sql" in tool_names
-        assert "sharepoint" in tool_names
