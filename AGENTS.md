@@ -45,6 +45,7 @@ Detailed project guidance lives under `.ai-run/guides/`, which is the source of 
 | API Testing | `.ai-run/guides/testing/testing-api-patterns.md` | API test patterns |
 | Service Testing | `.ai-run/guides/testing/testing-service-patterns.md` | Service test patterns |
 | Workflows | `.ai-run/guides/workflows/langgraph-workflows.md` | LangGraph workflow patterns |
+| Vulnerability Remediation | `.ai-run/guides/security/README.md` | CVE remediation: order, `/sanity` handoff, traps; routes on to dependencies and images |
 <!-- ai-run-init:guide-imports end -->
 
 ## Task Classifier
@@ -59,6 +60,7 @@ Detailed project guidance lives under `.ai-run/guides/`, which is the source of 
 | Search | Elasticsearch, vector or hybrid search | index stats; ES query; search bug | `.ai-run/guides/data/elasticsearch-integration.md` | `.ai-run/guides/data/database-optimization.md` |
 | Development | errors, logging, config, performance | handle error; add logging; config var | `.ai-run/guides/development/error-handling.md` | `.ai-run/guides/development/logging-patterns.md` |
 | Security | auth, permissions, validation, secrets | auth bug; sanitize input; secret handling | `.ai-run/guides/development/security-patterns.md` | `.ai-run/guides/development/configuration-patterns.md` |
+| Vulnerability Remediation | a scanner or CVE ticket names this repo | fix CVE-XXXX; bump vulnerable package; patch base image; rescan container | `.ai-run/guides/security/README.md` | `.ai-run/guides/quality-gates.md` |
 | Integrations | cloud, Jira, Confluence, X-ray, GDocs, MCP | add integration; fix provider call | `.ai-run/guides/integration/external-services.md` | `.ai-run/guides/integration/llm-providers.md` |
 | Testing | only when user explicitly asks tests | write tests; run tests; fix failing test | `.ai-run/guides/testing/testing-patterns.md` | `.ai-run/guides/testing/testing-api-patterns.md` |
 | Git | only when user explicitly asks git ops | commit; push; create MR | `.ai-run/guides/standards/git-workflow.md` | `.ai-run/guides/quality-gates.md` |
@@ -79,6 +81,15 @@ Detailed project guidance lives under `.ai-run/guides/`, which is the source of 
 | Project Conventions | Any project-specific convention | Load the relevant guide; do not infer exact values from this entrypoint. |
 <!-- ai-run-init:critical-rules end -->
 
+## Repository Rules
+
+<!-- Outside the ai-run-init managed regions on purpose: the generator preserves content
+     outside its markers, and this rule is not derivable from the guides or manifests. -->
+
+| Rule | Trigger | Action |
+|---|---|---|
+| Sanity Regression | Opening an MR that touches dependencies, the Dockerfile, or security-relevant code | This repository has no pipeline config, so nothing re-checks an MR automatically. The MR description must ask a reviewer to post `/sanity`. |
+
 ## Commands
 
 <!-- ai-run-init:commands start -->
@@ -88,7 +99,8 @@ Detailed project guidance lives under `.ai-run/guides/`, which is the source of 
 | Run the application | `.ai-run/guides/development/setup-guide.md` | README, Makefile | Load before starting local services. |
 | Lint, format, build, and verification | `.ai-run/guides/quality-gates.md` | Makefile, pyproject | Use the guide for exact commands and skip policy. |
 | Tests and coverage | `.ai-run/guides/testing/testing-patterns.md` | Makefile, pytest config | Only run or write tests when explicitly requested. |
-| Security and secret checks | `.ai-run/guides/development/security-patterns.md` | Quality gates guide, Makefile | Check environment prerequisites before running. |
+| Secure coding, auth, secret handling | `.ai-run/guides/development/security-patterns.md` | Quality gates guide, Makefile | Application-level security, not vulnerability remediation. |
+| Fixing a reported CVE or scanner finding | `.ai-run/guides/security/README.md` | Makefile, pyproject, Dockerfile | Covers dependencies, image rebuild and scan, and the `/sanity` handoff. |
 <!-- ai-run-init:commands end -->
 
 ## Pre-Delivery Checklist

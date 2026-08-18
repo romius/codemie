@@ -2,7 +2,7 @@
 
 ## Gate Order
 
-Use Makefile targets when available; they are the command source of truth for this repo. The Makefile defines install, build, test, ruff, license, gitleaks, verify, coverage, sonar-local, and run targets at `Makefile:15`.
+Use Makefile targets when available; they are the command source of truth for this repo. List the current targets rather than trusting a copy here: `grep -nE '^[a-zA-Z_-]+:' Makefile`.
 
 ### Lint And Format
 
@@ -10,7 +10,7 @@ Use Makefile targets when available; they are the command source of truth for th
 
 **Run**: `make ruff`
 
-**Pass**: Ruff format completes, `ruff check --fix` applies safe fixes, and final `ruff check` exits successfully. See `Makefile:30`.
+**Pass**: Ruff format completes, `ruff check --fix` applies safe fixes, and final `ruff check` exits successfully. See the `ruff` target.
 
 **Fail**: Ruff reports remaining violations after auto-fix; fix the reported files before delivery.
 
@@ -20,7 +20,7 @@ Use Makefile targets when available; they are the command source of truth for th
 
 **Run**: `make build`
 
-**Pass**: Poetry builds the package successfully. See `Makefile:24`.
+**Pass**: Poetry builds the package successfully. See the `build` target.
 
 **Fail**: Packaging metadata, dependencies, or build configuration are invalid.
 
@@ -28,7 +28,7 @@ Use Makefile targets when available; they are the command source of truth for th
 
 **Run**: `make license-check`
 
-**Pass**: The Apache 2.0 header checker exits successfully. See `Makefile:45`.
+**Pass**: The Apache 2.0 header checker exits successfully. See the `license-check` target.
 
 **Fail**: One or more Python or shell files are missing required headers.
 
@@ -36,11 +36,12 @@ Use Makefile targets when available; they are the command source of truth for th
 
 ### Secret Scan
 
-Two gates run gitleaks against the same image (`ghcr.io/gitleaks/gitleaks:v8.30.1`) with the same `.gitleaks.toml` allowlist.
+Two gates run gitleaks against the same image with the same `.gitleaks.toml` allowlist. The
+image and tag are in the `Makefile`.
 
 **CI / verify gate — `make gitleaks`**
 
-Runs `gitleaks dir` against the full working tree. Docker-only; CI runners always have Docker. See `Makefile:51`.
+Runs `gitleaks dir` against the full working tree. Docker-only; CI runners always have Docker. See the `gitleaks` target.
 
 - **Pass**: Docker runs gitleaks with `--config=/workspace/.gitleaks.toml` and no hardcoded secrets are found.
 - **Fail**: A secret-like value is detected or Docker is unavailable.
@@ -59,7 +60,7 @@ Runs `gitleaks protect --staged` via `scripts/git-hooks/validate_secrets.sh`, wi
 
 **Run**: `make test`
 
-**Pass**: Pytest exits successfully over `tests/`. See `Makefile:27`.
+**Pass**: Pytest exits successfully over `tests/`. See the `test` target.
 
 **Fail**: A test failure, import error, fixture error, or environment prerequisite is missing.
 
@@ -69,7 +70,7 @@ Runs `gitleaks protect --staged` via `scripts/git-hooks/validate_secrets.sh`, wi
 
 **Run**: `make coverage`
 
-**Pass**: Coverage runs pytest and writes HTML coverage output. See `Makefile:56`.
+**Pass**: Coverage runs pytest and writes HTML coverage output. See the `coverage` target.
 
 **Fail**: Test or coverage command fails.
 
@@ -79,7 +80,7 @@ Runs `gitleaks protect --staged` via `scripts/git-hooks/validate_secrets.sh`, wi
 
 **Run**: `make sonar-local`
 
-**Pass**: The Node-based Sonar runner completes successfully. See `Makefile:63`.
+**Pass**: The Node-based Sonar runner completes successfully. See the `sonar-local` target.
 
 **Fail**: Sonar prerequisites, token/config, Node runtime, coverage generation, or server-side quality gate fails.
 
@@ -89,7 +90,7 @@ Runs `gitleaks protect --staged` via `scripts/git-hooks/validate_secrets.sh`, wi
 
 **Run**: `make verify`
 
-**Pass**: Ruff, license, gitleaks, and tests complete successfully. See `Makefile:54`.
+**Pass**: Ruff, license, gitleaks, and tests complete successfully. See the `verify` target.
 
 **Fail**: The first failing prerequisite determines the next debugging target.
 
@@ -99,10 +100,35 @@ Runs `gitleaks protect --staged` via `scripts/git-hooks/validate_secrets.sh`, wi
 
 **Run**: `make test-harness`
 
-**Pass**: The end-to-end test harness completes successfully. See `Makefile` `test-harness` target.
+**Pass**: The end-to-end test harness completes successfully. See the `test-harness` target.
 
 **Fail**: One or more scenarios fail; paste the terminal summary into the MR anyway so reviewers see the failure.
 
 **Skip if**: You are not opening a merge request (local iteration only).
 
-> **Required for the MR compliance bot**: paste the copy-pasted terminal summary of `make test-harness` into a `## Test harness` section of the MR description as a code block. Screenshots are not accepted. Without this section the `auto_epm-cdme_vcs` bot fails checks 3.1 and 3.2. Prereqs: docker stack up (`docker compose up -d`), superadmin fixtures, `~/.codemie/test-harness.json`; see the `codemie-test-harness-local-setup` memory / setup guide for the ENV=local Bearer-hijack patch.
+> **Required for the MR compliance bot**: paste the copy-pasted terminal summary of `make test-harness` into a `## Test harness` section of the MR description as a code block. Screenshots are not accepted. Without this section the `auto_epm-cdme_vcs` bot fails checks 3.1 and 3.2. Prereqs: docker stack up (`docker compose up -d`), superadmin fixtures, `~/.codemie/test-harness.json`; see the setup guide for the ENV=local Bearer-hijack patch.
+
+## Exit codes that mislead
+
+A gate here can fail for reasons unrelated to the change. The table is in
+[`security/README.md`](security/README.md#exit-codes-that-mislead) — `make gitleaks` needing Docker,
+the pre-commit hook running `make sonar-local`, and collection errors caused by a stale environment.
+
+A gate that could not run is unverified, not passed.
+
+## After merge
+
+No pipeline in this repository runs these gates:
+
+```bash
+ls .gitlab-ci.yml .github/workflows
+```
+
+Two mechanisms partly cover that gap, and neither executes a test:
+
+- The `auto_epm-cdme_vcs` bot reads the MR description for the sections it requires, including the
+  `## Test harness` block above. It checks text only.
+- The regression suite runs when a human posts `/sanity` on the MR.
+
+Whatever was not run locally was not run. The `/sanity` request wording is in
+[`security/README.md`](security/README.md) § Regression run.
