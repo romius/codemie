@@ -1688,6 +1688,49 @@ class TestCheckProjectAccess:
         assert result is project
         mock_app_repo.get_by_name.assert_called_once_with(mock_session, "shared-proj")
 
+    @patch("codemie.rest_api.routers.projects.config")
+    @patch("codemie.rest_api.routers.projects.get_session")
+    @patch("codemie.rest_api.routers.projects.application_repository")
+    def test_pure_auditor_denied_write_access(self, mock_app_repo, mock_get_session, mock_config):
+        """EPMCDME-10930 spec 5.2: a pure auditor (read-only role) must not be granted
+        WRITE access via _authorize_project_access, which gates project update/delete.
+
+        Exercises the real (unmocked) Ability permission check to confirm is_auditor
+        grants no exception to the existing owner/project-admin/super-admin gate.
+        """
+        mock_config.ENABLE_USER_MANAGEMENT = True
+
+        request = MagicMock()
+        request.method = "DELETE"
+        request.url.path = "/v1/projects/shared-proj"
+
+        from datetime import datetime
+
+        from codemie.core.exceptions import ExtendedHTTPException
+        from codemie.core.models import Application
+        from codemie.rest_api.security.user import User
+
+        with patch.object(config, "ENV", "dev"):
+            auditor = User(id="auditor-1", username="auditor", is_admin=False, is_maintainer=False, is_auditor=True)
+        project = Application(
+            id="shared-proj",
+            name="shared-proj",
+            description="Test project",
+            project_type=Application.ProjectType.SHARED,
+            created_by="someone-else",
+            date=datetime.now(),
+            update_date=datetime.now(),
+        )
+
+        mock_session = MagicMock()
+        mock_get_session.return_value.__enter__.return_value = mock_session
+        mock_app_repo.get_by_name.return_value = project
+
+        with pytest.raises(ExtendedHTTPException) as exc_info:
+            _authorize_project_access(request=request, project_name="shared-proj", user=auditor)
+
+        assert exc_info.value.code == 404
+
 
 # ---------------------------------------------------------------------------
 # TestValidateUsersFromCsvEndpoint — POST /v1/projects/{projectName}/import-users/validate

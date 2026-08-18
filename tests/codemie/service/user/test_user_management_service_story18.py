@@ -253,3 +253,43 @@ class TestGetUserDetailFlow:
 
         assert exc_info.value.code == 404
         assert exc_info.value.message == "User not found"
+
+
+class TestGetUserWithRelationshipsAuditorField:
+    """EPMCDME-10930 regression: is_auditor must be echoed back in CodeMieUserDetail.
+
+    get_user_with_relationships previously built CodeMieUserDetail without passing
+    is_auditor from the UserDB row, so the response always fell back to the model's
+    default (False) even when the DB value was True (e.g. right after PUT
+    /v1/admin/users/{id} set is_auditor=True).
+    """
+
+    @patch("codemie.service.user.user_management_service.user_repository.get_by_id")
+    @patch("codemie.service.user.user_management_service.user_repository.get_user_knowledge_bases")
+    @patch("codemie.repository.user_project_repository.user_project_repository.get_visible_projects_for_user")
+    def test_is_auditor_true_is_reflected_in_response(self, mock_get_visible, mock_get_kb, mock_get_user):
+        mock_session = MagicMock()
+        mock_get_user.return_value = UserDB(
+            id="target_user",
+            username="testuser",
+            email="test@example.com",
+            name="Test User",
+            picture=None,
+            user_type="regular",
+            is_active=True,
+            is_admin=False,
+            is_maintainer=False,
+            is_auditor=True,
+            auth_source="local",
+            email_verified=True,
+            last_login_at=None,
+            project_limit=3,
+        )
+        mock_get_kb.return_value = []
+        mock_get_visible.return_value = []
+
+        result = UserManagementService.get_user_with_relationships(
+            mock_session, "target_user", "admin", is_admin=True, is_project_admin=False
+        )
+
+        assert result.is_auditor is True

@@ -168,6 +168,7 @@ class AuthenticationService:
             knowledge_bases=[kb.kb_name for kb in kbs],
             is_admin=db_user.is_admin,
             is_maintainer=db_user.is_maintainer,
+            is_auditor=db_user.is_auditor,
             project_limit=db_user.project_limit,
         )
 
@@ -366,6 +367,7 @@ class AuthenticationService:
             knowledge_bases=[],
             is_admin=db_user.is_admin,
             is_maintainer=db_user.is_maintainer,
+            is_auditor=db_user.is_auditor,
             project_limit=db_user.project_limit,
             auth_token=auth_token,
         )
@@ -698,6 +700,7 @@ class AuthenticationService:
                 is_active=user.is_active,
                 is_admin=user.is_admin,
                 is_maintainer=user.is_maintainer,
+                is_auditor=user.is_auditor,
                 auth_source=user.auth_source,
                 email_verified=user.email_verified,
                 last_login_at=user.last_login_at,

@@ -71,6 +71,43 @@ def test_create_local_user_no_event_on_duplicate_email(mock_repo, mock_activity)
     mock_activity.insert.assert_not_called()
 
 
+@patch("codemie.service.user.user_management_service.activity_event_repository")
+@patch("codemie.service.user.user_management_service.user_repository")
+def test_create_local_user_persists_is_auditor_true(mock_repo, mock_activity):
+    """EPMCDME-10930 regression: create_local_user must accept and persist is_auditor.
+
+    Previously create_local_user had no is_auditor parameter at all, so a request to
+    create an auditor user silently created a non-auditor (is_auditor=False) instead.
+    """
+    session = MagicMock()
+    mock_repo.exists_by_email.return_value = False
+    mock_repo.exists_by_username.return_value = False
+    mock_repo.create.side_effect = lambda _session, user: user
+
+    with patch("codemie.service.password_service.password_service.hash_password", return_value="hashed"):
+        created = UserManagementService.create_local_user(
+            session, email="a@b.com", username="auser", password="password123", is_auditor=True
+        )
+
+    assert created.is_auditor is True
+
+
+@patch("codemie.service.user.user_management_service.activity_event_repository")
+@patch("codemie.service.user.user_management_service.user_repository")
+def test_create_local_user_defaults_is_auditor_false(mock_repo, mock_activity):
+    session = MagicMock()
+    mock_repo.exists_by_email.return_value = False
+    mock_repo.exists_by_username.return_value = False
+    mock_repo.create.side_effect = lambda _session, user: user
+
+    with patch("codemie.service.password_service.password_service.hash_password", return_value="hashed"):
+        created = UserManagementService.create_local_user(
+            session, email="a@b.com", username="auser", password="password123"
+        )
+
+    assert created.is_auditor is False
+
+
 # ---------------------------------------------------------------------------
 # update_user
 # ---------------------------------------------------------------------------

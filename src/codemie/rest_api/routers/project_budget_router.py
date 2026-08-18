@@ -223,7 +223,7 @@ def _member_budget_id(allocation: ProjectMemberBudgetAssignment | dict[str, Any]
 
 
 def _can_read_project_budget(user: User, project_name: str) -> bool:
-    if user.is_admin_or_maintainer:
+    if user.is_admin_or_maintainer or getattr(user, "is_auditor", False):
         return True
     return project_name in (user.admin_project_names or [])
 
@@ -286,13 +286,13 @@ async def list_project_budgets(
     """List project budgets with optional filters."""
     _require_budgeting_enabled()
     allowed_projects: list[str] | None = None
-    if not user.is_admin_or_maintainer:
+    if not (user.is_admin_or_maintainer or getattr(user, "is_auditor", False)):
         allowed_projects = list(user.admin_project_names or [])
         if not allowed_projects:
             raise ExtendedHTTPException(
                 code=403,
                 message="Access denied",
-                details="This action requires administrator or project administrator privileges.",
+                details="This action requires administrator, maintainer, auditor, or project administrator privileges.",
                 help="If you believe you should have access, please contact your system administrator.",
             )
         if project_name is not None:

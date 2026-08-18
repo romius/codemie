@@ -410,6 +410,15 @@ class TestProjectServiceUpdateProject:
         user.is_admin_or_maintainer = False
         return user
 
+    def _make_pure_auditor(self) -> MagicMock:
+        user = MagicMock()
+        user.is_admin = False
+        user.is_maintainer = False
+        user.is_auditor = True
+        user.id = "auditor-1"
+        user.is_admin_or_maintainer = False
+        return user
+
     @patch("codemie.service.project.project_service.user_project_repository")
     @patch("codemie.service.project.project_service.application_repository")
     @patch("codemie.service.project.project_service.get_session")
@@ -429,6 +438,27 @@ class TestProjectServiceUpdateProject:
 
         assert exc_info.value.code == 403
         mock_upr.is_admin.assert_called_once_with(mock_session, "user-1", "my-project")
+
+    @patch("codemie.service.project.project_service.user_project_repository")
+    @patch("codemie.service.project.project_service.application_repository")
+    @patch("codemie.service.project.project_service.get_session")
+    def test_pure_auditor_raises_403(self, mock_get_session, mock_app_repo, mock_upr):
+        """EPMCDME-10930 spec 5.2: a pure auditor (read-only role) must not gain write
+        access to project updates — is_auditor grants no exception to the existing
+        super-admin-or-project-admin gate."""
+        mock_session = MagicMock()
+        mock_get_session.return_value.__enter__.return_value = mock_session
+        mock_app_repo.get_by_name.return_value = _make_app("my-project")
+        mock_upr.is_admin.return_value = False
+
+        with pytest.raises(ExtendedHTTPException) as exc_info:
+            ProjectService.update_project(
+                user=self._make_pure_auditor(),
+                project_name="my-project",
+                description="new desc",
+            )
+
+        assert exc_info.value.code == 403
 
     @patch("codemie.service.project.project_service.cost_center_service")
     @patch("codemie.service.project.project_service.user_project_repository")

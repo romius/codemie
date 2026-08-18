@@ -47,6 +47,7 @@ class User(BaseModel):
     user_type: str | None = 'regular'
     is_admin: bool = Field(default=False)
     is_maintainer: bool = Field(default=False)
+    is_auditor: bool = Field(default=False)
     project_limit: int | None = Field(default=None)  # NULL = unlimited (admins); set from DB when flag ON
     auth_token: str | None = Field(None, exclude=True)
     tenant_id: str | None = Field(None, exclude=True)
@@ -135,6 +136,7 @@ class UserContext(BaseModel):
     roles: list[str] | None = None
     is_admin: bool | None = None
     is_maintainer: bool | None = None
+    is_auditor: bool | None = None
     user_type: str | None = None
     project_names: list[str] | None = None
     admin_project_names: list[str] | None = None
@@ -152,6 +154,7 @@ class UserContext(BaseModel):
             roles=user.roles,
             is_admin=user.is_admin,
             is_maintainer=user.is_maintainer,
+            is_auditor=user.is_auditor,
             user_type=user.user_type,
             project_names=user.project_names,
             admin_project_names=user.admin_project_names,

@@ -1,0 +1,95 @@
+{
+  "decision": "request-changes",
+  "rationale": "All three review lenses ran cleanly against the backend-only diff for EPMCDME-10930 (frontend changes in the spec are out of scope for this repo). Five blocking findings survive triage: GET /v1/admin/users/{id} silently returns an authorized-but-empty projects list for pure auditors (CR-002, critical — violates the required 'view per-user detail' criterion), POST /v1/admin/users silently drops a requested is_auditor=true (CR-003), the new is_auditor repository filter is silently skipped when combined with platform_role+projects filters (CR-001), the Alembic down_revision was not verified against the live head as spec section 2.2 explicitly required (CR-004 — the follow-up merge migration does resolve to a single head, so this is a process gap rather than a live break), and required section 5.2 test coverage (auditor 200s on most read endpoints, 403 on all write endpoints, and the PUT assignment authorization matrix) is missing (CR-005) — exactly the gap that let CR-002 ship undetected. Roughly a dozen additional observations (log-domain mislabeling in the new auth dependency, inconsistent getattr-vs-direct is_auditor access, stale docstrings, a missing DB index, an unrelated bundled enforce_limit budget fix, and speculative concerns that were independently confirmed as matching the approved spec design) were reviewed and dismissed as non-blocking or already correctly handled.",
+  "confidence": "high",
+  "risk_flags": ["security"],
+  "business_review": [
+    {"kind": "spec", "item": "is_auditor: bool added as peer field to UserDB, UserCreateRequest, UserUpdateRequest, CodeMieUserDetail, AdminUserListItem, core UserResponse, security User, security UserContext (incl. from_user())", "status": "pass", "notes": "All 8 locations confirmed in diff"},
+    {"kind": "spec", "item": "Critical: resolve_is_admin must never auto-promote is_auditor to is_admin", "status": "pass", "notes": "resolve_is_admin body untouched by diff; covered by test_auditor_does_not_trigger_is_admin"},
+    {"kind": "spec", "item": "Alembic migration: op.add_column is_auditor boolean, nullable=False, server_default false, no index, up/downgrade symmetric", "status": "pass", "notes": "u2v3w4x5y6z7_add_is_auditor_to_users.py matches"},
+    {"kind": "spec", "item": "Migration down_revision verified against actual current Alembic head before creation (spec 2.2 'Important' warning)", "status": "partial", "notes": "down_revision hardcoded to spec's assumed placeholder t1u2v3w4x5y6, which already had a sibling child on main — produced exactly the branch fork the spec warned about, requiring an unplanned merge migration; net result is a single head but the verify-first step was not followed (see CR-004)"},
+    {"kind": "spec", "item": "Migration follows exact pattern of 9b1c2d3e4f5a_add_users_is_maintainer.py", "status": "partial", "notes": "uses server_default=sa.false() instead of sa.text(\"false\") — functionally equivalent, cosmetic deviation"},
+    {"kind": "spec", "item": "3.1 New admin_or_maintainer_or_auditor_access dependency, modelled on admin_or_maintainer_access_only", "status": "pass", "notes": "authentication.py new function matches"},
+    {"kind": "spec", "item": "3.2 Auditor fast-path inserted in project_admin_or_admin_user_detail_access before the is_applications_admin DB query", "status": "pass", "notes": "confirmed correct placement"},
+    {"kind": "spec", "item": "3.3 GET /v1/admin/users (list users) gains admin_or_maintainer_or_auditor_access + full visibility for auditor", "status": "pass", "notes": "folded into is_project_admin; verified unrestricted via list_users_with_flow"},
+    {"kind": "spec", "item": "3.3 GET /{user_id}/projects, GET /{user_id}/knowledge-bases replace admin_access_only with admin_or_maintainer_or_auditor_access", "status": "pass", "notes": "confirmed for both routes"},
+    {"kind": "spec", "item": "3.3 GET /{user_id}/budgets replaces maintainer_access_only with admin_or_maintainer_or_auditor_access", "status": "pass", "notes": "confirmed"},
+    {"kind": "spec", "item": "3.3 budget_router.py GET /v1/budgets and GET /v1/budgets/{budgetId} replace admin_or_maintainer_access_only", "status": "pass", "notes": "confirmed, docstrings updated"},
+    {"kind": "spec", "item": "3.3 project_budget_router.py two inline read guards widened to include is_auditor", "status": "pass", "notes": "_can_read_project_budget and list_project_budgets updated"},
+    {"kind": "spec", "item": "3.3 analytics.py six inline guards (593, 2406, 2496, 2582, 2670, 3216) widened exactly as specified", "status": "pass", "notes": "all six sites match prescribed diffs"},
+    {"kind": "spec", "item": "3.3 projects.py five call sites widened (568, 733, 794, 827-830, 942-946)", "status": "pass", "notes": "all five confirmed"},
+    {"kind": "spec", "item": "All write endpoints remain unchanged; no accidental widening of create/update/delete routes", "status": "pass", "notes": "PUT/POST/DELETE routes verified still gated by admin_access_only/maintainer_access_only"},
+    {"kind": "spec", "item": "PUT /v1/admin/users/{id} stays admin_access_only (assignment via resolve_is_admin auto-promotion; pure auditors get 403)", "status": "pass", "notes": "Depends unchanged; is_auditor added to update payload/service call"},
+    {"kind": "spec", "item": "Users area: per-user detail (GET /v1/admin/users/{id}) shows full data including projects for a pure auditor", "status": "fail", "notes": "get_user() neither is_admin nor is_project_admin computation accounts for is_auditor; falls into empty-projects branch — see CR-002"},
+    {"kind": "spec", "item": "Not a new PlatformRole enum value — boolean flag only", "status": "pass", "notes": "no enum changes present"},
+    {"kind": "spec", "item": "No new feature flag needed for auditor gating", "status": "na", "notes": "frontend-only, out of scope for this backend diff"},
+    {"kind": "spec", "item": "Frontend sections 2.3, 4, 5.1, and constraints in section 7", "status": "na", "notes": "frontend-only (codemie-ui); out of scope"},
+    {"kind": "spec", "item": "5.2 Read-access 200 tests: GET /v1/admin/users, GET /v1/budgets, GET /v1/budgets/{id}, GET /v1/project-budgets, one analytics guard", "status": "pass", "notes": "covered by new test files"},
+    {"kind": "spec", "item": "5.2 Read-access 200 tests: GET /v1/admin/users/{id}, .../projects, .../knowledge-bases, .../budgets, GET /v1/projects, .../{name}?include_spending, .../spends, and 5 of 6 analytics guards", "status": "fail", "notes": "no router-level auditor 200 test exists for these; see CR-005"},
+    {"kind": "spec", "item": "5.2 Write-rejection (403) tests for pure auditor across all listed write endpoints", "status": "fail", "notes": "none present; see CR-005"},
+    {"kind": "spec", "item": "5.2 Role-isolation regression: User(is_auditor=True) does not get is_admin=True after resolve_is_admin", "status": "pass", "notes": "test_auditor_does_not_trigger_is_admin"},
+    {"kind": "spec", "item": "5.2 Auditor assignment via PUT /v1/admin/users/{id}: 200 for admin, 200 for maintainer, 403 for pure-auditor caller", "status": "fail", "notes": "only a service-layer test exists that bypasses the admin_access_only router guard; see CR-005"},
+    {"kind": "spec", "item": "Diff scope matches spec section 6 file list (9 files + 1 migration)", "status": "partial", "notes": "touches several necessary but unlisted plumbing files (legitimate completions), plus admin.py (extra scope, verified non-regressive) and an unrelated enforce_limit fix + merge migration bundled in — not a code defect but a scope-hygiene observation"}
+  ],
+  "standards_review": [
+    {"kind": "commit-format", "status": "pass", "notes": "All branch commits follow 'EPMCDME-####: Description' format"},
+    {"kind": "code-quality", "status": "pass", "notes": "New test files carry Apache 2.0 headers; new Alembic migrations under src/external/alembic/versions/ are correctly exempt per the code-quality guide's src/external/* ignore; type hints match surrounding file conventions"},
+    {"kind": "security", "status": "partial", "notes": "Central auth-dependency pattern followed correctly, but the new access-control feature ships with confirmed read-access correctness gaps (CR-001, CR-002, CR-003) and missing negative/positive test coverage (CR-005) for a security-sensitive change"}
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/repository/user_repository.py",
+      "line": 690,
+      "title": "is_auditor filter dropped by early-return filter branches",
+      "problem": "_apply_filters() early-returns at lines 690 and 692 when platform_role is PLATFORM_ADMIN or USER together with a non-empty projects filter, before the new is_auditor check at lines 721-722 ever runs.",
+      "impact": "An admin combining an is_auditor filter with platform_role=user/platform_admin and a projects filter in the Users Management UI gets results that silently ignore the is_auditor constraint, returning the wrong user list.",
+      "recommendation": "Apply the is_auditor (and pre-existing budgets) filter before the platform_role+projects early-return branches, or replicate the is_auditor where-clause inside _apply_platform_admin_project_filter/_apply_user_project_filter."
+    },
+    {
+      "id": "CR-002",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/codemie/rest_api/routers/user_management_router.py",
+      "line": 185,
+      "title": "Pure auditor gets empty projects list on user detail",
+      "problem": "get_user() computes is_project_admin = user.is_applications_admin and not user.is_admin_or_maintainer and passes user.is_admin_or_maintainer as is_admin; neither expression accounts for is_auditor, so a pure auditor (is_admin=False, is_maintainer=False, is_applications_admin=False) yields is_admin=False and is_project_admin=False.",
+      "impact": "get_user_with_relationships() (user_management_service.py:185-187) falls into its 'regular users should not reach here' else branch and returns projects=[], even though the auditor is correctly authorized past project_admin_or_admin_user_detail_access — silently violating the spec's required 'view ... per-user detail' criterion.",
+      "recommendation": "Pass is_admin=user.is_admin_or_maintainer or getattr(user, 'is_auditor', False) (mirroring the pattern used elsewhere in this diff) so auditors take the is_admin branch and see all projects."
+    },
+    {
+      "id": "CR-003",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/rest_api/routers/user_management_router.py",
+      "line": 202,
+      "title": "POST /v1/admin/users silently drops requested is_auditor",
+      "problem": "create_user() calls create_local_user_with_flow(..., is_admin=data.is_admin, is_maintainer=data.is_maintainer, ...) without forwarding data.is_auditor; create_local_user and create_local_user_with_flow (user_management_service.py:71-79, 555-563) have no is_auditor parameter at all.",
+      "impact": "A caller creating a user with is_auditor=true in the request body gets a 200 response, but the new user is always persisted with is_auditor=False — a silently dropped field on a DTO the spec explicitly added is_auditor to.",
+      "recommendation": "Add is_auditor: bool = False to create_local_user and create_local_user_with_flow, thread it into the UserDB(...) construction, and pass data.is_auditor from the router."
+    },
+    {
+      "id": "CR-004",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/external/alembic/versions/u2v3w4x5y6z7_add_is_auditor_to_users.py",
+      "line": 12,
+      "title": "Migration down_revision not verified against live head before authoring",
+      "problem": "down_revision is hardcoded to 't1u2v3w4x5y6', the spec's assumed placeholder, but that revision already had a sibling child on main (9b9b4c585e54) — it was not actually the current head when this migration was authored, exactly the branch-fork failure mode spec section 2.2 explicitly warned against.",
+      "impact": "Required an unplanned second migration (1bd75582b209_merge_auditor_and_lifecycle_heads.py) to reconcile the resulting two heads. The net result does resolve to a single head, but the prescribed verify-before-authoring step was skipped, and a future rebase could reintroduce the same fork if not re-verified.",
+      "recommendation": "Run `alembic heads` on the final branch state before merge to confirm exactly one head, and document why the merge migration was needed (or squash the two migrations into one with the correct down_revision)."
+    },
+    {
+      "id": "CR-005",
+      "severity": "major",
+      "triage": "patch",
+      "file": "unknown",
+      "title": "Missing required auditor test coverage per spec section 5.2",
+      "problem": "Spec section 5.2 requires pure-auditor-fixture 200 tests on GET /v1/admin/users/{id}, .../projects, .../knowledge-bases, .../budgets, GET /v1/projects, GET /v1/projects/{name}?include_spending=true, GET /v1/projects/{name}/spends, and 5 of the 6 analytics guards (only the line-593 _authorize_admin_budget_view guard is tested); it also requires 403 write-rejection tests for a pure auditor on every listed write endpoint (none exist), and a caller-role authorization matrix for PUT /v1/admin/users/{id} is_auditor assignment (the only existing test calls the service layer directly, bypassing the admin_access_only router guard).",
+      "impact": "This is exactly the coverage gap that let CR-002 (empty projects for auditor) ship undetected; the write-rejection and assignment-matrix gaps leave the feature's core security guarantee (auditor cannot write) and its only privileged-write path unverified by CI.",
+      "recommendation": "Add the router-level (not just helper-level) test matrix spec section 5.2 describes: pure-auditor 200s on each listed GET route, pure-auditor 403s on each listed write route, and admin/maintainer/auditor-caller assertions for PUT .../is_auditor assignment."
+    }
+  ]
+}

@@ -42,6 +42,7 @@ from codemie.rest_api.models.user_management import (
 from codemie.rest_api.security.authentication import (
     authenticate,
     admin_access_only,
+    admin_or_maintainer_or_auditor_access,
     maintainer_access_only,
     project_admin_or_admin_user_detail_access,
 )
@@ -131,10 +132,11 @@ def list_users(
         ),
     ),
     user: User = Depends(authenticate),
+    _: None = Depends(admin_or_maintainer_or_auditor_access),
 ):
     """List all users with pagination and filters
 
-    SuperAdmin or ProjectAdmin access (Story 17).
+    SuperAdmin, ProjectAdmin, or Auditor access (EPMCDME-10930).
     Shows ALL users including deactivated.
     Page is 0-indexed (page=0 is first page).
     Includes projects array for each user (optimized with JOIN query).
@@ -154,7 +156,7 @@ def list_users(
 
     return user_management_service.list_users_with_flow(
         requesting_user_id=user.id,
-        is_project_admin=user.is_applications_admin,
+        is_project_admin=user.is_applications_admin or getattr(user, "is_auditor", False),
         page=page,
         per_page=per_page,
         search=search,
@@ -180,8 +182,9 @@ def get_user(
 
     # Story 18: Pass is_project_admin flag to service for response filtering
     # Use is_admin explicitly to match service expectations
-    is_project_admin = user.is_applications_admin and not user.is_admin_or_maintainer
-    return user_management_service.get_user_detail(user_id, user.id, user.is_admin_or_maintainer, is_project_admin)
+    is_admin = user.is_admin_or_maintainer or getattr(user, "is_auditor", False)
+    is_project_admin = user.is_applications_admin and not is_admin
+    return user_management_service.get_user_detail(user_id, user.id, is_admin, is_project_admin)
 
 
 @router.post("", response_model=CodeMieUserDetail)
@@ -204,6 +207,7 @@ def create_user(data: UserCreateRequest, user: User = Depends(authenticate), _: 
         name=data.name,
         is_admin=data.is_admin,
         is_maintainer=data.is_maintainer,
+        is_auditor=data.is_auditor,
         actor_user_id=user.id,
     )
 
@@ -237,6 +241,7 @@ def update_user(
         user_type=data.user_type,
         is_admin=data.is_admin,
         is_maintainer=data.is_maintainer,
+        is_auditor=data.is_auditor,
         is_active=data.is_active,
         project_limit=data.project_limit,
         project_limit_provided=data.project_limit_provided,
@@ -281,7 +286,9 @@ def admin_change_password(
 
 
 @router.get("/{user_id}/projects")
-def get_user_projects(user_id: str, user: User = Depends(authenticate), _: None = Depends(admin_access_only)):
+def get_user_projects(
+    user_id: str, user: User = Depends(authenticate), _: None = Depends(admin_or_maintainer_or_auditor_access)
+):
     """Get user's project access
 
     SuperAdmin only.
@@ -351,7 +358,9 @@ def remove_project_access(
 
 
 @router.get("/{user_id}/knowledge-bases")
-def get_user_knowledge_bases(user_id: str, user: User = Depends(authenticate), _: None = Depends(admin_access_only)):
+def get_user_knowledge_bases(
+    user_id: str, user: User = Depends(authenticate), _: None = Depends(admin_or_maintainer_or_auditor_access)
+):
     """Get user's knowledge base access
 
     SuperAdmin only.
@@ -430,11 +439,11 @@ async def bulk_set_user_budgets(
 async def get_user_budgets(
     user_id: str,
     user: User = Depends(authenticate),
-    _: None = Depends(maintainer_access_only),
+    _: None = Depends(admin_or_maintainer_or_auditor_access),
 ):
     """Get per-category budget assignments for a user.
 
-    SuperAdmin only. Requires LiteLLM to be enabled.
+    Maintainer or Auditor access (EPMCDME-10930). Requires LiteLLM to be enabled.
     Returns an empty list if no assignments exist.
     """
     if not config.ENABLE_USER_MANAGEMENT:

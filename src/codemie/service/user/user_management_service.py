@@ -76,6 +76,7 @@ class UserManagementService:
         name: Optional[str] = None,
         is_admin: bool = False,
         is_maintainer: bool = False,
+        is_auditor: bool = False,
     ) -> UserDB:
         """Create a local user (admin only)
 
@@ -86,6 +87,7 @@ class UserManagementService:
             password: Plain text password
             name: Display name
             is_admin: Grant admin status
+            is_auditor: Grant auditor status
 
         Returns:
             Created UserDB
@@ -119,6 +121,7 @@ class UserManagementService:
             is_active=True,
             is_admin=is_admin,
             is_maintainer=is_maintainer,
+            is_auditor=is_auditor,
             project_limit=None if is_admin else config.USER_PROJECT_LIMIT,  # Admins always have unlimited (NULL)
         )
 
@@ -201,6 +204,7 @@ class UserManagementService:
             is_active=user.is_active,
             is_admin=user.is_admin,
             is_maintainer=user.is_maintainer,
+            is_auditor=user.is_auditor,
             auth_source=user.auth_source,
             email_verified=user.email_verified,
             last_login_at=user.last_login_at,
@@ -365,6 +369,7 @@ class UserManagementService:
                 is_active=u.is_active,
                 is_admin=u.is_admin,
                 is_maintainer=u.is_maintainer,
+                is_auditor=u.is_auditor,
                 auth_source=u.auth_source,
                 last_login_at=u.last_login_at,
                 projects=[
@@ -557,6 +562,7 @@ class UserManagementService:
         name: Optional[str] = None,
         is_admin: bool = False,
         is_maintainer: bool = False,
+        is_auditor: bool = False,
         actor_user_id: str = "system",
     ) -> CodeMieUserDetail:
         """Create local user (admin action)
@@ -570,6 +576,7 @@ class UserManagementService:
             password: Plain text password
             name: Display name
             is_admin: Grant admin status
+            is_auditor: Grant auditor status
             actor_user_id: User performing the action
 
         Returns:
@@ -593,6 +600,7 @@ class UserManagementService:
                 name=name,
                 is_admin=is_admin,
                 is_maintainer=is_maintainer,
+                is_auditor=is_auditor,
             )
 
             # Extract values before commit to avoid expired attribute access
@@ -763,6 +771,7 @@ class UserManagementService:
         user_type: Optional[str],
         is_admin: Optional[bool],
         is_maintainer: Optional[bool],
+        is_auditor: Optional[bool],
         project_limit: Optional[int],
         auto_set_limit: bool,
         auto_limit_value: Optional[int],
@@ -778,6 +787,7 @@ class UserManagementService:
             user_type: New user type (Story 8)
             is_admin: New admin status
             is_maintainer: New maintainer status
+            is_auditor: New auditor status
             project_limit: Explicit project_limit value
             auto_set_limit: Whether auto-management triggered
             auto_limit_value: Auto-managed limit value
@@ -800,6 +810,8 @@ class UserManagementService:
             updates["is_admin"] = is_admin
         if is_maintainer is not None:
             updates["is_maintainer"] = is_maintainer
+        if is_auditor is not None:
+            updates["is_auditor"] = is_auditor
 
         # Story 6 + F-15: Apply project_limit changes
         # INVARIANT: Super admins MUST have project_limit=NULL (unlimited)
@@ -1047,6 +1059,7 @@ class UserManagementService:
         user_type: Optional[str] = None,
         is_admin: Optional[bool] = None,
         is_maintainer: Optional[bool] = None,
+        is_auditor: Optional[bool] = None,
         is_active: Optional[bool] = None,
         project_limit: Optional[int] = None,
         project_limit_provided: bool = False,
@@ -1075,6 +1088,7 @@ class UserManagementService:
             user_type: New user type (Story 8: local mode only, 'regular' or 'external')
             is_admin: New admin status
             is_maintainer: New maintainer status
+            is_auditor: New auditor status
             is_active: Deactivation only (False allowed, True raises error)
             project_limit: Max shared projects (Story 6). Auto-managed on role changes.
                 NULL/unlimited for admins, non-negative integers for regular users
@@ -1127,6 +1141,7 @@ class UserManagementService:
                 user_type=normalized_user_type,
                 is_admin=is_admin,
                 is_maintainer=is_maintainer,
+                is_auditor=is_auditor,
                 project_limit=project_limit,
                 auto_set_limit=auto_set_limit,
                 auto_limit_value=auto_limit_value,

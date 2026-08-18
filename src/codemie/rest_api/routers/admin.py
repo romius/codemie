@@ -29,7 +29,11 @@ from codemie.core.models import (
 )
 from codemie.rest_api.models.conversation import Conversation, Operator, FinalOperatorFeedback
 from codemie.rest_api.models.standard import FinalFeedbackRequest
-from codemie.rest_api.security.authentication import authenticate, admin_access_only
+from codemie.rest_api.security.authentication import (
+    authenticate,
+    admin_access_only,
+    admin_or_maintainer_or_auditor_access,
+)
 from codemie.rest_api.security.user import User
 from codemie.service.monitoring.project_monitoring_service import ProjectMonitoringService
 from codemie.service.platform.platform_indexing_service import PlatformIndexingService
@@ -37,13 +41,14 @@ from codemie.configs.logger import logger
 from codemie.service.spend_tracking.config import SPEND_TRACKING_LOCK_ID
 from codemie.utils.leader_lock import async_leader_lock
 
-router = APIRouter(tags=["Admin"], prefix="/v1", dependencies=[Depends(authenticate), Depends(admin_access_only)])
+router = APIRouter(tags=["Admin"], prefix="/v1", dependencies=[Depends(authenticate)])
 
 
 @router.get(
     "/admin/applications",
     status_code=status.HTTP_200_OK,
     response_model=ApplicationsResponse,
+    dependencies=[Depends(admin_or_maintainer_or_auditor_access)],
 )
 def get_applications(search: str = None, limit: int = None):
     applications = Application.search_by_name(name_query=search, limit=limit)
@@ -56,6 +61,7 @@ def get_applications(search: str = None, limit: int = None):
     "/admin/application",
     status_code=status.HTTP_200_OK,
     response_model=BaseResponse,
+    dependencies=[Depends(admin_access_only)],
 )
 def add_application(application: ApplicationRequest, admin: User = Depends(authenticate)):
     from codemie.service.user.application_service import application_service
@@ -72,6 +78,7 @@ def add_application(application: ApplicationRequest, admin: User = Depends(authe
 @router.get(
     "/admin/users/{user_id}/conversations/{conversation_id}",
     response_model=Conversation,
+    dependencies=[Depends(admin_access_only)],
 )
 async def get_conversation_by_ids(user_id: str, conversation_id: str) -> Conversation:
     """
@@ -83,6 +90,7 @@ async def get_conversation_by_ids(user_id: str, conversation_id: str) -> Convers
 @router.put(
     "/admin/users/{user_id}/conversations/{conversation_id}/feedback",
     response_model=Conversation,
+    dependencies=[Depends(admin_access_only)],
 )
 async def update_conversation_final_feedback(
     user_id: str,
@@ -107,7 +115,7 @@ async def update_conversation_final_feedback(
     return chat
 
 
-@router.get("/speech/config")
+@router.get("/speech/config", dependencies=[Depends(admin_access_only)])
 def get_speech_token():
     service_config = {
         'token': config.AZURE_SPEECH_SERVICE_KEY,
@@ -122,6 +130,7 @@ def get_speech_token():
     "/admin/marketplace/reindex",
     status_code=status.HTTP_202_ACCEPTED,
     response_model=BaseResponse,
+    dependencies=[Depends(admin_access_only)],
 )
 async def reindex_marketplace_assistants(
     background_tasks: BackgroundTasks,
@@ -171,6 +180,7 @@ async def reindex_marketplace_assistants(
     "/admin/spend-tracking/collect",
     status_code=status.HTTP_200_OK,
     response_model=BaseResponseWithData,
+    dependencies=[Depends(admin_access_only)],
 )
 async def trigger_spend_collection(admin: User = Depends(authenticate)):
     from codemie.repository.application_repository import ApplicationRepository
@@ -236,6 +246,7 @@ async def trigger_spend_collection(admin: User = Depends(authenticate)):
     "/admin/llm/reload",
     status_code=status.HTTP_200_OK,
     response_model=BaseResponse,
+    dependencies=[Depends(admin_access_only)],
 )
 async def reload_llm_models(admin: User = Depends(authenticate)):
     """
@@ -305,6 +316,7 @@ async def reload_llm_models(admin: User = Depends(authenticate)):
     "/admin/llm/retire",
     status_code=status.HTTP_200_OK,
     response_model=BaseResponseWithData,
+    dependencies=[Depends(admin_access_only)],
 )
 def retire_llm_model(
     request: LLMRetirementRequest,
@@ -347,6 +359,7 @@ def retire_llm_model(
     "/admin/llm/retire/bulk",
     status_code=status.HTTP_200_OK,
     response_model=BaseResponseWithData,
+    dependencies=[Depends(admin_access_only)],
 )
 def retire_llm_models_bulk(
     request: LLMBulkRetirementRequest,

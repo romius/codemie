@@ -25,7 +25,7 @@ from codemie.configs.budget_config import budget_config
 from codemie.enterprise.litellm import require_litellm_enabled
 from codemie.service.budget.budget_enums import BudgetCategory
 from codemie.rest_api.security.authentication import (
-    admin_or_maintainer_access_only,
+    admin_or_maintainer_or_auditor_access,
     authenticate,
     maintainer_access_only,
 )
@@ -152,9 +152,9 @@ async def list_budgets(
     per_page: int = Query(20, ge=1, le=100),
     category: Optional[BudgetCategory] = Query(None, description="Filter by budget_category"),
     user: User = Depends(authenticate),
-    _: None = Depends(admin_or_maintainer_access_only),
+    _: None = Depends(admin_or_maintainer_or_auditor_access),
 ):
-    """Paginated list of budgets with optional category filter. Super admin only."""
+    """Paginated list of budgets with optional category filter. Maintainer or auditor."""
     require_litellm_enabled()
     async with get_async_session() as session:
         budgets, total = await budget_service.list_budgets(
@@ -203,9 +203,9 @@ async def backfill_user_budget_assignments(
 async def get_budget(
     budgetId: str,  # noqa: N803
     user: User = Depends(authenticate),
-    _: None = Depends(admin_or_maintainer_access_only),
+    _: None = Depends(admin_or_maintainer_or_auditor_access),
 ):
-    """Get budget detail. Super admin only."""
+    """Get budget detail. Maintainer or auditor."""
     require_litellm_enabled()
     async with get_async_session() as session:
         budget = await budget_service.get_budget(session, budgetId)

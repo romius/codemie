@@ -176,8 +176,40 @@ class TestCreateUser:
             name="New User",
             is_admin=False,
             is_maintainer=False,
+            is_auditor=False,
             actor_user_id="admin-123",
         )
+
+    @patch("codemie.rest_api.routers.user_management_router.config")
+    @patch("codemie.rest_api.routers.user_management_router.user_management_service")
+    def test_create_user_forwards_is_auditor(
+        self,
+        mock_service,
+        mock_config,
+        admin_user,
+        mock_user_detail,
+    ):
+        """EPMCDME-10930 regression: is_auditor=True in the request body must reach
+        create_local_user_with_flow. Previously create_user() never forwarded
+        data.is_auditor, so requested auditors were silently created as is_auditor=False.
+        """
+        mock_config.ENABLE_USER_MANAGEMENT = True
+        mock_config.IDP_PROVIDER = "local"
+
+        request_data = UserCreateRequest(
+            email="newauditor@example.com",
+            username="newauditor",
+            password="SecurePass123!",
+            name="New Auditor",
+            is_auditor=True,
+        )
+
+        mock_service.create_local_user_with_flow.return_value = mock_user_detail
+
+        create_user(request_data, admin_user, None)
+
+        call_kwargs = mock_service.create_local_user_with_flow.call_args.kwargs
+        assert call_kwargs.get("is_auditor") is True
 
     @patch("codemie.rest_api.routers.user_management_router.config")
     def test_create_user_disabled_management(self, mock_config, admin_user):
@@ -270,10 +302,45 @@ class TestUpdateUser:
             user_type=None,
             is_admin=None,
             is_maintainer=False,
+            is_auditor=None,
             is_active=True,
             project_limit=None,
             project_limit_provided=False,
         )
+
+    @pytest.mark.parametrize("caller_fixture", ["admin_user", "maintainer_user"])
+    @patch("codemie.rest_api.routers.user_management_router.config")
+    @patch("codemie.rest_api.routers.user_management_router.user_management_service")
+    def test_update_user_forwards_is_auditor(
+        self,
+        mock_service,
+        mock_config,
+        caller_fixture,
+        mock_user_detail,
+        request,
+    ):
+        """EPMCDME-10930 spec 5.2: PUT /v1/admin/users/{id} with is_auditor=true reaches
+        update_user_fields for both an admin caller and a maintainer caller.
+
+        Regression guard mirroring test_create_user_forwards_is_auditor: update_user()
+        must forward data.is_auditor unmodified rather than dropping it, for every caller
+        role that is authorized to reach this router function (admin_access_only allows
+        both admin and maintainer via resolve_is_admin auto-promotion).
+        """
+        mock_config.ENABLE_USER_MANAGEMENT = True
+        caller = request.getfixturevalue(caller_fixture)
+
+        request_data = UserUpdateRequest(is_auditor=True)
+
+        updated_user = mock_user_detail.model_copy()
+        updated_user.is_auditor = True
+        mock_service.update_user_fields.return_value = updated_user
+
+        result = update_user("user-456", request_data, caller, None)
+
+        assert result.is_auditor is True
+        call_kwargs = mock_service.update_user_fields.call_args.kwargs
+        assert call_kwargs.get("is_auditor") is True
 
     @patch("codemie.rest_api.routers.user_management_router.config")
     @patch("codemie.rest_api.routers.user_management_router.user_management_service")

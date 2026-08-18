@@ -593,7 +593,7 @@ def _authorize_admin_budget_view(
     target_project_names: set[str],
 ) -> None:
     """Raise HTTP 403 if caller is not authorized to view the target user's budget."""
-    if caller.is_admin:
+    if caller.is_admin or getattr(caller, "is_auditor", False):
         return
     caller_admin_projects = set(caller.admin_project_names or [])
     if caller_admin_projects & target_project_names:
@@ -2433,7 +2433,7 @@ async def post_ai_adoption_user_engagement_users(
     ```
     """
     # Validate user has access to project
-    if not user.is_admin_or_maintainer:
+    if not (user.is_admin_or_maintainer or getattr(user, "is_auditor", False)):
         # Get user's accessible projects
         accessible_projects = set(user.project_names or []) | set(user.admin_project_names or [])
         if request.project not in accessible_projects:
@@ -2523,7 +2523,7 @@ async def post_ai_adoption_assistant_reusability_detail(
     ```
     """
     # Validate user has access to project
-    if not user.is_admin:
+    if not (user.is_admin or getattr(user, "is_auditor", False)):
         accessible_projects = set(user.project_names or []) | set(user.admin_project_names or [])
         if request.project not in accessible_projects:
             raise ExtendedHTTPException(
@@ -2609,7 +2609,7 @@ async def post_ai_adoption_workflow_reusability_detail(
     ```
     """
     # Validate user has access to project
-    if not user.is_admin:
+    if not (user.is_admin or getattr(user, "is_auditor", False)):
         accessible_projects = set(user.project_names or []) | set(user.admin_project_names or [])
         if request.project not in accessible_projects:
             raise ExtendedHTTPException(
@@ -2697,7 +2697,7 @@ async def post_ai_adoption_datasource_reusability_detail(
     ```
     """
     # Validate user has access to project
-    if not user.is_admin:
+    if not (user.is_admin or getattr(user, "is_auditor", False)):
         accessible_projects = set(user.project_names or []) | set(user.admin_project_names or [])
         if request.project not in accessible_projects:
             raise ExtendedHTTPException(
@@ -3330,7 +3330,7 @@ async def get_leaderboard_user_detail(
     season_key: str | None = Query(None, description=LEADERBOARD_SEASON_KEY_DESC),
 ) -> JSONResponse:
     """Get detailed leaderboard data for a specific user."""
-    if not user.is_admin:
+    if not (user.is_admin or getattr(user, "is_auditor", False)):
         raise ExtendedHTTPException(
             code=status.HTTP_403_FORBIDDEN,
             message=ERROR_MSG_ACCESS_DENIED,

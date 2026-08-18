@@ -50,6 +50,7 @@ class UserDB(BaseModelWithSQLSupport, table=True):
     is_active: bool = SQLField(default=True, index=True)
     is_admin: bool = SQLField(default=False, index=True)
     is_maintainer: bool = SQLField(default=False)
+    is_auditor: bool = SQLField(default=False)
     auth_source: str = SQLField(default="local")  # 'local' | 'keycloak' | 'oidc'
     email_verified: bool = SQLField(default=False)
     last_login_at: Optional[datetime] = SQLField(default=None)
@@ -190,6 +191,7 @@ class UserCreateRequest(BaseModel):
     name: Optional[str] = None
     is_admin: bool = False
     is_maintainer: bool = False
+    is_auditor: bool = False
 
 
 class UserUpdateRequest(BaseModel):
@@ -217,6 +219,7 @@ class UserUpdateRequest(BaseModel):
     user_type: Optional[str] = None  # Story 8: 'regular' or 'external'; local mode only
     is_admin: Optional[bool] = None
     is_maintainer: Optional[bool] = None
+    is_auditor: Optional[bool] = None
     is_active: Optional[bool] = None  # See Task 18 for deactivation semantics
     project_limit: Optional[int] = None  # Max shared projects; NULL = unlimited (admins only)
     project_limit_provided: bool = Field(default=False, exclude=True)
@@ -258,6 +261,7 @@ class CodeMieUserDetail(BaseModel):
     is_active: bool
     is_admin: bool
     is_maintainer: bool = False
+    is_auditor: bool = False
     auth_source: str
     email_verified: bool
     last_login_at: Optional[datetime]
@@ -292,6 +296,7 @@ class AdminUserListItem(BaseModel):
     is_active: bool
     is_admin: bool
     is_maintainer: bool = False
+    is_auditor: bool = False
     auth_source: str
     last_login_at: Optional[datetime]
     projects: list[ProjectInfo] = Field(default_factory=list)
@@ -347,6 +352,7 @@ class UserListFilters(BaseModel):
     user_type: Optional[str] = None
     is_active: Optional[bool] = None
     platform_role: Optional[PlatformRole] = None
+    is_auditor: Optional[bool] = None
 
 
 class PaginatedUserListResponse(BaseModel):

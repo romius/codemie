@@ -565,7 +565,10 @@ def _manageable_project_names(enriched_projects: list[dict], user: User) -> list
     return [
         proj["name"]
         for proj in enriched_projects
-        if user.is_admin or proj.get("is_project_admin") or proj.get("project_type") == Application.ProjectType.PERSONAL
+        if user.is_admin
+        or getattr(user, "is_auditor", False)
+        or proj.get("is_project_admin")
+        or proj.get("project_type") == Application.ProjectType.PERSONAL
     ]
 
 
@@ -730,7 +733,7 @@ async def list_projects(
     enriched_projects, total_count = await asyncio.to_thread(
         _list_projects_sync,
         user_id=user.id,
-        is_admin=user.is_admin,
+        is_admin=user.is_admin or getattr(user, "is_auditor", False),
         search=search,
         page=page,
         per_page=per_page,
@@ -791,7 +794,7 @@ async def get_project_detail(
         _get_project_detail_sync,
         project_name=project_name,
         user_id=user.id,
-        is_admin=user.is_admin,
+        is_admin=user.is_admin or getattr(user, "is_auditor", False),
         action=f"{request.method} {request.url.path}",
     )
 
@@ -827,7 +830,7 @@ def _build_project_detail_response(project_detail: dict, project_name: str) -> P
 def _can_see_project_spending(user: User, project_detail: dict) -> bool:
     is_personal = project_detail.get("project_type") == Application.ProjectType.PERSONAL
     is_project_admin = bool(project_detail.get("is_project_admin"))
-    return user.is_admin or is_project_admin or is_personal
+    return user.is_admin or getattr(user, "is_auditor", False) or is_project_admin or is_personal
 
 
 async def _attach_project_detail_spending(
@@ -941,6 +944,7 @@ async def get_project_spends(
     is_personal = project.project_type == Application.ProjectType.PERSONAL
     can_access = (
         user.is_admin_or_maintainer
+        or getattr(user, "is_auditor", False)
         or user.is_application_admin(project_name)
         or (is_personal and user.has_access_to_application(project_name))
     )

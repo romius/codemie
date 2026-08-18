@@ -800,6 +800,7 @@ class UserResponse(BaseModel):
     applications_admin: list[str] = Field(default_factory=list)
     is_admin: bool = False
     is_maintainer: bool = False
+    is_auditor: bool = False
 
 
 class ApplicationInfo(ConfiguredModel):

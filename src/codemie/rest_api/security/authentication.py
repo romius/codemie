@@ -195,6 +195,20 @@ async def maintainer_access_only(request: Request):
         )
 
 
+async def admin_or_maintainer_or_auditor_access(request: Request):
+    """Checks if current user is admin, maintainer, or auditor (read-only analytics/budget/user guard)."""
+    user = request.state.user
+    if user.is_admin_or_maintainer or user.is_auditor:
+        return
+    logger.warning(f"access_denied_auditor: actor_user_id={user.id}, domain=analytics")
+    raise ExtendedHTTPException(
+        code=status.HTTP_403_FORBIDDEN,
+        message=ACCESS_DENIED_MESSAGE,
+        details="This action requires administrator, maintainer, or auditor privileges.",
+        help="If you believe you should have elevated access, please contact your system administrator.",
+    )
+
+
 async def project_admin_or_admin_user_detail_access(request: Request):
     """Check if user is admin or project admin with access to target user (Story 18)
 
@@ -225,6 +239,10 @@ async def project_admin_or_admin_user_detail_access(request: Request):
 
     # Admins and maintainers have full access
     if user.is_admin_or_maintainer:
+        return
+
+    # Auditors have read-only access to all user details
+    if getattr(user, "is_auditor", False):
         return
 
     # Project admins need to check if target user is in projects they admin

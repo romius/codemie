@@ -101,6 +101,7 @@ async def update_profile(data: UserProfileUpdateRequest, user: User = Depends(au
         email=updated_user.email,
         is_admin=user.is_admin,
         is_maintainer=user.is_maintainer,
+        is_auditor=user.is_auditor,
         projects=projects,
         picture=updated_user.picture or "",
         knowledge_bases=user.knowledge_bases,

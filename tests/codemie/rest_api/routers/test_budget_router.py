@@ -371,7 +371,8 @@ def test_budget_read_routes_use_admin_or_maintainer_dependency():
 
     for route in (list_route, detail_route):
         dependency_calls = {dependency.call.__name__ for dependency in route.dependant.dependencies}
-        assert "admin_or_maintainer_access_only" in dependency_calls
+        # EPMCDME-10930: widened to admin_or_maintainer_or_auditor_access for auditor read access
+        assert "admin_or_maintainer_or_auditor_access" in dependency_calls
         assert "maintainer_access_only" not in dependency_calls
 
 

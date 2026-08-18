@@ -26,8 +26,10 @@ from codemie.rest_api.routers.admin import (
     get_applications,
     get_speech_token,
     reload_llm_models,
+    router,
     trigger_spend_collection,
 )
+from codemie.rest_api.security.authentication import admin_access_only, admin_or_maintainer_or_auditor_access
 from codemie.rest_api.security.user import User
 
 ADMIN_MODULE = "codemie.rest_api.routers.admin"
@@ -177,3 +179,45 @@ async def test_trigger_spend_collection_returns_200_on_success(mock_config, mock
     assert response.data == {"rows_inserted": 42}
     mock_service.collect.assert_awaited_once()
     mock_lock.assert_called_once()
+
+
+class TestApplicationsSearchOpenToAuditor:
+    """EPMCDME-10930: GET /v1/admin/applications must accept admin, maintainer, and auditor.
+
+    The router previously gated every route in this file behind a single shared
+    admin_access_only dependency, which blocked auditors from the project search
+    used by the frontend's ProjectSelector/Analytics "Project" filter even though
+    auditors should have read-only visibility into all platform projects. Fixed by
+    moving auth to per-route dependencies so only this one GET route was loosened.
+    """
+
+    def _find_route(self, path: str, method: str):
+        for route in router.routes:
+            if getattr(route, "path", None) == path and method in getattr(route, "methods", set()):
+                return route
+        raise AssertionError(f"{method} {path} route not found")
+
+    def test_applications_route_uses_auditor_inclusive_dependency(self):
+        route = self._find_route("/v1/admin/applications", "GET")
+        dependency_functions = [dep.call for dep in route.dependant.dependencies]
+
+        assert admin_or_maintainer_or_auditor_access in dependency_functions
+        assert admin_access_only not in dependency_functions
+
+    def test_other_admin_endpoints_still_use_admin_access_only(self):
+        still_admin_only = {
+            ("/v1/admin/application", "POST"),
+            ("/v1/admin/users/{user_id}/conversations/{conversation_id}", "GET"),
+            ("/v1/admin/users/{user_id}/conversations/{conversation_id}/feedback", "PUT"),
+            ("/v1/speech/config", "GET"),
+            ("/v1/admin/marketplace/reindex", "POST"),
+            ("/v1/admin/spend-tracking/collect", "POST"),
+            ("/v1/admin/llm/reload", "GET"),
+            ("/v1/admin/llm/retire", "POST"),
+            ("/v1/admin/llm/retire/bulk", "POST"),
+        }
+
+        for path, method in still_admin_only:
+            route = self._find_route(path, method)
+            dependency_functions = [dep.call for dep in route.dependant.dependencies]
+            assert admin_access_only in dependency_functions, f"{method} {path} should still use admin_access_only"

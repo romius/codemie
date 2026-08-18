@@ -91,6 +91,7 @@ def _get_user_response(user: User) -> UserResponse:
         email=user.email,
         is_admin=user.is_admin,
         is_maintainer=user.is_maintainer,
+        is_auditor=user.is_auditor,
         picture=user.picture,
         projects=projects,
         project_limit=user.project_limit,

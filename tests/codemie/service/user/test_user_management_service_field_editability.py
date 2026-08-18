@@ -136,6 +136,63 @@ def test_email_update_local_mode_success(mock_get_session, mock_repo, local_user
     assert "email" in mock_repo.update.call_args[1]
 
 
+# ===========================================
+# EPMCDME-10930: is_auditor persisted on update
+# ===========================================
+
+
+@patch("codemie.service.user.user_management_service.config.IDP_PROVIDER", "local")
+@patch("codemie.service.user.user_management_service.user_repository")
+@patch("codemie.clients.postgres.get_session")
+def test_is_auditor_update_success(mock_get_session, mock_repo, local_user):
+    """PUT /v1/admin/users/{id} with is_auditor=True is forwarded to the repository update call.
+
+    Regression test: update_user_fields previously dropped is_auditor entirely, so the
+    flag never reached _build_updates_dict/user_repository.update and the response
+    always echoed back the stale (unchanged) value.
+    """
+    # Arrange
+    mock_session = MagicMock()
+    mock_get_session.return_value.__enter__.return_value = mock_session
+    mock_repo.get_by_id.return_value = local_user
+    updated_user = UserDB(**local_user.model_dump())
+    updated_user.is_auditor = True
+    mock_repo.update.return_value = updated_user
+
+    mock_detail = CodeMieUserDetail(
+        id=updated_user.id,
+        username=updated_user.username,
+        email=updated_user.email,
+        name=updated_user.name,
+        picture=None,
+        user_type=updated_user.user_type,
+        is_active=updated_user.is_active,
+        is_admin=updated_user.is_admin,
+        is_maintainer=updated_user.is_maintainer,
+        is_auditor=True,
+        auth_source=updated_user.auth_source,
+        email_verified=updated_user.email_verified,
+        last_login_at=updated_user.last_login_at,
+        projects=[],
+        project_limit=updated_user.project_limit,
+        knowledge_bases=[],
+        date=updated_user.date,
+        update_date=updated_user.update_date,
+        deleted_at=updated_user.deleted_at,
+    )
+
+    with patch.object(UserManagementService, "get_user_with_relationships", return_value=mock_detail):
+        # Act
+        result = UserManagementService.update_user_fields(
+            user_id="user-local-1", actor_user_id="admin-1", is_auditor=True
+        )
+
+    # Assert
+    assert result.is_auditor is True
+    mock_repo.update.assert_called_once()
+    assert mock_repo.update.call_args[1].get("is_auditor") is True
+
+
 @patch("codemie.service.user.user_management_service.config.IDP_PROVIDER", "keycloak")
 @patch("codemie.clients.postgres.get_session")
 def test_email_update_idp_mode_blocked(mock_get_session):

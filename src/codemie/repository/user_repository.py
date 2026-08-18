@@ -686,6 +686,9 @@ class UserRepository:
         if filters.is_active is not None:
             query = query.where(UserDB.is_active == filters.is_active)
 
+        if filters.is_auditor is not None:
+            query = query.where(UserDB.is_auditor == filters.is_auditor)
+
         if filters.platform_role == PlatformRole.PLATFORM_ADMIN and filters.projects:
             return UserRepository._apply_platform_admin_project_filter(query, filters.projects)
         elif filters.platform_role == PlatformRole.USER and filters.projects:

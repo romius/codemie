@@ -313,6 +313,45 @@ async def test_user_detail_access_admin():
 @pytest.mark.anyio
 @patch.object(config, 'ENV', 'dev')
 @patch.object(config, 'ENABLE_USER_MANAGEMENT', True)
+async def test_user_detail_access_auditor():
+    """EPMCDME-10930 spec 5.2: pure auditor gets access to GET /v1/admin/users/{id}
+    via the auditor fast-path in project_admin_or_admin_user_detail_access.
+    """
+    request = MagicMock()
+    request.state.user = User(
+        id="auditor-1", username="auditor", is_admin=False, is_maintainer=False, is_auditor=True, roles=[]
+    )
+    request.path_params = {"user_id": "target-user-123"}
+
+    result = await project_admin_or_admin_user_detail_access(request)
+
+    assert result is None
+
+
+@pytest.mark.anyio
+@patch.object(config, 'ENV', 'dev')
+@patch.object(config, 'ENABLE_USER_MANAGEMENT', True)
+@patch('codemie.repository.user_repository.user_repository')
+async def test_user_detail_access_auditor_skips_db_query(mock_user_repo):
+    """EPMCDME-10930 spec 3.2: the auditor fast-path must be checked before the
+    is_applications_admin branch, so an auditor never triggers the project-admin
+    DB lookup (user_repository.get_by_id / can_project_admin_view_user).
+    """
+    request = MagicMock()
+    request.state.user = User(
+        id="auditor-1", username="auditor", is_admin=False, is_maintainer=False, is_auditor=True, roles=[]
+    )
+    request.path_params = {"user_id": "target-user-123"}
+
+    result = await project_admin_or_admin_user_detail_access(request)
+
+    assert result is None
+    mock_user_repo.get_by_id.assert_not_called()
+
+
+@pytest.mark.anyio
+@patch.object(config, 'ENV', 'dev')
+@patch.object(config, 'ENABLE_USER_MANAGEMENT', True)
 @patch('codemie.clients.postgres.get_session')
 @patch('codemie.repository.user_repository.user_repository')
 @patch('codemie.repository.user_project_repository.user_project_repository')

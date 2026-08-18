@@ -81,6 +81,7 @@ async def test_authenticate_db_success_with_user_management_enabled(mocker):
     mock_db_user.user_type = None
     mock_db_user.is_admin = True
     mock_db_user.is_maintainer = False
+    mock_db_user.is_auditor = False
     mock_db_user.project_limit = 10
 
     class _AsyncSessionCtx:
@@ -137,6 +138,7 @@ async def test_authenticate_db_success_with_user_management_disabled(mocker):
     mock_db_user.user_type = None
     mock_db_user.is_admin = False  # DB says False
     mock_db_user.is_maintainer = False
+    mock_db_user.is_auditor = False
     mock_db_user.project_limit = 10
 
     class _AsyncSessionCtx:

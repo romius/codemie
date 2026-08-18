@@ -368,3 +368,50 @@ def test_project_budget_write_routes_keep_maintainer_dependency():
             continue
         dependency_calls = {dependency.call.__name__ for dependency in route.dependant.dependencies}
         assert "maintainer_access_only" in dependency_calls
+
+
+@pytest.mark.asyncio
+async def test_project_budget_write_routes_deny_pure_auditor():
+    """EPMCDME-10930 spec 5.2: pure-auditor 403 on POST/PUT/DELETE /v1/project-budgets.
+
+    Every write route in this router is gated by maintainer_access_only. This walks the
+    actual wired dependency (not a copy) for each write route and confirms it rejects a
+    pure auditor (is_admin=False, is_maintainer=False, is_auditor=True), tying the
+    auditor-write-rejection guarantee directly to this router's routes rather than only
+    to the generic guard-function test in test_authentication_auditor.py.
+    """
+    from codemie.core.exceptions import ExtendedHTTPException
+
+    write_route_paths = {
+        "/v1/admin/project-budgets",
+        "/v1/admin/project-budgets/{budget_id}",
+        "/v1/admin/project-budgets/{budget_id}/reset",
+        "/v1/admin/project-budgets/{budget_id}/rebalance",
+        "/v1/admin/project-budgets/{budget_id}/members/{user_id}",
+        "/v1/admin/project-budgets/{budget_id}/members/{user_id}/override",
+    }
+
+    request = AsyncMock()
+    with patch.object(config, "ENV", "dev"), patch.object(config, "ENABLE_USER_MANAGEMENT", True):
+        request.state.user = User(
+            id="auditor-1", username="auditor", is_admin=False, is_maintainer=False, is_auditor=True
+        )
+
+    write_routes = [
+        route
+        for route in router.routes
+        if isinstance(route, APIRoute) and route.path in write_route_paths and "GET" not in (route.methods or set())
+    ]
+    assert len(write_routes) >= len(write_route_paths)
+
+    checked_routes = 0
+    for route in write_routes:
+        for dependency in route.dependant.dependencies:
+            if dependency.call.__name__ != "maintainer_access_only":
+                continue
+            checked_routes += 1
+            with pytest.raises(ExtendedHTTPException) as exc_info:
+                await dependency.call(request)
+            assert exc_info.value.code == 403
+
+    assert checked_routes == len(write_routes)

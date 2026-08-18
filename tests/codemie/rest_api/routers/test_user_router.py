@@ -107,6 +107,40 @@ async def test_get_user_basic(mock_authenticate, mock_user):
 
 
 @pytest.mark.anyio
+@patch("codemie.rest_api.security.idp.local.LocalIdp.authenticate")
+async def test_get_user_reflects_is_auditor(mock_authenticate):
+    """EPMCDME-10930 regression: GET /v1/user must echo is_auditor from the security context.
+
+    _get_user_response previously built UserResponse without passing is_auditor from the
+    authenticated User, so the field always fell back to the model default (False) even
+    when the DB/session had is_auditor=True.
+    """
+    auditor_user = User(
+        id="user-123",
+        username="testuser",
+        name="Test User",
+        email="test@example.com",
+        project_names=["test-project"],
+        admin_project_names=[],
+        knowledge_bases=[],
+        user_type="regular",
+        picture="",
+        is_admin=False,
+        is_maintainer=False,
+        is_auditor=True,
+    )
+    mock_authenticate.return_value = auditor_user
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+        response = await ac.get("/v1/user", headers={"user-id": "user-123"})
+
+    assert response.status_code == status.HTTP_200_OK
+    data = response.json()
+    assert data["is_auditor"] is True
+
+
+@pytest.mark.anyio
 async def test_get_user_with_management_flag(mock_user, mock_user_project):
     """Test GET /v1/user with ENABLE_USER_MANAGEMENT=True queries DB for projects.
 

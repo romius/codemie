@@ -111,6 +111,7 @@ class LocalIdp(BaseIdp):
                 knowledge_bases=[kb.kb_name for kb in kbs],
                 is_admin=db_user.is_admin,
                 is_maintainer=db_user.is_maintainer,
+                is_auditor=db_user.is_auditor,
                 project_limit=db_user.project_limit,
                 auth_token=auth_token,
             )

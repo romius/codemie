@@ -297,9 +297,9 @@ class TestBackwardCompatibility:
             "/v1/admin/users": ["POST"],  # create_user
             "/v1/admin/users/{user_id}": ["PUT", "DELETE"],  # update, deactivate (GET changed in Story 18)
             "/v1/admin/users/{user_id}/password": ["PUT"],  # admin_change_password
-            "/v1/admin/users/{user_id}/projects": ["GET", "POST"],  # get, add project access
+            "/v1/admin/users/{user_id}/projects": ["POST"],  # add project access (GET changed for auditor)
             "/v1/admin/users/{user_id}/projects/{project_name}": ["PUT", "DELETE"],  # update, remove
-            "/v1/admin/users/{user_id}/knowledge-bases": ["GET", "POST"],  # get, add KB access
+            "/v1/admin/users/{user_id}/knowledge-bases": ["POST"],  # add KB access (GET changed for auditor)
             "/v1/admin/users/{user_id}/knowledge-bases/{kb_name}": ["DELETE"],  # remove KB access
         }
 
@@ -315,6 +315,10 @@ class TestBackwardCompatibility:
                 continue
             if path == "/v1/admin/users/{user_id}" and "GET" in methods:
                 continue  # Story 18: user detail endpoint uses project_admin_or_admin_user_detail_access
+            if path == "/v1/admin/users/{user_id}/projects" and "GET" in methods:
+                continue  # EPMCDME-10930: auditor read access, uses admin_or_maintainer_or_auditor_access
+            if path == "/v1/admin/users/{user_id}/knowledge-bases" and "GET" in methods:
+                continue  # EPMCDME-10930: auditor read access, uses admin_or_maintainer_or_auditor_access
 
             # Check if this is a super-admin-only endpoint
             for expected_path, expected_methods in super_admin_only_endpoints.items():
