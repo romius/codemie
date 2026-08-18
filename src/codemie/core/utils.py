@@ -667,8 +667,9 @@ def build_unique_file_objects(
     if file_names:
         _process_file_names_to_objects(file_names, unique_files_dict)
 
-    # Process files from conversation history if conversation_id is provided
-    if conversation_id:
+    # Skip history collection when the current request carries its own files —
+    # merging prior-turn files would re-attach them (EPMCDME-12227).
+    if conversation_id and not file_names:
         _collect_files_from_conversation(conversation_id, history_index, unique_files_dict)
 
     return unique_files_dict

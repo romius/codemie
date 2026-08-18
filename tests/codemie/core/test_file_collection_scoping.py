@@ -86,20 +86,52 @@ def test_history_with_no_file_uploads_returns_empty(utils_module):
     assert result == []
 
 
-def test_current_turn_file_names_still_included_alongside_latest_history_turn(utils_module):
-    """Current-turn file_names AND the latest history-turn files are both present when names differ."""
+def test_current_turn_files_replace_history_when_user_uploads_in_this_turn(utils_module):
+    """EPMCDME-12227 (repro): when the current request carries its own file_names, prior-turn
+    files must NOT be merged in. Uploading a new file in this turn IS the user's intent — the
+    previous turn's upload must not leak into the tool's ``input_files`` and get re-attached.
+
+    This exercises the exact scenario Maksym reproduced on codemie-preview: upload test1 in
+    turn 1, upload test2 in turn 2 and ask for another attach — only test2 must reach the tool.
+    """
     history = [
-        _make_message(ChatRole.USER, history_index=0, file_names=["history1.png"]),
+        _make_message(ChatRole.USER, history_index=0, file_names=["prior-turn.png"]),
+        _make_message("assistant", history_index=1, file_names=[]),
     ]
     result = _run(
         utils_module,
         file_names=["current.png"],
         conversation_id="conv-1",
+        # history_index points past turn 1 (turn 2's own record not yet persisted / excluded
+        # from history collection). This is the real request-time shape that breaks the
+        # earlier fix from MR !3864.
         history_index=2,
         history=history,
     )
     names = sorted(f.name for f in result)
-    assert names == ["current.png", "history1.png"], f"Both files should be present; got {names}."
+    assert names == ["current.png"], (
+        f"Expected only current.png (turn's own upload); got {names}. "
+        "Prior-turn file leaked back into the current tool call — the EPMCDME-12227 leak."
+    )
+
+
+def test_history_files_reused_when_current_turn_has_no_upload(utils_module):
+    """Complement of the previous test: when the user asks a follow-up WITHOUT re-uploading,
+    files from the most recent user turn must still be surfaced so ``attach the file I sent
+    earlier`` keeps working."""
+    history = [
+        _make_message(ChatRole.USER, history_index=0, file_names=["earlier.png"]),
+        _make_message("assistant", history_index=1, file_names=[]),
+    ]
+    result = _run(
+        utils_module,
+        file_names=None,
+        conversation_id="conv-1",
+        history_index=2,
+        history=history,
+    )
+    names = sorted(f.name for f in result)
+    assert names == ["earlier.png"], f"Follow-up with no upload should reuse prior file; got {names}."
 
 
 def test_edited_message_last_write_wins_within_latest_turn(utils_module):
