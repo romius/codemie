@@ -39,6 +39,7 @@ class TestSecureQueryBuilder:
 
         user = Mock(id="user-1", project_names=["proj-a"], admin_project_names=[])
         user.is_admin = False
+        user.is_auditor = False
 
         builder = SecureQueryBuilder(user)
         query = builder.build()
@@ -65,6 +66,7 @@ class TestSecureQueryBuilder:
 
         user = Mock(id="user-2", project_names=[], admin_project_names=["proj-c"])
         user.is_admin = False
+        user.is_auditor = False
 
         builder = SecureQueryBuilder(user)
         query = builder.build()
@@ -81,6 +83,7 @@ class TestSecureQueryBuilder:
 
         user = Mock(id="user-3", project_names=["proj-a", "proj-b"], admin_project_names=["proj-c", "proj-d"])
         user.is_admin = False
+        user.is_auditor = False
 
         builder = SecureQueryBuilder(user)
         query = builder.build()
@@ -106,6 +109,7 @@ class TestSecureQueryBuilder:
 
         user = Mock(id="user-4", project_names=[], admin_project_names=None)
         user.is_admin = False
+        user.is_auditor = False
 
         builder = SecureQueryBuilder(user)
         query = builder.build()
@@ -125,6 +129,7 @@ class TestSecureQueryBuilder:
 
         user = Mock(id="user-6", project_names=["proj-a", "proj-b"], admin_project_names=[])
         user.is_admin = False
+        user.is_auditor = False
 
         builder = SecureQueryBuilder(user)
         builder.add_project_filter(["proj-a"])  # Restrict to subset
@@ -142,6 +147,7 @@ class TestSecureQueryBuilder:
 
         user = Mock(id="user-7", project_names=[], admin_project_names=["proj-c", "proj-d"])
         user.is_admin = False
+        user.is_auditor = False
 
         builder = SecureQueryBuilder(user)
         builder.add_project_filter(["proj-c"])
@@ -155,6 +161,7 @@ class TestSecureQueryBuilder:
 
         user = Mock(id="user-8", project_names=["proj-a"], admin_project_names=[])
         user.is_admin = False
+        user.is_auditor = False
 
         builder = SecureQueryBuilder(user)
         builder.add_project_filter(["proj-a", "proj-unauthorized"])
@@ -173,6 +180,7 @@ class TestSecureQueryBuilder:
 
         user = Mock(id="user-9", project_names=["proj-a", "proj-b"], admin_project_names=["proj-c"])
         user.is_admin = False
+        user.is_auditor = False
 
         builder = SecureQueryBuilder(user)
         builder.add_project_filter(["proj-a", "proj-c"])  # One plain, one admin
@@ -189,6 +197,7 @@ class TestSecureQueryBuilder:
 
         user = Mock(id="user-10", project_names=["proj-a"], admin_project_names=[])
         user.is_admin = False
+        user.is_auditor = False
 
         builder = SecureQueryBuilder(user)
         query_before = builder.build()

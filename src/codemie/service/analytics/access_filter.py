@@ -100,9 +100,10 @@ class AccessFilter:
         This method uses an in-memory TTL cache to avoid repeated lookups.
         Cache key is user_id, with automatic expiration after 5 minutes.
 
-        Super admins (user.is_admin=True) receive unrestricted access to all data,
-        regardless of application lists. This ensures admins can access analytics
-        across all projects without explicit project assignments.
+        Super admins (user.is_admin=True) and auditors (user.is_auditor=True) receive
+        unrestricted access to all data, regardless of project assignments. This ensures
+        admins and auditors can view analytics across all projects and users without
+        explicit project membership.
 
         Returns:
             ProjectAccessContext with role-based project segmentation (cached)
@@ -124,13 +125,19 @@ class AccessFilter:
             logger.error("User missing ID for analytics access control")
             raise ValueError("User ID is required for analytics access control")
 
-        # Check if user is super admin (unrestricted access)
-        if self._user.is_admin:
-            logger.info(f"Super admin detected: user_id={user_id}, granting unrestricted access to all analytics data")
+        # Check if user is super admin or auditor (both get unrestricted, read-only-by-design access;
+        # auditors have no write permissions elsewhere, so granting them the same query scope as
+        # admins here only affects what analytics data they can *see*, per EPMCDME-10930).
+        is_auditor = getattr(self._user, "is_auditor", False)
+        if self._user.is_admin or is_auditor:
+            logger.info(
+                f"Unrestricted analytics access granted: user_id={user_id}, "
+                f"is_admin={self._user.is_admin}, is_auditor={is_auditor}"
+            )
             context = ProjectAccessContext(user_id=user_id, plain_user_projects=[], admin_projects=[], is_admin=True)
             # Store in cache
             self._context_cache[user_id] = context
-            logger.debug(f"Cache STORED (super admin): user_id={user_id}, cache_size={len(self._context_cache)}")
+            logger.debug(f"Cache STORED (unrestricted): user_id={user_id}, cache_size={len(self._context_cache)}")
             return context
 
         # Extract project lists for regular users (handle None gracefully)

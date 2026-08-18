@@ -1519,10 +1519,10 @@ class AIAdoptionHandler:
         Returns:
             List of accessible projects or None (all accessible)
         """
-        if self._user.is_admin:
-            return projects  # Admin can see all or specified projects
+        if self._user.is_admin or getattr(self._user, "is_auditor", False):
+            return projects  # Admin/auditor can see all or specified projects
 
-        # Non-admin: can only see their accessible projects
+        # Non-admin, non-auditor: can only see their accessible projects
         user_projects = self._user.project_names or []
         if projects:
             # Filter to intersection of requested and accessible

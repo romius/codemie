@@ -43,7 +43,11 @@ from codemie.rest_api.models.analytics import (
     TabularResponse,
     UsersListResponse,
 )
-from codemie.rest_api.security.authentication import admin_access_only, authenticate
+from codemie.rest_api.security.authentication import (
+    admin_access_only,
+    admin_or_maintainer_or_auditor_access,
+    authenticate,
+)
 from codemie.rest_api.security.user import User
 from codemie.clients.postgres import get_async_session
 from codemie.service.analytics.analytics_service import AnalyticsService
@@ -3230,7 +3234,7 @@ async def get_spending_by_users_cli(
     return _create_response(data, TabularResponse)
 
 
-# ── Leaderboard endpoints (admin-only) ─────────────────────────────────────
+# ── Leaderboard endpoints (read: admin/maintainer/auditor, compute: admin-only) ──
 
 
 @router.get(
@@ -3240,7 +3244,7 @@ async def get_spending_by_users_cli(
     response_model_by_alias=True,
     summary="Get leaderboard summary metrics",
     description="Returns high-level leaderboard metrics: total users, tier counts, top score, etc.",
-    dependencies=[Depends(admin_access_only)],
+    dependencies=[Depends(admin_or_maintainer_or_auditor_access)],
 )
 @handle_analytics_errors("leaderboard summary")
 async def get_leaderboard_summary(
@@ -3262,7 +3266,7 @@ async def get_leaderboard_summary(
     response_model_by_alias=True,
     summary="Get leaderboard entries table",
     description="Returns paginated leaderboard entries with scores and tier info.",
-    dependencies=[Depends(admin_access_only)],
+    dependencies=[Depends(admin_or_maintainer_or_auditor_access)],
 )
 @handle_analytics_errors("leaderboard entries")
 async def get_leaderboard_entries(
@@ -3319,7 +3323,7 @@ async def get_leaderboard_entries(
     summary="Get leaderboard detail for a specific user",
     description="Returns detailed leaderboard data for a single user including dimension breakdowns. "
     "Accepts either a user ID or user email as the path parameter. Admin only.",
-    dependencies=[Depends(admin_access_only)],
+    dependencies=[Depends(admin_or_maintainer_or_auditor_access)],
 )
 @handle_analytics_errors("leaderboard user detail")
 async def get_leaderboard_user_detail(
@@ -3349,7 +3353,7 @@ async def get_leaderboard_user_detail(
     response_model_by_alias=True,
     summary="Get tier distribution",
     description="Returns user count and percentage per tier.",
-    dependencies=[Depends(admin_access_only)],
+    dependencies=[Depends(admin_or_maintainer_or_auditor_access)],
 )
 @handle_analytics_errors("leaderboard tier distribution")
 async def get_leaderboard_tier_distribution(
@@ -3371,7 +3375,7 @@ async def get_leaderboard_tier_distribution(
     response_model_by_alias=True,
     summary="Get score distribution",
     description="Returns histogram of user scores in 10-point bins.",
-    dependencies=[Depends(admin_access_only)],
+    dependencies=[Depends(admin_or_maintainer_or_auditor_access)],
 )
 @handle_analytics_errors("leaderboard score distribution")
 async def get_leaderboard_score_distribution(
@@ -3393,7 +3397,7 @@ async def get_leaderboard_score_distribution(
     response_model_by_alias=True,
     summary="Get dimension breakdown",
     description="Returns average scores per scoring dimension across all users.",
-    dependencies=[Depends(admin_access_only)],
+    dependencies=[Depends(admin_or_maintainer_or_auditor_access)],
 )
 @handle_analytics_errors("leaderboard dimension breakdown")
 async def get_leaderboard_dimension_breakdown(
@@ -3415,7 +3419,7 @@ async def get_leaderboard_dimension_breakdown(
     response_model_by_alias=True,
     summary="Get top performers",
     description="Returns top N leaderboard entries by total score.",
-    dependencies=[Depends(admin_access_only)],
+    dependencies=[Depends(admin_or_maintainer_or_auditor_access)],
 )
 @handle_analytics_errors("leaderboard top performers")
 async def get_leaderboard_top_performers(
@@ -3438,7 +3442,7 @@ async def get_leaderboard_top_performers(
     response_model_by_alias=True,
     summary="Get leaderboard snapshots",
     description="Returns paginated list of leaderboard computation snapshots.",
-    dependencies=[Depends(admin_access_only)],
+    dependencies=[Depends(admin_or_maintainer_or_auditor_access)],
 )
 @handle_analytics_errors("leaderboard snapshots")
 async def get_leaderboard_snapshots(
@@ -3466,7 +3470,7 @@ async def get_leaderboard_snapshots(
     response_model_by_alias=True,
     summary="Get available leaderboard seasons",
     description="Returns available completed monthly or quarterly leaderboard seasons for UI selectors.",
-    dependencies=[Depends(admin_access_only)],
+    dependencies=[Depends(admin_or_maintainer_or_auditor_access)],
 )
 @handle_analytics_errors("leaderboard seasons")
 async def get_leaderboard_seasons(
@@ -3520,7 +3524,7 @@ async def trigger_leaderboard_computation(
     description="Returns static scoring framework metadata: dimension descriptions, "
     "component explanations, tier definitions, intent definitions, and scoring principles. "
     "This data is static and can be cached indefinitely by the client.",
-    dependencies=[Depends(admin_access_only)],
+    dependencies=[Depends(admin_or_maintainer_or_auditor_access)],
 )
 @handle_analytics_errors("leaderboard framework")
 async def get_leaderboard_framework(
