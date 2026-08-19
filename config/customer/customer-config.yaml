@@ -266,6 +266,11 @@ components:
     settings:
       enabled: false
       value: ""
+  - id: "features:projectChargeback"
+    settings:
+      enabled: false
+      name: "Project Chargeback"
+      description: "Enable project chargeback status modification"
 
 preconfigured_assistants:
   - id: "codemie-onboarding"

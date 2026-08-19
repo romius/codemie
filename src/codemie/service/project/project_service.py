@@ -183,6 +183,7 @@ class ProjectService:
         cost_center_id: UUID | None = None,
         clear_cost_center: bool = False,
         enforce_member_spend_limits: bool | None = None,
+        chargeback_enabled: bool | None = None,
     ) -> Application:
         with get_session() as session:
             project = cls._get_project_for_update(session, user, project_name)
@@ -201,6 +202,7 @@ class ProjectService:
                 display_name=resolved_display_name,
                 description=validated_description,
                 cost_center_id=resolved_cost_center_id,
+                chargeback_enabled=chargeback_enabled,
             )
             if enforce_member_spend_limits is not None:
                 SettingsService.set_enforce_member_spend_limits(

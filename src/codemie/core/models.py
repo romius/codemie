@@ -391,6 +391,7 @@ class Application(BaseModelWithSQLSupport, Owned, table=True):
     created_by: Optional[str] = SQLField(default=None, max_length=255)  # User ID of creator (widened for non-UUID IDPs)
     cost_center_id: Optional[uuid.UUID] = SQLField(default=None, foreign_key="cost_centers.id", index=True)
     deleted_at: Optional[datetime] = SQLField(default=None)  # Soft-delete timestamp for project lifecycle
+    chargeback_enabled: bool = SQLField(default=False, nullable=False)
 
     # Custom PostgreSQL indexes
     # ix_applications_name: GIN trigram index for ILIKE search performance

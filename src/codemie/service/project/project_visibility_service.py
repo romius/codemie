@@ -116,6 +116,7 @@ class ProjectVisibilityService:
                     "counters": entity_counts.get(project.name) if include_counters else None,
                     "cost_center_id": project.cost_center_id,
                     "cost_center_name": cost_center.name if cost_center else None,
+                    "chargeback_enabled": project.chargeback_enabled,
                 }
             )
 
@@ -192,6 +193,7 @@ class ProjectVisibilityService:
             "admin_count": admin_count,
             "cost_center_id": project.cost_center_id,
             "cost_center_name": cost_center.name if cost_center else None,
+            "chargeback_enabled": project.chargeback_enabled,
             "members": member_list,
             "is_project_admin": bool(current_membership.is_project_admin) if current_membership else False,
         }

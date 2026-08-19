@@ -184,6 +184,33 @@ class TestCustomerConfig(unittest.TestCase):
             # Unconfigured feature defaults to False (is_component_enabled defaults to False)
             self.assertFalse(config.is_feature_enabled("unknownFeature"))
 
+    def test_is_feature_enabled_project_chargeback(self):
+        yaml_disabled = {
+            'components': [
+                {'id': 'features:projectChargeback', 'settings': {'enabled': False}},
+            ]
+        }
+        yaml_enabled = {
+            'components': [
+                {'id': 'features:projectChargeback', 'settings': {'enabled': True}},
+            ]
+        }
+        yaml_other = {
+            'components': [
+                {'id': 'features:otherFeature', 'settings': {'enabled': True}},
+            ]
+        }
+
+        with patch("codemie.configs.customer_config.Path.read_text") as mock_read_text:
+            mock_read_text.return_value = yaml.dump(yaml_disabled)
+            self.assertFalse(CustomerConfig().is_feature_enabled("projectChargeback"))
+
+            mock_read_text.return_value = yaml.dump(yaml_enabled)
+            self.assertTrue(CustomerConfig().is_feature_enabled("projectChargeback"))
+
+            mock_read_text.return_value = yaml.dump(yaml_other)
+            self.assertFalse(CustomerConfig().is_feature_enabled("projectChargeback"))
+
     def test_get_all_configured_assistant_slugs(self):
         """Test getting all configured assistant slugs"""
         yaml_with_assistants = {
