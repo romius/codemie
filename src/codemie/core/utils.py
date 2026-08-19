@@ -402,7 +402,10 @@ def calculate_token_cost(
     Args:
         llm_model: LLM Model name
         cost_config: CostConfig object containing token pricing information
-        input_tokens: Total input tokens (LangChain: prompt+cached+cache_creation, CLI: prompt only)
+        input_tokens: Input tokens as reported by the provider. Anthropic-native responses
+            (/v1/messages) report the real prompt only; OpenAI-compatible responses
+            (/chat/completions, /responses) report the superset prompt+cached+cache_creation.
+            The function detects which form was passed by magnitude.
         output_tokens: Number of output tokens generated
         cached_tokens: Number of cache read tokens (default: 0)
         cache_creation_tokens: Number of cache creation tokens (default: 0)
@@ -422,14 +425,20 @@ def calculate_token_cost(
         >>> config_claude = CostConfig(input=0.000003, output=0.000015, cache_creation_input_token_cost=0.00000375)
         >>> total, cached, creation = calculate_token_cost("claude", config_claude, 7, 17, 18504, 37202)
     """
-    # Calculate prompt tokens for cost calculation
-    # CLI native format: input_tokens is pure prompt
-    # LangChain format: input_tokens includes cached, subtract to get pure prompt
-    # If input < cached, it means input_tokens is already pure prompt (not inclusive)
-    if cache_creation_tokens > 0 or input_tokens < cached_tokens:
-        prompt_tokens = input_tokens
+    # Anthropic-native responses (/v1/messages) report ``input_tokens`` as the
+    # real prompt only, with ``cached_tokens`` and ``cache_creation_tokens``
+    # tracked as separate buckets. OpenAI-compatible responses (/chat/completions,
+    # /responses) instead report ``input_tokens`` as a superset that already
+    # includes both cache buckets, so charging the input rate on the raw value
+    # double-counts the cache-read tokens at the full prompt rate.
+    # Detect the superset case by comparing magnitudes: when ``input_tokens``
+    # is at least ``cached_tokens + cache_creation_tokens`` the extra is the
+    # real prompt (possibly zero when everything was served from cache);
+    # otherwise the value is already pure prompt.
+    if input_tokens >= cached_tokens + cache_creation_tokens:
+        prompt_tokens = input_tokens - cached_tokens - cache_creation_tokens
     else:
-        prompt_tokens = input_tokens - cached_tokens
+        prompt_tokens = input_tokens
 
     # Calculate pure prompt tokens cost
     prompt_tokens_cost = prompt_tokens * cost_config.input

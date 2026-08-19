@@ -429,6 +429,84 @@ def test_calculate_token_cost_zero_tokens():
     assert cache_creation_cost == 0.0
 
 
+def test_calculate_token_cost_openai_superset_input_subtracts_cache_buckets():
+    """OpenAI-compatible responses report input_tokens as prompt + cache_read + cache_creation.
+
+    Regression for EPMCDME-14230: the previous branch treated any response with
+    cache_creation_tokens > 0 as Claude-native and used input_tokens as prompt.
+    That double-counted cache_read tokens at the full input rate for OpenAI-format
+    responses coming through /chat/completions or /responses.
+    """
+    cost_config = CostConfig(
+        input=0.000015,
+        output=0.000075,
+        cache_read_input_token_cost=0.0000015,
+        cache_creation_input_token_cost=0.00001875,
+    )
+
+    # Real ES sample (request_id 481b3e34-...): claude-opus, /chat/completions,
+    # input_tokens is a superset — real prompt is only 2 tokens.
+    total_cost, cached_cost, cache_creation_cost = calculate_token_cost(
+        llm_model="claude-opus-4-6",
+        cost_config=cost_config,
+        input_tokens=116_897,
+        output_tokens=112,
+        cached_tokens=12_784,
+        cache_creation_tokens=104_111,
+    )
+
+    real_prompt = 116_897 - 12_784 - 104_111
+    expected_total = real_prompt * 0.000015 + 12_784 * 0.0000015 + 104_111 * 0.00001875 + 112 * 0.000075
+    assert abs(total_cost - expected_total) < 1e-9
+    assert abs(cached_cost - 12_784 * 0.0000015) < 1e-9
+    assert abs(cache_creation_cost - 104_111 * 0.00001875) < 1e-9
+
+
+def test_calculate_token_cost_anthropic_native_input_is_pure_prompt():
+    """Anthropic-native /v1/messages reports input_tokens as real prompt only."""
+    cost_config = CostConfig(
+        input=0.000003,
+        output=0.000015,
+        cache_read_input_token_cost=0.0000003,
+        cache_creation_input_token_cost=0.00000375,
+    )
+
+    # Real ES sample: /v1/messages, input=2 is pure prompt; cache_creation huge.
+    total_cost, cached_cost, cache_creation_cost = calculate_token_cost(
+        llm_model="claude-sonnet-5",
+        cost_config=cost_config,
+        input_tokens=2,
+        output_tokens=2236,
+        cached_tokens=0,
+        cache_creation_tokens=39_878,
+    )
+
+    expected_total = 2 * 0.000003 + 0 * 0.0000003 + 39_878 * 0.00000375 + 2236 * 0.000015
+    assert abs(total_cost - expected_total) < 1e-9
+
+
+def test_calculate_token_cost_langchain_no_cache_creation_still_subtracts_cache():
+    """Legacy LangChain format: cache_creation=0 and input_tokens includes cached."""
+    cost_config = CostConfig(
+        input=0.000001,
+        output=0.000005,
+        cache_read_input_token_cost=0.0000001,
+    )
+
+    total_cost, cached_cost, cache_creation_cost = calculate_token_cost(
+        llm_model="gpt-x",
+        cost_config=cost_config,
+        input_tokens=1000,
+        output_tokens=50,
+        cached_tokens=800,
+        cache_creation_tokens=0,
+    )
+
+    expected_total = 200 * 0.000001 + 800 * 0.0000001 + 50 * 0.000005
+    assert abs(total_cost - expected_total) < 1e-9
+    assert cache_creation_cost == 0.0
+
+
 def test_calculate_token_cost_returns_tuple():
     """Test that calculate_token_cost returns a tuple, not a single value."""
     cost_config = CostConfig(
