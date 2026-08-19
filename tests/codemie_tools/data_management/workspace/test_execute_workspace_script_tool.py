@@ -12,62 +12,50 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
-import unittest
-from datetime import datetime, timezone
+from unittest.mock import MagicMock, patch
 
-from codemie.rest_api.models.agent_workspace import (
-    ExecuteWorkspaceScriptResponse,
-    WorkspaceFileItemResponse,
-)
+from codemie_tools.data_management.code_executor.models import CodeExecutorConfig
 from codemie_tools.data_management.workspace.execute_workspace_script_tool import (
-    ExecuteWorkspaceScriptTool,
+    WorkspaceScriptRunner,
 )
 
 
-def _make_file_item() -> WorkspaceFileItemResponse:
-    return WorkspaceFileItemResponse(
-        path="src/foo.py",
-        mime_type="text/x-python",
-        checksum="abc123",
-        size=42,
-        version=1,
-        update_date=datetime(2026, 1, 1, tzinfo=timezone.utc),
-    )
+class TestBuildScriptWrapperForwardsResourceLimits:
+    """_build_script_wrapper must pass config-controlled limits to the guard builder."""
 
+    def _runner_with_config(self, max_threads: int, max_open_files: int) -> WorkspaceScriptRunner:
+        runner = MagicMock(spec=WorkspaceScriptRunner)
+        runner.config = CodeExecutorConfig(max_threads=max_threads, max_open_files=max_open_files)
+        runner._build_script_wrapper = WorkspaceScriptRunner._build_script_wrapper.__get__(runner)
+        return runner
 
-class TestExecuteWorkspaceScriptToolDumpJson(unittest.TestCase):
-    def _make_tool(self) -> ExecuteWorkspaceScriptTool:
-        return ExecuteWorkspaceScriptTool.__new__(ExecuteWorkspaceScriptTool)
+    def test_forwards_max_threads(self):
+        runner = self._runner_with_config(max_threads=16, max_open_files=128)
+        with patch(
+            "codemie_tools.data_management.workspace.execute_workspace_script_tool.build_guarded_workspace_script"
+        ) as mock_build:
+            mock_build.return_value = "script"
+            runner._build_script_wrapper("script.py", "/workspace")
+            _, kwargs = mock_build.call_args
+            assert kwargs["max_threads"] == 16
 
-    def test_checksum_excluded_from_workspace_files_in_response(self):
-        tool = self._make_tool()
-        response = ExecuteWorkspaceScriptResponse(
-            message="ok",
-            output="done",
-            workspace_files=[_make_file_item()],
-        )
-        result = json.loads(tool._dump_json(response))
-        self.assertNotIn("checksum", result["workspace_files"][0])
+    def test_forwards_max_open_files(self):
+        runner = self._runner_with_config(max_threads=16, max_open_files=128)
+        with patch(
+            "codemie_tools.data_management.workspace.execute_workspace_script_tool.build_guarded_workspace_script"
+        ) as mock_build:
+            mock_build.return_value = "script"
+            runner._build_script_wrapper("script.py", "/workspace")
+            _, kwargs = mock_build.call_args
+            assert kwargs["max_open_files"] == 128
 
-    def test_output_field_still_present(self):
-        tool = self._make_tool()
-        response = ExecuteWorkspaceScriptResponse(
-            message="ok",
-            output="script output",
-            workspace_files=[],
-        )
-        result = json.loads(tool._dump_json(response))
-        self.assertEqual(result["output"], "script output")
-
-    def test_path_and_size_present_in_workspace_files(self):
-        tool = self._make_tool()
-        response = ExecuteWorkspaceScriptResponse(
-            message="ok",
-            output="",
-            workspace_files=[_make_file_item()],
-        )
-        result = json.loads(tool._dump_json(response))
-        file_entry = result["workspace_files"][0]
-        self.assertEqual(file_entry["path"], "src/foo.py")
-        self.assertEqual(file_entry["size"], 42)
+    def test_non_default_config_values_are_forwarded(self):
+        runner = self._runner_with_config(max_threads=8, max_open_files=256)
+        with patch(
+            "codemie_tools.data_management.workspace.execute_workspace_script_tool.build_guarded_workspace_script"
+        ) as mock_build:
+            mock_build.return_value = "script"
+            runner._build_script_wrapper("run.py", "/sandbox")
+            _, kwargs = mock_build.call_args
+            assert kwargs["max_threads"] == 8
+            assert kwargs["max_open_files"] == 256

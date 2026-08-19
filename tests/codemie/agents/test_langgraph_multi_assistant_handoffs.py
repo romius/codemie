@@ -303,7 +303,7 @@ class TestLangGraphMultiAssistantHandoffs:
                     }
                 ],
             ),
-            ToolMessage(content="[no response]", name="transfer_to_analyst", tool_call_id="call-123"),
+            ToolMessage(content="", name="transfer_to_analyst", tool_call_id="call-123"),
         ]
 
     def test_strip_handoff_back_messages_pre_model_hook_hides_single_parent_handoff(self):

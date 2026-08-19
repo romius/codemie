@@ -69,8 +69,7 @@ def transform_history(history: list[Any], *, supports_rich_history: bool) -> lis
 
 def filter_history(history: list[Any], *, supports_rich_history: bool) -> list[Any]:
     if not supports_rich_history:
-        content_filtered = [item for item in history if item.content]
-        return sanitize_rich_history_for_llm(content_filtered)
+        return [item for item in history if item.content]
 
     filtered_history = []
     for item in history:

@@ -14,10 +14,8 @@
 
 from __future__ import annotations
 
-import functools
 import hashlib
 import mimetypes
-import re
 from pathlib import PurePosixPath
 
 from codemie.core.exceptions import ValidationException
@@ -207,24 +205,25 @@ class AgentWorkspaceService:
         self,
         workspace_id: str,
         user: User,
-        glob: str | None = None,
+        prefix: str | None = None,
+        recursive: bool = True,
     ) -> list[WorkspaceFileItemResponse]:
-        self._validate_glob(glob)
         workspace = self.get_workspace(workspace_id, user)
+        normalized_prefix = self._normalize_optional_path(prefix)
         db_files = self.repository.list_files(workspace.id)
 
         existing_paths: set[str] = set()
         filtered_files = []
         for workspace_file in db_files:
             existing_paths.add(workspace_file.path)
-            if not self._path_matches_glob(workspace_file.path, glob):
+            if not self._path_matches_prefix(workspace_file.path, normalized_prefix, recursive):
                 continue
             filtered_files.append(WorkspaceFileItemResponse.from_model(workspace_file))
 
         for virtual_file in self._get_conversation_uploaded_files(workspace.conversation_id):
             if virtual_file.path in existing_paths:
                 continue
-            if not self._path_matches_glob(virtual_file.path, glob):
+            if not self._path_matches_prefix(virtual_file.path, normalized_prefix, recursive):
                 continue
             filtered_files.append(WorkspaceFileItemResponse.from_model(virtual_file))
 
@@ -245,8 +244,8 @@ class AgentWorkspaceService:
             owner=workspace_file.blob_owner,
             mime_type=workspace_file.mime_type,
         )
-        is_binary = self._is_binary_workspace_content(workspace_file.mime_type, file_object.content)
-        content = file_object.content
+        is_binary = not self._is_text_mime_type(workspace_file.mime_type)
+        content = None if is_binary else self._to_text_content(file_object.content)
         checksum = workspace_file.checksum
         size = workspace_file.size
         if not checksum and file_object.content is not None:
@@ -262,37 +261,6 @@ class AgentWorkspaceService:
             is_binary=is_binary,
             content=content,
         )
-
-    def _is_binary_workspace_content(self, mime_type: str | None, content: object) -> bool:
-        """Return True when content should be treated as binary for the REST API.
-
-        Rules:
-        - Respect explicit text-like mime types.
-        - For missing/unknown/generic mime types (e.g. application/octet-stream),
-          attempt UTF-8 decode. If bytes decode cleanly and contain no NUL bytes,
-          treat as text.
-        """
-        normalized_mime = (mime_type or "").strip()
-        if normalized_mime and self._is_text_mime_type(normalized_mime):
-            return False
-
-        if content is None:
-            # Unknown: default to binary so callers won't assume UTF-8.
-            return True
-
-        if isinstance(content, str):
-            # Repository already returned text.
-            return False
-
-        if isinstance(content, bytes):
-            try:
-                decoded = content.decode("utf-8")
-            except Exception:
-                return True
-            # Guard against obvious binary blobs that happen to be UTF-8 decodable.
-            return "\x00" in decoded
-
-        return True
 
     def download_file(self, workspace_id: str, file_path: str, user: User):
         workspace = self.get_workspace(workspace_id, user)
@@ -357,10 +325,11 @@ class AgentWorkspaceService:
         workspace_id: str,
         query: str,
         user: User,
-        glob: str | None = None,
+        prefix: str | None = None,
+        recursive: bool = True,
     ) -> list[WorkspaceGrepMatchResponse]:
-        self._validate_glob(glob)
         workspace = self.get_workspace(workspace_id, user)
+        normalized_prefix = self._normalize_optional_path(prefix)
         matches: list[WorkspaceGrepMatchResponse] = []
 
         db_files = self.repository.list_files(workspace.id)
@@ -374,7 +343,7 @@ class AgentWorkspaceService:
                 all_files.append(virtual_file)
 
         for workspace_file in all_files:
-            if not self._path_matches_glob(workspace_file.path, glob):
+            if not self._path_matches_prefix(workspace_file.path, normalized_prefix, recursive):
                 continue
             if not self._is_text_mime_type(workspace_file.mime_type):
                 continue
@@ -676,6 +645,11 @@ class AgentWorkspaceService:
             raise ValidationException("file_path must be a file path")
         return normalized
 
+    def _normalize_optional_path(self, file_path: str | None) -> str | None:
+        if not file_path:
+            return None
+        return self._normalize_path(file_path)
+
     @staticmethod
     def _guess_mime_type(file_path: str) -> str:
         guessed_mime_type, _ = mimetypes.guess_type(file_path)
@@ -694,53 +668,19 @@ class AgentWorkspaceService:
         return mime_type.startswith("text/") or mime_type in text_like_mime_types
 
     @staticmethod
-    @functools.lru_cache(maxsize=256)
-    def _glob_to_pattern(glob: str) -> re.Pattern[str]:
-        parts = []
-        i = 0
-        while i < len(glob):
-            if glob[i : i + 3] == "**/":
-                parts.append("(?:[^/]+/)*")
-                i += 3
-            elif glob[i : i + 2] == "**":
-                parts.append(".*")
-                i += 2
-            elif glob[i] == "*":
-                parts.append("[^/]*")
-                i += 1
-            elif glob[i] == "?":
-                parts.append("[^/]")
-                i += 1
-            else:
-                parts.append(re.escape(glob[i]))
-                i += 1
-        return re.compile("^" + "".join(parts) + "$")
+    def _path_matches_prefix(file_path: str, prefix: str | None, recursive: bool) -> bool:
+        if prefix is None:
+            return recursive or "/" not in file_path
 
-    @staticmethod
-    def _path_matches_glob(file_path: str, glob: str | None) -> bool:
-        if glob is None:
+        normalized_prefix = prefix.rstrip("/")
+        if file_path == normalized_prefix:
             return True
-        return bool(AgentWorkspaceService._glob_to_pattern(glob).match(file_path))
-
-    @staticmethod
-    def _validate_glob(glob: str | None) -> None:
-        if glob is None:
-            return
-        if not glob.strip():
-            raise ValidationException("glob must not be an empty string")
-        normalized = glob.replace("\\", "/")
-        # Guard against ReDoS by limiting the size/complexity of user-controlled patterns.
-        # This prevents crafted globs (e.g. many wildcards with interleaved literals) from
-        # producing regexes that take exponential time to fail-match across many files.
-        if len(normalized) > 256:
-            raise ValidationException("glob is too long (max 256 characters)")
-        if normalized.count("*") + normalized.count("?") > 8:
-            raise ValidationException("glob is too complex (max 8 wildcard characters)")
-        if normalized.startswith("/"):
-            raise ValidationException("glob must be a relative pattern, not an absolute path")
-        for part in normalized.split("/"):
-            if part.strip() == "..":
-                raise ValidationException("glob must not contain path traversal components")
+        if not file_path.startswith(f"{normalized_prefix}/"):
+            return False
+        if recursive:
+            return True
+        remaining_path = file_path[len(normalized_prefix) + 1 :]
+        return "/" not in remaining_path
 
     @staticmethod
     def _get_blob_owner(workspace_id: str) -> str:
