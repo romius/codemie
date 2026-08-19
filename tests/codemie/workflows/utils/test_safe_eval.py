@@ -109,6 +109,14 @@ class TestSafeEvalAllowedExpressions:
     def test_dict_literal(self):
         assert safe_eval("{'a': 1, 'b': 2}", {}) == {"a": 1, "b": 2}
 
+    def test_set_literal(self):
+        assert safe_eval("{1, 2, 3}", {}) == {1, 2, 3}
+        assert safe_eval("{a, b}", {"a": 1, "b": 2}) == {1, 2}
+
+    def test_set_membership(self):
+        assert safe_eval("1 in {1, 2, 3}", {}) is True
+        assert safe_eval("4 not in {1, 2, 3}", {}) is True
+
     def test_negative_number(self):
         assert safe_eval("-1", {}) == -1
         assert safe_eval("value > -5", {"value": 0}) is True
@@ -201,6 +209,22 @@ class TestSafeEvalBlockedExpressions:
     def test_dict_comprehension_blocked(self):
         with pytest.raises(SafeEvalError, match="Disallowed expression type"):
             safe_eval("{k: v for k, v in d.items()}", {"d": {"a": 1}})
+
+    def test_set_comprehension_blocked(self):
+        with pytest.raises(SafeEvalError, match="Disallowed expression type"):
+            safe_eval("{x for x in items}", {"items": [1, 2]})
+
+    def test_set_unhashable_element_raises_safe_eval_error(self):
+        with pytest.raises(SafeEvalError, match="not hashable"):
+            safe_eval("{items}", {"items": [1, 2]})
+
+    def test_set_membership_unhashable_left_raises_safe_eval_error(self):
+        with pytest.raises(SafeEvalError, match="Membership test failed"):
+            safe_eval("items in {1, 2, 3}", {"items": [1, 2]})
+
+    def test_dict_unhashable_key_raises_safe_eval_error(self):
+        with pytest.raises(SafeEvalError, match="not hashable"):
+            safe_eval("{items: 1}", {"items": [1, 2]})
 
     def test_generator_expression_blocked(self):
         with pytest.raises(SafeEvalError, match="Disallowed expression type"):

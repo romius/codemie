@@ -97,6 +97,7 @@ class _SafeEvaluator:
             ast.Subscript: self._handle_subscript,
             ast.List: self._handle_list,
             ast.Tuple: self._handle_tuple,
+            ast.Set: self._handle_set,
             ast.Dict: self._handle_dict,
             ast.Call: self._handle_call,
             ast.Slice: self._handle_slice,
@@ -169,9 +170,15 @@ class _SafeEvaluator:
 
     def _apply_compare_op(self, left: Any, right: Any, op: ast.cmpop) -> bool:
         if isinstance(op, ast.In):
-            return left in right
+            try:
+                return left in right
+            except TypeError as e:
+                raise SafeEvalError(f"Membership test failed: {e}") from None
         if isinstance(op, ast.NotIn):
-            return left not in right
+            try:
+                return left not in right
+            except TypeError as e:
+                raise SafeEvalError(f"Membership test failed: {e}") from None
         op_func = _COMPARE_OPS.get(type(op))
         if op_func is None:
             raise SafeEvalError(f"Disallowed comparison operator: {type(op).__name__}")
@@ -205,8 +212,17 @@ class _SafeEvaluator:
     def _handle_tuple(self, node: ast.Tuple) -> Any:
         return tuple(self.eval(el) for el in node.elts)
 
+    def _handle_set(self, node: ast.Set) -> Any:
+        try:
+            return {self.eval(el) for el in node.elts}
+        except TypeError as e:
+            raise SafeEvalError(f"Set element is not hashable: {e}") from None
+
     def _handle_dict(self, node: ast.Dict) -> Any:
-        return {self.eval(k): self.eval(v) for k, v in zip(node.keys, node.values, strict=False)}
+        try:
+            return {self.eval(k): self.eval(v) for k, v in zip(node.keys, node.values, strict=False)}
+        except TypeError as e:
+            raise SafeEvalError(f"Dict key is not hashable: {e}") from None
 
     def _handle_call(self, node: ast.Call) -> Any:
         if any(isinstance(a, ast.Starred) for a in node.args):

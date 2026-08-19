@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "mode": "actual",
+  "size": "XS",
+  "total": 7,
+  "max": 36,
+  "dimensions": {
+    "component_scope": 2,
+    "requirements_clarity": 1,
+    "technical_risk": 1,
+    "file_change_estimate": 1,
+    "dependencies": 1,
+    "affected_layers": 1
+  },
+  "changed_files": [
+    "src/codemie/workflows/utils/safe_eval.py",
+    "tests/codemie/workflows/utils/test_safe_eval.py"
+  ],
+  "diffstat": "2 files changed, 16 insertions(+)"
+}

@@ -1,0 +1,37 @@
+{
+  "decision": "request-changes",
+  "rationale": "One major blocking finding (CR-001): raw TypeError can escape safe_eval from _apply_compare_op when an unhashable value is used with `in`/`not in` against a set literal (e.g. `items in {1, 2, 3}` where items=[1,2]). This is a regression introduced by adding ast.Set support — before this PR, set literals were blocked before reaching _apply_compare_op so the path was unreachable. 6 deferred findings: TypeError message mislabeling in _handle_set/_handle_dict try/except scope (#1-2), raise-from-None traceback suppression (#3), and 3 missing edge-case tests for empty set literal, duplicate deduplication, and TypeError-from-eval mislabeling (#4-6). Acceptance lens skipped (no-spec run); confidence low.",
+  "confidence": "low",
+  "risk_flags": [],
+  "business_review": [],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "pass",
+      "notes": "Commit 395fe3fb1 'EPMCDME-13762: Wrap unhashable TypeError in SafeEvalError for set and dict handlers' matches the required EPMCDME-NNNNN: Description pattern."
+    },
+    {
+      "kind": "code-quality",
+      "status": "pass",
+      "notes": "New handlers use correct type annotations. Style consistent with existing _handle_list/_handle_tuple/_handle_dict. No unused imports."
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "ast.Set support correctly scoped to set literals only; ast.SetComp remains blocked (Disallowed expression type). No injection vectors introduced."
+    }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/workflows/utils/safe_eval.py",
+      "line": 172,
+      "title": "Unhashable left operand with `in`/`not in` against set literal leaks raw TypeError",
+      "problem": "_apply_compare_op calls `left in right` and `left not in right` without a TypeError guard. Before ast.Set support, set literals were blocked at the handlers dispatch level, making this path unreachable for set right-operands. Now that _handle_set is registered, expressions like `items in {1, 2, 3}` where items=[1,2] reach _apply_compare_op and raise raw TypeError: unhashable type that escapes safe_eval entirely.",
+      "impact": "Callers of safe_eval expect only SafeEvalError (or SyntaxError) to escape. A raw TypeError violates that contract — callers without an explicit TypeError guard will propagate an unexpected exception type. Workflow branching logic using `in` membership tests against set literals will crash instead of raising SafeEvalError.",
+      "recommendation": "Wrap the `in`/`not in` branches in _apply_compare_op with try/except TypeError and re-raise as SafeEvalError: try: return left in right / except TypeError as e: raise SafeEvalError(f'Membership test failed: {e}') from None. Same fix for NotIn. Add a regression test: safe_eval('items in {1, 2, 3}', {'items': [1, 2]}) should raise SafeEvalError matching 'Membership test failed'."
+    }
+  ]
+}
