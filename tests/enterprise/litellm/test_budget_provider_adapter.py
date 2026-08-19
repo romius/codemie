@@ -377,3 +377,238 @@ async def test_delete_override_budget_swallows_provider_error():
         new=AsyncMock(side_effect=RuntimeError("LiteLLM unavailable")),
     ):
         await adapter.delete_override_budget(override_budget_id="proj-1:shared")
+
+
+# ── _carry_spend_forward tests ──────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_carry_spend_forward_patches_new_key_via_api_key_field():
+    """api_key field in key_state is used as the token when key_hash/token are absent."""
+    mock_service = MagicMock()
+    mock_service.api_client.post = MagicMock(return_value={"updated": True})
+    adapter = LiteLLMBudgetEnforcementProvider(service=mock_service)
+
+    key_state = {"api_key": "sk-test-abc123", "key_alias": "codemie:project:proj-a:category:cli"}
+
+    with patch(
+        "codemie.enterprise.litellm.budget_provider_adapter.asyncio.to_thread",
+        side_effect=lambda fn, *args, **kwargs: fn(*args, **kwargs),
+    ):
+        await adapter._carry_spend_forward(
+            service=mock_service,
+            key_state=key_state,
+            carry_spend=42.5,
+            project_name="proj-a",
+            budget_id="bud-1",
+            budget_category=BudgetCategory.CLI,
+            key_alias="codemie:project:proj-a:category:cli",
+        )
+
+    mock_service.api_client.post.assert_called_once_with("/key/update", data={"key": "sk-test-abc123", "spend": 42.5})
+    assert key_state["spend"] == 42.5
+
+
+@pytest.mark.asyncio
+async def test_carry_spend_forward_prefers_key_hash_over_api_key():
+    """key_hash takes precedence over api_key when both are present."""
+    mock_service = MagicMock()
+    mock_service.api_client.post = MagicMock(return_value={"updated": True})
+    adapter = LiteLLMBudgetEnforcementProvider(service=mock_service)
+
+    key_state = {"key_hash": "hash-abc", "api_key": "sk-test-should-not-use", "key_alias": "alias"}
+
+    with patch(
+        "codemie.enterprise.litellm.budget_provider_adapter.asyncio.to_thread",
+        side_effect=lambda fn, *args, **kwargs: fn(*args, **kwargs),
+    ):
+        await adapter._carry_spend_forward(
+            service=mock_service,
+            key_state=key_state,
+            carry_spend=10.0,
+            project_name="proj-a",
+            budget_id="bud-1",
+            budget_category=BudgetCategory.CLI,
+            key_alias="alias",
+        )
+
+    mock_service.api_client.post.assert_called_once_with("/key/update", data={"key": "hash-abc", "spend": 10.0})
+
+
+@pytest.mark.asyncio
+async def test_carry_spend_forward_skips_api_call_when_no_token():
+    """Skips the /key/update call and does not mutate key_state when no token fields are present."""
+    mock_service = MagicMock()
+    adapter = LiteLLMBudgetEnforcementProvider(service=mock_service)
+
+    key_state: dict = {}
+
+    await adapter._carry_spend_forward(
+        service=mock_service,
+        key_state=key_state,
+        carry_spend=5.0,
+        project_name="proj-a",
+        budget_id="bud-1",
+        budget_category=BudgetCategory.CLI,
+        key_alias="alias",
+    )
+
+    mock_service.api_client.post.assert_not_called()
+    assert "spend" not in key_state
+
+
+@pytest.mark.asyncio
+async def test_carry_spend_forward_does_not_raise_on_api_error():
+    """API failure during carry-forward is swallowed — no exception propagates and spend is not set."""
+    mock_service = MagicMock()
+    mock_service.api_client.post = MagicMock(side_effect=RuntimeError("LiteLLM 404"))
+    adapter = LiteLLMBudgetEnforcementProvider(service=mock_service)
+
+    key_state = {"api_key": "sk-test-abc"}
+
+    with patch(
+        "codemie.enterprise.litellm.budget_provider_adapter.asyncio.to_thread",
+        side_effect=lambda fn, *args, **kwargs: fn(*args, **kwargs),
+    ):
+        await adapter._carry_spend_forward(
+            service=mock_service,
+            key_state=key_state,
+            carry_spend=7.0,
+            project_name="proj-a",
+            budget_id="bud-1",
+            budget_category=BudgetCategory.CLI,
+            key_alias="alias",
+        )
+
+    assert "spend" not in key_state
+
+
+# ── _recreate_project_budget_key_alias carry-spend integration ───────────────
+
+
+def _make_recreate_service(*, existing_key, new_key_state):
+    """Build a mock LiteLLMService for _recreate_project_budget_key_alias tests.
+
+    _get_project_key_by_alias is called twice: once to capture spend, once to
+    refresh budget_reset_at.  The second call is only reached when new_key_state
+    lacks 'budget_reset_at', so we always return existing_key to be safe.
+    """
+    mock_service = MagicMock()
+    mock_service._get_project_key_by_alias = MagicMock(return_value=existing_key)
+    mock_service._generate_project_key = MagicMock(return_value=new_key_state)
+    return mock_service
+
+
+@pytest.mark.asyncio
+async def test_recreate_carries_spend_from_existing_key():
+    """When an existing key has spend > 0, _recreate calls _carry_spend_forward."""
+    existing_key = {"key_alias": "codemie:project:proj-a:category:cli", "spend": 42.5}
+    new_key_state = {
+        "key_alias": "codemie:project:proj-a:category:cli",
+        "api_key": "sk-new-key",
+        "budget_reset_at": "2026-09-01T00:00:00Z",
+    }
+
+    mock_service = _make_recreate_service(existing_key=existing_key, new_key_state=new_key_state)
+    adapter = LiteLLMBudgetEnforcementProvider(service=mock_service)
+
+    carry_called_with: list = []
+
+    async def _mock_carry_forward(**kwargs):
+        carry_called_with.append(kwargs)
+
+    with (
+        patch(
+            "codemie.enterprise.litellm.budget_provider_adapter.asyncio.to_thread",
+            side_effect=lambda fn, *a, **kw: fn(*a, **kw),
+        ),
+        patch.object(adapter, "_delete_project_provider_key_alias", new=AsyncMock()),
+        patch.object(adapter, "_delete_project_api_key", new=AsyncMock()),
+        patch.object(adapter, "_persist_project_api_key", new=AsyncMock()),
+        patch.object(adapter, "_carry_spend_forward", side_effect=_mock_carry_forward),
+    ):
+        state = await adapter._recreate_project_budget_key_alias(
+            service=mock_service,
+            project_name="proj-a",
+            budget_category=BudgetCategory.CLI,
+            budget_id="bud-1",
+            max_budget=Decimal("100.0"),
+            budget_duration="30d",
+            models=None,
+        )
+
+    assert state.sync_status == SyncStatus.OK
+    assert len(carry_called_with) == 1
+    assert carry_called_with[0]["carry_spend"] == 42.5
+
+
+@pytest.mark.asyncio
+async def test_recreate_skips_carry_when_no_existing_key():
+    """When there is no existing key (first-time create), carry-forward is not called."""
+    new_key_state = {
+        "key_alias": "codemie:project:proj-b:category:cli",
+        "api_key": "sk-new-key",
+        "budget_reset_at": "2026-09-01T00:00:00Z",
+    }
+
+    mock_service = _make_recreate_service(existing_key=None, new_key_state=new_key_state)
+    adapter = LiteLLMBudgetEnforcementProvider(service=mock_service)
+
+    with (
+        patch(
+            "codemie.enterprise.litellm.budget_provider_adapter.asyncio.to_thread",
+            side_effect=lambda fn, *a, **kw: fn(*a, **kw),
+        ),
+        patch.object(adapter, "_delete_project_provider_key_alias", new=AsyncMock()),
+        patch.object(adapter, "_delete_project_api_key", new=AsyncMock()),
+        patch.object(adapter, "_persist_project_api_key", new=AsyncMock()),
+        patch.object(adapter, "_carry_spend_forward", new=AsyncMock()) as mock_carry,
+    ):
+        state = await adapter._recreate_project_budget_key_alias(
+            service=mock_service,
+            project_name="proj-b",
+            budget_category=BudgetCategory.CLI,
+            budget_id="bud-2",
+            max_budget=Decimal("50.0"),
+            budget_duration="30d",
+            models=None,
+        )
+
+    assert state.sync_status == SyncStatus.OK
+    mock_carry.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_recreate_skips_carry_when_existing_key_spend_is_zero():
+    """When existing key has spend=0, no carry-forward should be attempted."""
+    existing_key = {"key_alias": "codemie:project:proj-c:category:cli", "spend": 0.0}
+    new_key_state = {
+        "key_alias": "codemie:project:proj-c:category:cli",
+        "api_key": "sk-new-key",
+        "budget_reset_at": "2026-09-01T00:00:00Z",
+    }
+
+    mock_service = _make_recreate_service(existing_key=existing_key, new_key_state=new_key_state)
+    adapter = LiteLLMBudgetEnforcementProvider(service=mock_service)
+
+    with (
+        patch(
+            "codemie.enterprise.litellm.budget_provider_adapter.asyncio.to_thread",
+            side_effect=lambda fn, *a, **kw: fn(*a, **kw),
+        ),
+        patch.object(adapter, "_delete_project_provider_key_alias", new=AsyncMock()),
+        patch.object(adapter, "_delete_project_api_key", new=AsyncMock()),
+        patch.object(adapter, "_persist_project_api_key", new=AsyncMock()),
+        patch.object(adapter, "_carry_spend_forward", new=AsyncMock()) as mock_carry,
+    ):
+        await adapter._recreate_project_budget_key_alias(
+            service=mock_service,
+            project_name="proj-c",
+            budget_category=BudgetCategory.CLI,
+            budget_id="bud-3",
+            max_budget=Decimal("50.0"),
+            budget_duration="30d",
+            models=None,
+        )
+
+    mock_carry.assert_not_called()
