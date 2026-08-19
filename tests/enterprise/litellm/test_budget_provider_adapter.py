@@ -312,3 +312,68 @@ async def test_reconcile_reports_missing_when_ref_not_in_budgets_or_keys():
     result = await adapter.reconcile_budget_reset_timestamps(targets=[_legacy_budget_target("ghost-ref")])
 
     assert result.items[0].error == "provider entity missing during reset reconciliation"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("child_budget_id", ["proj-1:shared", "proj-1:user:alice"])
+async def test_delete_override_budget_posts_to_endpoint(child_budget_id):
+    service = MagicMock()
+    adapter = LiteLLMBudgetEnforcementProvider(service=service)
+
+    with patch(
+        "codemie.enterprise.litellm.budget_provider_adapter.asyncio.to_thread",
+        new=AsyncMock(return_value=None),
+    ) as mock_thread:
+        await adapter.delete_override_budget(override_budget_id=child_budget_id)
+
+    mock_thread.assert_awaited_once()
+    call_args = mock_thread.call_args
+    assert call_args.args[0] == service.api_client.post
+    assert call_args.args[1] == "/budget/delete"
+    assert call_args.kwargs == {"data": {"id": child_budget_id}}
+
+
+@pytest.mark.asyncio
+async def test_delete_override_budget_when_service_none():
+    adapter = LiteLLMBudgetEnforcementProvider(service=None)
+    await adapter.delete_override_budget(override_budget_id="proj-1:shared")
+
+
+@pytest.mark.asyncio
+async def test_delete_override_budget_refuses_non_child_id():
+    service = MagicMock()
+    adapter = LiteLLMBudgetEnforcementProvider(service=service)
+
+    with patch(
+        "codemie.enterprise.litellm.budget_provider_adapter.asyncio.to_thread",
+        new=AsyncMock(),
+    ) as mock_thread:
+        await adapter.delete_override_budget(override_budget_id="proj-1")
+
+    mock_thread.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_delete_override_budget_treats_missing_budget_as_success():
+    service = MagicMock()
+    adapter = LiteLLMBudgetEnforcementProvider(service=service)
+    not_found = Exception("missing")
+    not_found.response = SimpleNamespace(status_code=404)
+
+    with patch(
+        "codemie.enterprise.litellm.budget_provider_adapter.asyncio.to_thread",
+        new=AsyncMock(side_effect=not_found),
+    ):
+        await adapter.delete_override_budget(override_budget_id="proj-1:shared")
+
+
+@pytest.mark.asyncio
+async def test_delete_override_budget_swallows_provider_error():
+    service = MagicMock()
+    adapter = LiteLLMBudgetEnforcementProvider(service=service)
+
+    with patch(
+        "codemie.enterprise.litellm.budget_provider_adapter.asyncio.to_thread",
+        new=AsyncMock(side_effect=RuntimeError("LiteLLM unavailable")),
+    ):
+        await adapter.delete_override_budget(override_budget_id="proj-1:shared")

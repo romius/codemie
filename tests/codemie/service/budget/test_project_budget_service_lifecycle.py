@@ -107,6 +107,7 @@ async def test_delete_project_budget_marks_deleted_and_clears_resolution_cache()
     provider = SimpleNamespace(
         delete_member_allocation=AsyncMock(),
         delete_project_budget=AsyncMock(),
+        delete_override_budget=AsyncMock(),
     )
 
     from codemie.service.budget.budget_resolution_service import _resolution_cache
@@ -158,6 +159,63 @@ async def test_delete_project_budget_marks_deleted_and_clears_resolution_cache()
     assert update_fields["provider_metadata"]["sync_status"] == "deleted"
     assert isinstance(update_fields["deleted_at"], datetime)
     assert update_fields["deleted_at"].tzinfo == timezone.utc
+    provider.delete_override_budget.assert_awaited_once_with(override_budget_id="proj-budget-1:shared")
+
+
+@pytest.mark.asyncio
+async def test_delete_project_budget_shared_budget_failure_does_not_block_soft_delete():
+    service = ProjectBudgetService()
+    session = AsyncMock()
+    budget = SimpleNamespace(
+        budget_id="proj-budget-1",
+        budget_type="project",
+        budget_category="cli",
+        budget_reset_at="2026-04-22T10:00:00Z",
+        provider_metadata={"provider": "litellm", "provider_budget_ref": "provider-budget-1", "sync_status": "ok"},
+    )
+    assignment = SimpleNamespace(id="assignment-1", project_name="proj-a", budget_category="cli")
+    allocations = []
+    provider = SimpleNamespace(
+        delete_member_allocation=AsyncMock(),
+        delete_project_budget=AsyncMock(),
+        delete_override_budget=AsyncMock(side_effect=RuntimeError("LiteLLM unavailable")),
+    )
+
+    with (
+        patch(
+            "codemie.service.budget.project_budget_service.budget_repository.get_by_id",
+            new=AsyncMock(return_value=budget),
+        ),
+        patch(
+            "codemie.service.budget.project_budget_service.project_budget_assignment_repository.get_active_by_budget_id",
+            new=AsyncMock(return_value=assignment),
+        ),
+        patch(
+            "codemie.service.budget.project_budget_service.project_member_budget_assignment_repository.get_active_by_budget_id",
+            new=AsyncMock(return_value=allocations),
+        ),
+        patch(
+            "codemie.service.budget.project_budget_service.budget_repository.list_active_child_budgets",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch("codemie.service.budget.project_budget_service.get_active_provider", return_value=provider),
+        patch(
+            "codemie.service.budget.project_budget_service.project_member_budget_assignment_repository.soft_delete_all_by_budget_id",
+            new=AsyncMock(),
+        ) as mock_soft_delete_allocations,
+        patch(
+            "codemie.service.budget.project_budget_service.project_budget_assignment_repository.soft_delete",
+            new=AsyncMock(),
+        ) as mock_soft_delete_assignment,
+        patch(
+            "codemie.service.budget.project_budget_service.budget_repository.update",
+            new=AsyncMock(),
+        ),
+    ):
+        await service.delete_project_budget(session=session, budget_id="proj-budget-1", actor_id="actor-1")
+
+    mock_soft_delete_allocations.assert_awaited_once_with(session, "proj-budget-1")
+    mock_soft_delete_assignment.assert_awaited_once_with(session, "assignment-1")
 
 
 @pytest.mark.asyncio

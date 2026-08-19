@@ -71,6 +71,17 @@ def _is_project_scoped_customer_id(user_id: str | None) -> bool:
     return bool(user_id and user_id.startswith(_PROJECT_SCOPED_CUSTOMER_PREFIX))
 
 
+def _is_project_child_budget_id(budget_id: str | None) -> bool:
+    """Return True for shared/override child budget ids, which are safe to delete."""
+    return bool(budget_id and (budget_id.endswith(":shared") or ":user:" in budget_id))
+
+
+def _is_not_found_error(exc: Exception) -> bool:
+    """Return True when the provider reported the budget as already absent."""
+    response = getattr(exc, "response", None)
+    return getattr(response, "status_code", None) == 404
+
+
 def _sanitized_project_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     """Return provider metadata safe to persist in Budget.provider_metadata."""
     sanitized = dict(metadata)
@@ -1307,6 +1318,12 @@ class LiteLLMBudgetEnforcementProvider:
                 f"provider={_PROVIDER_NAME!r} override_budget_id={override_budget_id!r} reason=provider_unavailable"
             )
             return
+        if not _is_project_child_budget_id(override_budget_id):
+            logger.warning(
+                f"budget_event=override_budget_delete_refused component=litellm_budget_provider "
+                f"provider={_PROVIDER_NAME!r} override_budget_id={override_budget_id!r} reason=not_a_child_budget_id"
+            )
+            return
         try:
             await asyncio.to_thread(service.api_client.post, "/budget/delete", data={"id": override_budget_id})
             logger.debug(
@@ -1314,6 +1331,12 @@ class LiteLLMBudgetEnforcementProvider:
                 f"provider={_PROVIDER_NAME!r} override_budget_id={override_budget_id!r}"
             )
         except Exception as exc:
+            if _is_not_found_error(exc):
+                logger.debug(
+                    f"budget_event=override_budget_delete_completed component=litellm_budget_provider "
+                    f"provider={_PROVIDER_NAME!r} override_budget_id={override_budget_id!r} reason=already_absent"
+                )
+                return
             logger.warning(
                 f"budget_event=override_budget_delete_failed component=litellm_budget_provider "
                 f"provider={_PROVIDER_NAME!r} override_budget_id={override_budget_id!r} error={exc}"

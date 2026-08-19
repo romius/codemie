@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "task": "Delete LiteLLM shared budget when a project budget is deleted (EPMCDME-14248)",
+  "generated": "2026-08-18T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 18,
+  "size": "M",
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Five components touched across 2 repos: enterprise service.py (new delete_managed_budget method), core provider.py (Protocol signature addition — shared contract), provider_registry.py (noop stub), budget_provider_adapter.py (new delete_shared_budget method), project_budget_service.py (wire child deletion). Protocol is a shared utility used by all budget providers, triggering the shared-utilities red flag bump from L (4) to XL (5)."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "5-7 source files modified (enterprise service, core provider protocol, registry, adapter, core service) plus 3-5 test files created or extended, spanning 3+ directories: codemie-enterprise/src, src/codemie/service/budget, src/codemie/enterprise/litellm, tests/. Total estimated 8-10 files."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from L (4) to XL (5): touches core shared utility — BudgetEnforcementProvider Protocol in provider.py is the shared contract used by all budget provider implementations (noop + LiteLLM)"
+  ],
+  "split_recommendation": null
+}

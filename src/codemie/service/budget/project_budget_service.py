@@ -1508,6 +1508,7 @@ class ProjectBudgetService:
         budget_id: str,
         assignment: ProjectBudgetAssignment | None,
         provider_meta: dict[str, Any],
+        child_budgets: list[Budget] | None = None,
     ) -> None:
         budget_state = BudgetProviderState(
             provider=provider_meta.get("provider", ""),
@@ -1527,6 +1528,21 @@ class ProjectBudgetService:
                 f"project_name={assignment.project_name if assignment else None!r} budget_id={budget_id!r} "
                 f"budget_category={budget.budget_category!r} error={exc}"
             )
+
+        shared_budget_id = build_shared_project_budget_id(budget_id)
+        child_budget_ids = [child.budget_id for child in child_budgets or []]
+        if shared_budget_id not in child_budget_ids:
+            child_budget_ids.append(shared_budget_id)
+
+        for child_budget_id in child_budget_ids:
+            try:
+                await provider.delete_override_budget(override_budget_id=child_budget_id)
+            except Exception as exc:
+                logger.warning(
+                    f"budget_event=provider_child_budget_delete_failed component=project_budget_service "
+                    f"provider={getattr(provider, 'provider_name', 'unknown')!r} "
+                    f"budget_id={budget_id!r} child_budget_id={child_budget_id!r} error={exc}"
+                )
 
     async def _soft_delete_project_budget_rows(
         self,
@@ -1603,6 +1619,7 @@ class ProjectBudgetService:
             budget_id=budget_id,
             assignment=assignment,
             provider_meta=provider_meta,
+            child_budgets=child_budgets,
         )
         await self._soft_delete_project_budget_rows(
             session,
