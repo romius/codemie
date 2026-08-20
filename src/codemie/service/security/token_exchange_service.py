@@ -22,6 +22,10 @@ from cachetools import TTLCache
 from codemie.configs.config import config
 from codemie.configs.logger import logger
 from codemie.rest_api.security.user_context import get_current_user
+from codemie.service.security.principal_token_resolver import (
+    PrincipalType,
+    resolve_current_bearer_token,
+)
 from codemie.service.security.token_providers.base_provider import (
     BaseTokenProvider,
     BrokerAuthRequiredException,
@@ -34,6 +38,18 @@ from codemie.service.security.token_providers.context_token_provider import (
     ContextTokenProvider,
 )
 from codemie.service.security.jwt_utils import parse_jwt_exp
+
+# Separate cache/store slots per principal type so a cached client token is never
+# served for a user-principal request and vice versa. Both the read/write path and
+# the eviction path derive their keys from here, so the two cannot drift apart.
+_STORE_ALIASES: dict[PrincipalType, str] = {
+    PrincipalType.USER: "__idp_token__",
+    PrincipalType.CLIENT: "__client_token__",
+}
+
+
+def _cache_key(user_id: str, principal_type: PrincipalType) -> str:
+    return f"auth_token:{user_id}:{principal_type.value}"
 
 
 class TokenExchangeService:
@@ -129,15 +145,37 @@ class TokenExchangeService:
         logger.info(f"TokenExchangeService initialized with cache_ttl={config.TOKEN_CACHE_TTL}s")
 
     def get_token_for_current_user(self) -> str | None:
+        token, _principal_type = self.get_token_with_principal_type_for_current_user()
+        return token
+
+    def get_token_with_principal_type_for_current_user(self) -> tuple[str | None, PrincipalType | None]:
+        """Retrieve the outbound bearer token and the principal type it represents.
+
+        The principal type comes from the request context (user token vs client
+        token, see principal_token_resolver). Exchanged tokens keep the principal
+        type of their subject token: a client-credentials token never becomes a
+        user-principal token.
+        """
         current_user = get_current_user()
         if not current_user:
             logger.debug("No current user in context")
-            return None
+            return None, None
 
-        user_id = current_user.id
+        _token, principal_type = resolve_current_bearer_token()
+        if principal_type is None:
+            logger.debug(f"No bearer token in context for user_id={current_user.id}")
+            return None, None
+
+        token = self._get_token_for_principal(current_user.id, principal_type)
+        if not token:
+            return None, None
+        return token, principal_type
+
+    def _get_token_for_principal(self, user_id: str, principal_type: PrincipalType) -> str | None:
+        store_alias = _STORE_ALIASES[principal_type]
 
         if self._store is not None:
-            cached_token = self._store.get(user_id, "__idp_token__")
+            cached_token = self._store.get(user_id, store_alias)
             if cached_token is not None:
                 logger.debug(f"Token TMS hit for user_id={user_id}")
                 return cached_token
@@ -153,12 +191,12 @@ class TokenExchangeService:
 
             if token:
                 expires_at = parse_jwt_exp(token)
-                self._store.put(user_id, "__idp_token__", access_token=token, expires_at=expires_at)
+                self._store.put(user_id, store_alias, access_token=token, expires_at=expires_at)
                 logger.debug(f"Stored token in TMS for user_id={user_id}")
 
             return token
 
-        cache_key = f"auth_token:{user_id}"
+        cache_key = _cache_key(user_id, principal_type)
         cached_token = self._cache.get(cache_key)
         if cached_token is not None:
             logger.debug(f"Token cache hit for user_id={user_id}")
@@ -180,10 +218,12 @@ class TokenExchangeService:
 
     def clear_cache(self, user_id: str | None = None) -> None:
         if user_id:
-            if self._store is not None:
-                self._store.invalidate(user_id, "__idp_token__")
-            cache_key = f"auth_token:{user_id}"
-            self._cache.pop(cache_key, None)
+            # Evict every principal slot: logout must not leave a usable credential
+            # behind for either the user- or the client-scoped principal.
+            for principal_type, store_alias in _STORE_ALIASES.items():
+                if self._store is not None:
+                    self._store.invalidate(user_id, store_alias)
+                self._cache.pop(_cache_key(user_id, principal_type), None)
             logger.info(f"Cleared token cache for user_id={user_id}")
         else:
             self._cache.clear()

@@ -13,10 +13,22 @@
 # limitations under the License.
 
 """
-Unit tests for UserContext model
+Unit tests for UserContext model and request-scoped context variables
 """
 
+import asyncio
+
+import pytest
+
 from codemie.rest_api.security.user import User, UserContext
+from codemie.rest_api.security.user_context import (
+    clear_current_auth_token,
+    clear_current_client_access_token,
+    get_current_auth_token,
+    get_current_client_access_token,
+    set_current_auth_token,
+    set_current_client_access_token,
+)
 
 
 class TestUserContext:
@@ -129,3 +141,54 @@ class TestUserContext:
         ctx2 = UserContext(**ctx.model_dump())
 
         assert ctx2 == ctx
+
+
+class TestClientAccessTokenContextVar:
+    """Test cases for the client access token ContextVar trio"""
+
+    @pytest.fixture(autouse=True)
+    def clean_context(self):
+        clear_current_auth_token()
+        clear_current_client_access_token()
+        yield
+        clear_current_auth_token()
+        clear_current_client_access_token()
+
+    def test_default_is_none(self):
+        assert get_current_client_access_token() is None
+
+    def test_set_and_get(self):
+        set_current_client_access_token("client-token")
+        assert get_current_client_access_token() == "client-token"
+
+    def test_clear(self):
+        set_current_client_access_token("client-token")
+        clear_current_client_access_token()
+        assert get_current_client_access_token() is None
+
+    def test_independent_from_auth_token(self):
+        """Client token and user auth token are stored in separate context vars."""
+        set_current_auth_token("user-token")
+        set_current_client_access_token("client-token")
+
+        assert get_current_auth_token() == "user-token"
+        assert get_current_client_access_token() == "client-token"
+
+        clear_current_auth_token()
+        assert get_current_auth_token() is None
+        assert get_current_client_access_token() == "client-token"
+
+    def test_isolation_between_async_tasks(self):
+        """Each asyncio task sees its own client token."""
+
+        async def set_and_read(token: str) -> str | None:
+            set_current_client_access_token(token)
+            await asyncio.sleep(0)
+            return get_current_client_access_token()
+
+        async def main():
+            return await asyncio.gather(set_and_read("token-a"), set_and_read("token-b"))
+
+        results = asyncio.run(main())
+        assert results == ["token-a", "token-b"]
+        assert get_current_client_access_token() is None

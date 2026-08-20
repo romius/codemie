@@ -282,9 +282,8 @@ class OIDCTokenExchangeService:
 
         logger.debug(f"OIDC exchange TMS miss for user_id={user_id} audience={audience}")
 
-        idp_token = token_exchange_service.get_token_for_current_user()
+        idp_token = self._get_subject_token(user_id, token_exchange_service)
         if not idp_token:
-            logger.debug(f"No IdP token available for OIDC exchange for user_id={user_id}")
             return None
 
         exchanged_token, response_data = self._run_async(self._aexchange_token_with_response(idp_token, audience))
@@ -313,15 +312,33 @@ class OIDCTokenExchangeService:
 
         logger.debug(f"OIDC exchange token cache miss for user_id={user_id} audience={audience}")
 
-        idp_token = token_exchange_service.get_token_for_current_user()
+        idp_token = self._get_subject_token(user_id, token_exchange_service)
         if not idp_token:
-            logger.debug(f"No IdP token available for OIDC exchange for user_id={user_id}")
             return None
 
         exchanged_token = self._run_async(self._aexchange_token(idp_token, audience))
         self._cache[cache_key] = exchanged_token
         logger.debug(f"Cached OIDC exchanged token for user_id={user_id} audience={audience}")
         return exchanged_token
+
+    @staticmethod
+    def _get_subject_token(user_id: str, token_exchange_service: Any) -> str | None:
+        """Resolve the subject token for OIDC exchange, logging its principal type.
+
+        Never logs token values — only user_id and principal type.
+        """
+        token, principal_type = token_exchange_service.get_token_with_principal_type_for_current_user()
+        if not token:
+            logger.debug(
+                f"No bearer token available for OIDC exchange for user_id={user_id} "
+                f"(neither user nor client principal)"
+            )
+            return None
+
+        logger.debug(
+            f"OIDC exchange subject token resolved with {principal_type.value}-principal for user_id={user_id}"
+        )
+        return token
 
     def get_exchanged_token(self, audience: str) -> str | None:
         from codemie.service.security.token_exchange_service import token_exchange_service

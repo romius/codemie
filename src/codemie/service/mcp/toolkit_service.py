@@ -50,6 +50,7 @@ from codemie.rest_api.security.user_context import get_current_auth_token, get_c
 from codemie.service.mcp.auth_warnings import clear_mcp_auth_warnings, record_mcp_auth_warnings
 from codemie.service.mcp.client import MCPConnectClient
 from codemie.service.mcp.auth_protocol import AuthResolverProtocol
+from codemie.service.security.principal_token_resolver import resolve_current_bearer_token
 from codemie.service.security.token_exchange_service import token_exchange_service
 from codemie.service.security.token_providers.base_provider import BrokerAuthRequiredException
 from codemie.rest_api.security.user import UserContext
@@ -1711,6 +1712,12 @@ class MCPToolkitService:
             env_vars['user']['name'] = current_user.name
         if current_user.username:
             env_vars['user']['username'] = current_user.username
+
+        # Opt-in {{auth.principal_type}} placeholder: only the principal type
+        # (never the token value) is exposed, and only when a bearer is resolvable.
+        _token, principal_type = resolve_current_bearer_token()
+        if principal_type is not None:
+            env_vars['auth'] = {'principal_type': principal_type.value}
 
         return env_vars
 

@@ -31,6 +31,12 @@ from codemie.rest_api.security.authentication import (
     project_admin_or_admin_user_detail_access,
 )
 from codemie.rest_api.security.user import User
+from codemie.rest_api.security.user_context import (
+    clear_current_auth_token,
+    clear_current_client_access_token,
+    get_current_auth_token,
+    get_current_client_access_token,
+)
 from codemie.rest_api.security.idp.local import LocalIdp
 from codemie.configs import config
 
@@ -58,6 +64,49 @@ async def test_authenticate_no_auth(mocker):
 
     with pytest.raises(ExtendedHTTPException):
         await authenticate(request, user_id=None, keycloak_auth_header=None, oidc_auth_header=None)
+
+
+async def _authenticate_with_user(mocker, user: User) -> User:
+    request = mocker.MagicMock()
+    provider = MagicMock()
+    provider.authenticate_and_load_user = AsyncMock(return_value=user)
+
+    with (
+        patch("codemie.rest_api.security.authentication.get_user_provider", return_value=provider),
+        patch("codemie.rest_api.security.authentication.IdpFactory"),
+    ):
+        return await authenticate(request, internal_user_id=None, bind_key=None)
+
+
+@pytest.mark.anyio
+async def test_authenticate_sets_client_access_token_in_context(mocker):
+    """BFF flow: user without auth_token but with client_access_token populates only the client var."""
+    clear_current_auth_token()
+    clear_current_client_access_token()
+    user = User(id="u1", username="u1", client_access_token="client-token")
+
+    result = await _authenticate_with_user(mocker, user)
+
+    assert result is user
+    assert get_current_auth_token() is None
+    assert get_current_client_access_token() == "client-token"
+
+    clear_current_client_access_token()
+
+
+@pytest.mark.anyio
+async def test_authenticate_sets_both_tokens_in_context(mocker):
+    clear_current_auth_token()
+    clear_current_client_access_token()
+    user = User(id="u1", username="u1", auth_token="user-token", client_access_token="client-token")
+
+    await _authenticate_with_user(mocker, user)
+
+    assert get_current_auth_token() == "user-token"
+    assert get_current_client_access_token() == "client-token"
+
+    clear_current_auth_token()
+    clear_current_client_access_token()
 
 
 @pytest.mark.anyio

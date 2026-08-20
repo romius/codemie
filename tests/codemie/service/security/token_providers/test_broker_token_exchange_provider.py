@@ -15,6 +15,7 @@
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 import httpx
+from codemie.service.security.principal_token_resolver import PrincipalType
 from codemie.service.security.token_providers.broker_token_exchange_provider import BrokerTokenExchangeProvider
 from codemie.service.security.token_providers.base_provider import BrokerAuthRequiredException, TokenProviderException
 from codemie.configs.config import config
@@ -76,8 +77,8 @@ async def test_aget_token_pass_through(mock_config):
     provider = BrokerTokenExchangeProvider()
 
     with patch(
-        "codemie.service.security.token_providers.broker_token_exchange_provider.get_current_auth_token",
-        return_value="initial-token",
+        "codemie.service.security.token_providers.broker_token_exchange_provider.resolve_current_bearer_token",
+        return_value=("initial-token", PrincipalType.USER),
     ):
         token = await provider._aget_token()
         assert token == "initial-token"
@@ -89,8 +90,8 @@ async def test_aget_token_no_initial_token(mock_config):
     provider = BrokerTokenExchangeProvider()
 
     with patch(
-        "codemie.service.security.token_providers.broker_token_exchange_provider.get_current_auth_token",
-        return_value=None,
+        "codemie.service.security.token_providers.broker_token_exchange_provider.resolve_current_bearer_token",
+        return_value=(None, None),
     ):
         token = await provider._aget_token()
         assert token is None
@@ -112,8 +113,8 @@ async def test_aget_token_multi_hop_success(mock_client_cls, mock_config):
     mock_client.get.return_value = mock_response
 
     with patch(
-        "codemie.service.security.token_providers.broker_token_exchange_provider.get_current_auth_token",
-        return_value="initial-token",
+        "codemie.service.security.token_providers.broker_token_exchange_provider.resolve_current_bearer_token",
+        return_value=("initial-token", PrincipalType.USER),
     ):
         token = await provider._aget_token()
 
@@ -145,8 +146,8 @@ async def test_aget_token_http_error(mock_client_cls, mock_config):
     mock_client.get.return_value = mock_response
 
     with patch(
-        "codemie.service.security.token_providers.broker_token_exchange_provider.get_current_auth_token",
-        return_value="initial-token",
+        "codemie.service.security.token_providers.broker_token_exchange_provider.resolve_current_bearer_token",
+        return_value=("initial-token", PrincipalType.USER),
     ):
         with pytest.raises(BrokerAuthRequiredException) as exc:
             await provider._aget_token()
@@ -155,13 +156,27 @@ async def test_aget_token_http_error(mock_client_cls, mock_config):
     assert exc.value.details == "HTTP 401"
 
 
+@pytest.mark.asyncio
+async def test_aget_token_pass_through_client_principal(mock_config):
+    """A client-principal token is passed through unchanged (never promoted to user)."""
+    setup_config(mock_config, "", "", "")
+    provider = BrokerTokenExchangeProvider()
+
+    with patch(
+        "codemie.service.security.token_providers.broker_token_exchange_provider.resolve_current_bearer_token",
+        return_value=("client-token", PrincipalType.CLIENT),
+    ):
+        token = await provider._aget_token()
+        assert token == "client-token"
+
+
 def test_get_token_sync_wrapper(mock_config):
     setup_config(mock_config, "", "", "")
     provider = BrokerTokenExchangeProvider()
 
     with patch(
-        "codemie.service.security.token_providers.broker_token_exchange_provider.get_current_auth_token",
-        return_value="initial-token",
+        "codemie.service.security.token_providers.broker_token_exchange_provider.resolve_current_bearer_token",
+        return_value=("initial-token", PrincipalType.USER),
     ):
         token = provider.get_token()
         assert token == "initial-token"

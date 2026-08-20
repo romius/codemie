@@ -50,6 +50,8 @@ class User(BaseModel):
     is_auditor: bool = Field(default=False)
     project_limit: int | None = Field(default=None)  # NULL = unlimited (admins); set from DB when flag ON
     auth_token: str | None = Field(None, exclude=True)
+    # Client-scoped OAuth2 access token (e.g. BFF client-credentials). Never a user token.
+    client_access_token: str | None = Field(None, exclude=True)
     tenant_id: str | None = Field(None, exclude=True)
     extra_attributes: dict[str, Any] | None = None
 

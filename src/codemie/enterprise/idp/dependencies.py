@@ -107,6 +107,9 @@ def _wrap_enterprise_idp(enterprise_provider_class, provider_name: str):
                     picture=idp_user.picture,
                     user_type=idp_user.user_type,
                     auth_token=idp_user.auth_token,
+                    # getattr: field ships in a later codemie_enterprise release;
+                    # older versions simply yield None here.
+                    client_access_token=getattr(idp_user, "client_access_token", None),
                     extra_attributes=self._get_extra_attributes(idp_user),
                 )
             except InvalidUserTypeError as e:

@@ -17,6 +17,7 @@ import httpx
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from codemie.service.security.oidc_token_exchange_service import OIDCTokenExchangeService
+from codemie.service.security.principal_token_resolver import PrincipalType
 from codemie.service.security.token_providers.base_provider import TokenProviderException
 from codemie.rest_api.security.user import User
 
@@ -81,7 +82,7 @@ def test_get_exchanged_token_no_idp_token(mock_get_user, service, mock_user, moc
     mock_cache.get.return_value = None
 
     with patch("codemie.service.security.token_exchange_service.token_exchange_service") as mock_factory:
-        mock_factory.get_token_for_current_user.return_value = None
+        mock_factory.get_token_with_principal_type_for_current_user.return_value = (None, None)
         result = service.get_exchanged_token(_AUDIENCE)
 
     assert result is None
@@ -95,7 +96,7 @@ def test_get_exchanged_token_success_caches_result(mock_get_user, service, mock_
     mock_cache.get.return_value = None
 
     with patch("codemie.service.security.token_exchange_service.token_exchange_service") as mock_factory:
-        mock_factory.get_token_for_current_user.return_value = "idp-token"
+        mock_factory.get_token_with_principal_type_for_current_user.return_value = ("idp-token", PrincipalType.USER)
         with patch.object(service, "_run_async", return_value="exchanged-token"):
             result = service.get_exchanged_token(_AUDIENCE)
 
@@ -221,7 +222,7 @@ def test_get_exchanged_token_tms_miss_exchanges_and_stores(service_with_tms, moc
         return_value=mock_user,
     ):
         with patch("codemie.service.security.token_exchange_service.token_exchange_service") as mock_tes:
-            mock_tes.get_token_for_current_user.return_value = "idp-token"
+            mock_tes.get_token_with_principal_type_for_current_user.return_value = ("idp-token", PrincipalType.USER)
             with patch.object(
                 service_with_tms,
                 "_run_async",
@@ -256,7 +257,7 @@ def test_get_exchanged_token_tms_miss_no_refresh_token(service_with_tms, mock_tm
         return_value=mock_user,
     ):
         with patch("codemie.service.security.token_exchange_service.token_exchange_service") as mock_tes:
-            mock_tes.get_token_for_current_user.return_value = "idp-token"
+            mock_tes.get_token_with_principal_type_for_current_user.return_value = ("idp-token", PrincipalType.USER)
             with patch.object(
                 service_with_tms,
                 "_run_async",

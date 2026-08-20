@@ -20,7 +20,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 from codemie.configs import config
 from codemie.configs.logger import logger
-from codemie.rest_api.security.user_context import get_current_auth_token, get_current_user
+from codemie.rest_api.security.user_context import get_current_user
+from codemie.service.security.principal_token_resolver import resolve_current_bearer_token
 from codemie.service.security.token_providers.base_provider import (
     BaseTokenProvider,
     BrokerAuthRequiredException,
@@ -236,12 +237,14 @@ class BrokerTokenExchangeProvider(BaseTokenProvider):
         user_id = current_user.id if current_user else 'unknown'
 
         try:
-            # Step 1: Get user's authentication token from context
-            current_token = get_current_auth_token()
+            # Step 1: Get the caller's bearer token from context (user or client principal)
+            current_token, principal_type = resolve_current_bearer_token()
 
             if not current_token:
-                logger.debug(f"No user auth token available in context for user_id={user_id}")
+                logger.debug(f"No bearer token available in context for user_id={user_id}")
                 return None
+
+            logger.debug(f"Broker exchange seeded with {principal_type.value}-principal token for user_id={user_id}")
 
             # Step 2: Check if broker exchange is configured
             if not self.urls:

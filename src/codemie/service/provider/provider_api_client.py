@@ -14,16 +14,28 @@
 
 from codemie.clients.provider import client as provider_client
 from codemie.rest_api.security.user import User
-from codemie.rest_api.security.user_context import get_current_auth_token
 from codemie.rest_api.models.provider import ProviderConfiguration
+from codemie.service.security.principal_token_resolver import (
+    PrincipalType,
+    resolve_current_bearer_token,
+)
 from codemie.configs import logger, config
+
+PRINCIPAL_TYPE_HEADER = "X-Auth-Principal-Type"
 
 
 class ProviderAPIClient:
     """Client for interacting with the provider's API endpoints."""
 
     LOCAL_MOCK_BEARER = "local"
-    NO_AUTH_TOKEN_MSG = "User authentication details are not provided, please contact your administrator."
+    NO_AUTH_TOKEN_MSG = (
+        "No authentication credential is available for this request. "
+        "CodeMie requires either a user bearer token (Authorization header) or, "
+        "in BFF deployments, a client access token forwarded via the "
+        "'x-auth-request-access-token' header. The 'x-userinfo' header carries "
+        "identity claims only and cannot be used as a token. "
+        "Please review your gateway/BFF configuration or contact your administrator."
+    )
 
     def __init__(
         self,
@@ -40,32 +52,35 @@ class ProviderAPIClient:
     def build(self) -> provider_client.ToolInvocationManagementApi:
         """Build a provider client for tool invocation management."""
         host = self.url.rstrip("/")
-        client_config = provider_client.Configuration(host=host, **self._get_auth_credentials())
+        credentials, principal_type = self._get_auth_credentials()
+        client_config = provider_client.Configuration(host=host, **credentials)
         client_config.verify_ssl = False
 
         with provider_client.ApiClient(client_config) as api_client:
+            if principal_type is not None:
+                api_client.set_default_header(PRINCIPAL_TYPE_HEADER, principal_type.value)
             return provider_client.ToolInvocationManagementApi(api_client)
 
-    def _get_auth_credentials(self) -> dict:
-        """Retrieve authentication credentials based on the configured auth type."""
+    def _get_auth_credentials(self) -> tuple[dict, PrincipalType | None]:
+        """Retrieve authentication credentials and the principal type they represent.
+
+        Security: never logs token values — only principal type and operation status.
+        """
         security_config = self.provider_security_config
 
         if config.is_local:
             logger.info(f"{self.log_prefix} Using local mock bearer token")
-            return {"access_token": self.LOCAL_MOCK_BEARER}
+            return {"access_token": self.LOCAL_MOCK_BEARER}, PrincipalType.USER
 
         if security_config.auth_type == ProviderConfiguration.AuthType.BEARER.value:
-            logger.info(f"{self.log_prefix} Using bearer token")
-
-            # Try user.auth_token first (backward compatibility)
-            # Fall back to context if not present
-            token = self.user.auth_token or get_current_auth_token()
+            token, principal_type = resolve_current_bearer_token(self.user)
 
             if not token:
-                logger.error(f"{self.log_prefix} User authentication details are not provided")
+                logger.error(f"{self.log_prefix} No bearer credential available (neither user nor client principal)")
                 raise ValueError(self.NO_AUTH_TOKEN_MSG)
 
-            return {"access_token": token}
+            logger.info(f"{self.log_prefix} Using {principal_type.value}-principal bearer token")
+            return {"access_token": token}, principal_type
 
         logger.error(f"{self.log_prefix} Unknown auth type: {security_config.auth_type}")
         raise ValueError(f"Unknown auth type: {security_config.auth_type}")

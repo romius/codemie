@@ -111,6 +111,7 @@ class PersistentUserProvider(UserProvider):
         user_id: str
         idp_user: Optional[User] = None
         auth_token: str
+        client_access_token: str | None = None
 
         if config.IDP_PROVIDER == "local":
             from codemie.rest_api.security.jwt_local import validate_local_jwt
@@ -122,12 +123,15 @@ class PersistentUserProvider(UserProvider):
             idp_user = await idp.authenticate(request)
             user_id = idp_user.id
             auth_token = idp_user.auth_token or ""
+            client_access_token = idp_user.client_access_token
 
         # 3. Coalesced authentication — first request processes, rest wait
-        return await _coalesced_authenticate(user_id, idp_user, auth_token)
+        return await _coalesced_authenticate(user_id, idp_user, auth_token, client_access_token)
 
 
-async def _coalesced_authenticate(user_id: str, idp_user: Optional[User], auth_token: str) -> User:
+async def _coalesced_authenticate(
+    user_id: str, idp_user: Optional[User], auth_token: str, client_access_token: str | None = None
+) -> User:
     """Coalesce concurrent authentication requests for the same user.
 
     Uses leader/follower pattern with asyncio.Future:
@@ -167,6 +171,9 @@ async def _coalesced_authenticate(user_id: str, idp_user: Optional[User], auth_t
             result = await authentication_service.authenticate_persistent_user(
                 user_id=user_id, idp_user=idp_user, auth_token=auth_token
             )
+            # authenticate_persistent_user rebuilds User from DB and caches a copy
+            # before this point, so the client token never enters the auth cache.
+            result.client_access_token = client_access_token
             if not future.done():
                 future.set_result(result)
             return result
@@ -184,4 +191,5 @@ async def _coalesced_authenticate(user_id: str, idp_user: Optional[User], auth_t
         # Shallow copy would share list references between leader and all followers.
         follower_result = result.model_copy(deep=True)
         follower_result.auth_token = auth_token
+        follower_result.client_access_token = client_access_token
         return follower_result

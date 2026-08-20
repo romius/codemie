@@ -25,7 +25,11 @@ from codemie.configs.logger import logger
 from codemie.core.exceptions import ExtendedHTTPException
 from codemie.rest_api.security.idp.local import USER_ID_HEADER, LocalIdp
 from codemie.rest_api.security.user import User
-from codemie.rest_api.security.user_context import set_current_user, set_current_auth_token
+from codemie.rest_api.security.user_context import (
+    set_current_user,
+    set_current_auth_token,
+    set_current_client_access_token,
+)
 from codemie.rest_api.security.user_providers import get_user_provider  # EPMCDME-10160
 from codemie.rest_api.security.idp.factory import IdpFactory  # EPMCDME-10160
 
@@ -135,6 +139,8 @@ async def authenticate(
         set_current_user(user)
         if user.auth_token:
             set_current_auth_token(user.auth_token)
+        if user.client_access_token:
+            set_current_client_access_token(user.client_access_token)
 
         from codemie.configs.logger import set_logging_info
 

@@ -66,6 +66,27 @@ class TestUserModel:
         assert user.user_type == "external"
         assert user.auth_token == "token123"
 
+    def test_client_access_token_defaults_to_none(self):
+        user = User(id="test_id", username="testuser")
+        assert user.client_access_token is None
+
+    def test_token_fields_excluded_from_serialization(self):
+        """auth_token and client_access_token must never appear in dumps."""
+        user = User(
+            id="test_id",
+            username="testuser",
+            auth_token="user-secret-token",
+            client_access_token="client-secret-token",
+        )
+
+        dumped = user.model_dump()
+        assert "auth_token" not in dumped
+        assert "client_access_token" not in dumped
+
+        json_str = user.model_dump_json()
+        assert "user-secret-token" not in json_str
+        assert "client-secret-token" not in json_str
+
 
 class TestIsExternalUser:
     """Test cases for is_external_user property"""

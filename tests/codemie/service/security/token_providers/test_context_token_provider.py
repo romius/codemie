@@ -14,6 +14,7 @@
 
 import pytest
 from unittest.mock import patch
+from codemie.service.security.principal_token_resolver import PrincipalType
 from codemie.service.security.token_providers.context_token_provider import ContextTokenProvider
 from codemie.service.security.token_providers.base_provider import TokenProviderException
 
@@ -23,33 +24,45 @@ def provider():
     return ContextTokenProvider()
 
 
-@patch("codemie.service.security.token_providers.context_token_provider.get_current_auth_token")
+@patch("codemie.service.security.token_providers.context_token_provider.resolve_current_bearer_token")
 @patch("codemie.service.security.token_providers.context_token_provider.get_current_user")
-def test_get_token_success(mock_get_user, mock_get_token, provider):
-    mock_get_token.return_value = "test-token"
+def test_get_token_success(mock_get_user, mock_resolve, provider):
+    mock_resolve.return_value = ("test-token", PrincipalType.USER)
     mock_get_user.return_value.id = "user-123"
 
     token = provider.get_token()
 
     assert token == "test-token"
-    mock_get_token.assert_called_once()
+    mock_resolve.assert_called_once()
 
 
-@patch("codemie.service.security.token_providers.context_token_provider.get_current_auth_token")
+@patch("codemie.service.security.token_providers.context_token_provider.resolve_current_bearer_token")
 @patch("codemie.service.security.token_providers.context_token_provider.get_current_user")
-def test_get_token_none(mock_get_user, mock_get_token, provider):
-    mock_get_token.return_value = None
+def test_get_token_client_principal(mock_get_user, mock_resolve, provider):
+    mock_resolve.return_value = ("client-token", PrincipalType.CLIENT)
+    mock_get_user.return_value.id = "user-123"
+
+    token = provider.get_token()
+
+    assert token == "client-token"
+    mock_resolve.assert_called_once()
+
+
+@patch("codemie.service.security.token_providers.context_token_provider.resolve_current_bearer_token")
+@patch("codemie.service.security.token_providers.context_token_provider.get_current_user")
+def test_get_token_none(mock_get_user, mock_resolve, provider):
+    mock_resolve.return_value = (None, None)
     mock_get_user.return_value.id = "user-123"
 
     token = provider.get_token()
 
     assert token is None
-    mock_get_token.assert_called_once()
+    mock_resolve.assert_called_once()
 
 
-@patch("codemie.service.security.token_providers.context_token_provider.get_current_auth_token")
-def test_get_token_exception(mock_get_token, provider):
-    mock_get_token.side_effect = Exception("Unexpected error")
+@patch("codemie.service.security.token_providers.context_token_provider.resolve_current_bearer_token")
+def test_get_token_exception(mock_resolve, provider):
+    mock_resolve.side_effect = Exception("Unexpected error")
 
     with pytest.raises(TokenProviderException) as exc_info:
         provider.get_token()

@@ -33,6 +33,7 @@ from codemie.rest_api.security.user import User
 # Each request gets its own isolated context
 _current_user: ContextVar[User | None] = ContextVar('current_user', default=None)
 _current_auth_token: ContextVar[str | None] = ContextVar('current_auth_token', default=None)
+_current_client_access_token: ContextVar[str | None] = ContextVar('current_client_access_token', default=None)
 
 
 def set_current_user(user: User | None) -> None:
@@ -114,3 +115,40 @@ def clear_current_auth_token() -> None:
     automatically handles context isolation between requests.
     """
     _current_auth_token.set(None)
+
+
+def set_current_client_access_token(token: str | None) -> None:
+    """
+    Store the client-scoped access token (e.g. BFF client-credentials) in the request context.
+
+    Security Note:
+        This token is stored in a request-scoped context and never logged.
+        It represents a client/application principal, never a user.
+
+    Args:
+        token: The client-scoped OAuth2 access token, or None to reset
+    """
+    _current_client_access_token.set(token)
+
+
+def get_current_client_access_token() -> str | None:
+    """
+    Retrieve the client-scoped access token from the request context.
+
+    Returns:
+        The client-scoped OAuth2 access token if available, None otherwise
+
+    Security Note:
+        Never log or expose this token in error messages or responses.
+    """
+    return _current_client_access_token.get()
+
+
+def clear_current_client_access_token() -> None:
+    """
+    Clear the client-scoped access token from the request context.
+
+    This function can be used for cleanup purposes, though ContextVar
+    automatically handles context isolation between requests.
+    """
+    _current_client_access_token.set(None)

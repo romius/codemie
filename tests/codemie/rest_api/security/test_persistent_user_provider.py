@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -337,6 +338,45 @@ class TestPersistentUserProvider:
 
     @pytest.mark.asyncio
     @patch("codemie.rest_api.security.user_providers.persistent.authentication_service")
+    @patch("codemie.rest_api.security.user_providers.persistent.config")
+    async def test_authenticate_idp_preserves_client_access_token(
+        self, mock_config, mock_auth_service, provider, mock_request
+    ):
+        """BFF flow: leader result carries client_access_token even though the DB rebuild drops it"""
+        # Arrange
+        mock_config.ENV = "production"
+        mock_config.IDP_PROVIDER = "keycloak"
+
+        idp_user = User(
+            id="bff-user-1",
+            email="bff@example.com",
+            auth_token=None,
+            client_access_token="bff-client-token",
+            project_names=[],
+            knowledge_bases=[],
+        )
+
+        mock_idp = MagicMock()
+        mock_idp.authenticate = AsyncMock(return_value=idp_user)
+
+        # Simulates the DB rebuild: no client_access_token on the returned user
+        db_user = User(
+            id="bff-user-1",
+            email="bff@example.com",
+            auth_token="",
+            project_names=[],
+            knowledge_bases=[],
+        )
+        mock_auth_service.authenticate_persistent_user = AsyncMock(return_value=db_user)
+
+        # Act
+        result = await provider.authenticate_and_load_user(mock_request, mock_idp)
+
+        # Assert
+        assert result.client_access_token == "bff-client-token"
+
+    @pytest.mark.asyncio
+    @patch("codemie.rest_api.security.user_providers.persistent.authentication_service")
     @patch("codemie.rest_api.security.jwt_local.validate_local_jwt")
     @patch("codemie.rest_api.security.user_providers.persistent.config")
     async def test_bearer_jwt_in_local_env_uses_local_jwt_validation(
@@ -452,3 +492,64 @@ class TestPersistentUserProvider:
         assert result == expected_user
         mock_auth_service.authenticate_dev_header.assert_called_once_with(dev_user_id)
         mock_validate_jwt.assert_not_called()
+
+
+class TestCoalescedAuthenticate:
+    """Leader/follower coalescing preserves per-request tokens"""
+
+    @pytest.mark.asyncio
+    @patch("codemie.rest_api.security.user_providers.persistent.authentication_service")
+    async def test_followers_get_own_tokens(self, mock_auth_service):
+        """Followers receive a deep copy with their own auth_token and client_access_token"""
+        from codemie.rest_api.security.user_providers.persistent import _coalesced_authenticate
+
+        leader_started = asyncio.Event()
+        release_leader = asyncio.Event()
+
+        async def slow_authenticate(**kwargs):
+            leader_started.set()
+            await release_leader.wait()
+            return User(
+                id="shared-user",
+                email="shared@example.com",
+                auth_token=kwargs["auth_token"],
+                project_names=["p1"],
+                knowledge_bases=[],
+            )
+
+        mock_auth_service.authenticate_persistent_user = AsyncMock(side_effect=slow_authenticate)
+
+        async def leader():
+            return await _coalesced_authenticate("shared-user", None, "leader-token", "leader-client-token")
+
+        async def follower():
+            await leader_started.wait()
+            task = asyncio.create_task(
+                _coalesced_authenticate("shared-user", None, "follower-token", "follower-client-token")
+            )
+            await asyncio.sleep(0.01)
+            release_leader.set()
+            return await task
+
+        leader_result, follower_result = await asyncio.gather(leader(), follower())
+
+        assert leader_result.auth_token == "leader-token"
+        assert leader_result.client_access_token == "leader-client-token"
+        assert follower_result.auth_token == "follower-token"
+        assert follower_result.client_access_token == "follower-client-token"
+        # Deep copy: mutating follower lists must not affect leader
+        follower_result.project_names.append("p2")
+        assert leader_result.project_names == ["p1"]
+
+    @pytest.mark.asyncio
+    @patch("codemie.rest_api.security.user_providers.persistent.authentication_service")
+    async def test_leader_without_client_token(self, mock_auth_service):
+        """client_access_token defaults to None when not provided (non-BFF flow)"""
+        from codemie.rest_api.security.user_providers.persistent import _coalesced_authenticate
+
+        db_user = User(id="u-plain", auth_token="tok", project_names=[], knowledge_bases=[])
+        mock_auth_service.authenticate_persistent_user = AsyncMock(return_value=db_user)
+
+        result = await _coalesced_authenticate("u-plain", None, "tok")
+
+        assert result.client_access_token is None

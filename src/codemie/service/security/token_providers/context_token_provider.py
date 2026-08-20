@@ -15,7 +15,8 @@
 from __future__ import annotations
 
 from codemie.configs.logger import logger
-from codemie.rest_api.security.user_context import get_current_auth_token, get_current_user
+from codemie.rest_api.security.user_context import get_current_user
+from codemie.service.security.principal_token_resolver import resolve_current_bearer_token
 from codemie.service.security.token_providers.base_provider import (
     BaseTokenProvider,
     TokenProviderException,
@@ -66,12 +67,12 @@ class ContextTokenProvider(BaseTokenProvider):
             current_user = get_current_user()
             user_id = current_user.id if current_user else 'unknown'
 
-            token = get_current_auth_token()
+            token, principal_type = resolve_current_bearer_token()
 
             if token:
-                logger.debug(f"Retrieved auth token from context for user_id={user_id}")
+                logger.debug(f"Retrieved {principal_type.value}-principal token from context for user_id={user_id}")
             else:
-                logger.debug(f"No auth token found in context for user_id={user_id}")
+                logger.debug(f"No bearer token found in context for user_id={user_id}")
 
             return token
 

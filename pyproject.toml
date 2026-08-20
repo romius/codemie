@@ -52,7 +52,7 @@ nats-py = "2.10.0"
 protobuf = ">=5.29.6,<6.0"
 pathspec = "^0.12.1"
 openhands_aci = "0.1.2"
-codemie-enterprise = {version = "2.3.36", source = "codemie-artifact-registry-gcp", optional = true}
+codemie-enterprise = {version = "2.3.40", source = "codemie-artifact-registry-gcp", optional = true}
 # Security (EPMCDME-13568): pin >=3.10.0 to fix CVE-2026-54293 (HIGH)
 nltk = ">=3.10.0"
 # Security (EPMCDME-13446): pin >=2.8.4 to fix CVE-2026-49476, CVE-2026-49477 (HIGH, transitive via beautifulsoup4)
