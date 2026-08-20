@@ -75,9 +75,16 @@ class ManagedMcpOAuthConfig(BaseModel):
     authorization_url: str = Field(alias="authorizationUrl")
     token_url: str = Field(alias="tokenUrl")
 
+    # Optional: the IdP issuer(s). Published so a client uses issuer discovery
+    # instead of fabricating metadata from tokenUrl's origin (RFC 9207). A list,
+    # matching the shape the consuming clients expect; a scalar is invalid.
+    authorization_server: Optional[List[str]] = Field(default=None, alias="authorizationServer")
+
     # Inherits this module's graceful-degradation contract rather than a
-    # stricter one: an unknown key is ignored, so a ConfigMap may gain a new
-    # OAuth field ahead of a backend rollout without breaking the entry.
+    # stricter one: an unknown key is dropped at validation -- silently, and
+    # without reaching the response. The entry still loads, so a ConfigMap may
+    # run ahead of a backend rollout, but a key is served only once it is a
+    # declared field here.
     model_config = ConfigDict(extra="ignore")
 
 

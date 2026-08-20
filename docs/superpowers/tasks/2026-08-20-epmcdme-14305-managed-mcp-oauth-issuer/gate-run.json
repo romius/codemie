@@ -1,0 +1,166 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-14305_managed-mcp-oauth-issuer",
+  "merge_base": "origin/main",
+  "runner": "poetry",
+  "started_at": "2026-08-20T15:27:08Z",
+  "completed_at": "2026-08-20T15:42:47Z",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2504,
+      "command": "make ruff",
+      "exit_code": 0,
+      "notes": "ruff format: 2304 files left unchanged; 'ruff check --fix' and 'ruff check' both report 'All checks passed!'. No skip signal."
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 5832,
+      "command": "make build",
+      "exit_code": 0,
+      "notes": "poetry build produced codemie-0.8.0.tar.gz and codemie-0.8.0-py3-none-any.whl."
+    },
+    {
+      "id": "license",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 775,
+      "command": "make license-check",
+      "exit_code": 0,
+      "notes": "Checked 2054 files, 0 missing license headers."
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 14434,
+      "command": "make gitleaks",
+      "exit_code": 2,
+      "notes": "4 findings, ALL in untracked, git-ignored local developer-tool files outside this change: .codex/config.toml (CONTEXT7_API_KEY), .mcp.json.lock (BRAVE_API_KEY), run_claude.sh (ANTHROPIC_AUTH_TOKEN), opencode.json (CONTEXT7_API_KEY). 'git check-ignore -v' confirms all four are ignored (.gitignore:60,65,66 and the .codex entry) and 'git ls-files' confirms none is tracked, so none can reach the remote. Scoped re-run over the branch's own commits -- docker run ... gitleaks git --config=/workspace/.gitleaks.toml --log-opts='origin/main..HEAD' -- exits 0: '2 commits scanned', 'no leaks found'. This is a local working-tree condition, not a defect in the change; a CI runner checking out tracked files only would not see these files. Local remediation: rotate/remove those local secrets, or extend the .gitleaks.toml [allowlist] paths list, which already allowlists sibling git-ignored local artifacts (.keys/, .env_local, .idea/)."
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 180206,
+      "command": "make test",
+      "exit_code": 2,
+      "notes": "14 failed, 14690 passed, 163 skipped. None touch this change. 12 failures (11x tests/codemie/datasource/loader/test_xlsb_real_fixtures.py + tests/codemie/rest_api/routers/test_oauth_redis_lazy_init.py) trace to \"ModuleNotFoundError: No module named 'python_calamine'\" -- python-calamine = '^0.8.2' is a declared main dependency in pyproject.toml:130 but is absent from .venv; 'poetry install --dry-run' reports '1 install, 9 updates, 0 removals', so the venv is stale. This is the documented case in .ai-run/guides/security/README.md ('Collection errors after pulling | Usually a missing dependency, not broken code. Run make install'). The remaining 2 (test_filesystem_policy.py::test_guard_allows_matplotlib_png_generation and ::test_guard_allows_openpyxl_to_save_workbook) fail with subprocess returncode -2 / KeyboardInterrupt raised inside the sandbox audit hook; they reproduce identically when run in isolation, and live in src/codemie_tools/data_management/code_executor/, untouched by this branch. Remediation: run 'make install' to sync the venv, then re-run 'make test'. Gate is unverified for those 14 tests, not a code regression."
+    },
+    {
+      "id": "affected",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 28688,
+      "command": "poetry run pytest tests/codemie/configs/test_managed_mcp_config.py tests/codemie/rest_api/routers/test_mcp_managed.py -q",
+      "exit_code": 0,
+      "notes": "25 passed. Covers both test files changed by this branch (the loader/model tests and the router serialization tests for authorizationServer)."
+    },
+    {
+      "id": "sonar",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 367519,
+      "command": "make sonar-local",
+      "exit_code": 2,
+      "notes": "Gate could not run -- unverified, not passed. First invocation regenerated coverage.xml (pytest tests/ --cov) and aborted with '[sonar-local] coverage generation exited with code 1' on the same 14 environment-caused failures as the unit gate; the scanner never started. Second invocation reusing that coverage.xml (SONAR_SKIP_TESTS=1 make sonar-local, the exact pre-push-hook form) reached the scanner step and printed '[sonar-local] sonar-scanner was not found. Install the official SonarScanner CLI or set SONAR_SCANNER_PATH.' SONAR_TOKEN is set and .sonarlint/connectedMode.json resolves (project 'codemie', https://sonar.core.kuberocketci.io), so the guide's 'Skip if: Sonar configuration ... unavailable' applies to the missing scanner binary. To enable locally: install SonarScanner CLI (or set SONAR_SCANNER_PATH) and run 'make install' first so coverage generation succeeds. Only a real Sonar run can settle the server-side quality gate."
+    },
+    {
+      "id": "coverage",
+      "source": "guide",
+      "status": "N/A",
+      "command": "make coverage",
+      "notes": "Not requested by the caller (guide 'Skip if: The user did not request coverage'). A coverage.xml was produced anyway as a side effect of the sonar gate's coverage step, and it carries the same 14 failures."
+    },
+    {
+      "id": "verify",
+      "source": "guide",
+      "status": "N/A",
+      "command": "make verify",
+      "notes": "Composite target (ruff license gitleaks test); every component ran individually above, so running it again would only repeat the same results. It would exit non-zero here because of the gitleaks and test gates."
+    },
+    {
+      "id": "test-harness",
+      "source": "guide",
+      "status": "N/A",
+      "command": "make test-harness",
+      "notes": "Infrastructure not reachable: the local docker stack is not up (only 'neo4j' and 'portainer_agent' containers running; no docker-compose.yaml at repo root and no codemie API service). ~/.codemie/test-harness.json exists, but the stack and superadmin fixtures do not. REQUIRED FOR MR: the auto_epm-cdme_vcs bot fails checks 3.1/3.2 unless the copy-pasted terminal summary of 'make test-harness' is pasted into a '## Test harness' section of the MR description. Bring up the stack ('docker compose up -d' per the setup guide) and run it before opening the MR."
+    },
+    {
+      "id": "precommit-ruff-staged",
+      "source": "hook",
+      "status": "SKIPPED",
+      "duration_ms": 120,
+      "command": "bash scripts/git-hooks/_ruff_staged.sh",
+      "exit_code": 0,
+      "notes": "Self-skipped -- exited 0 without doing its work: '[pre-commit] No staged Python files - skipping Ruff format/fix check.' The index is empty (both branch commits are already made). It would run at 'git commit' time with staged .py files; the non-staged equivalent is covered by the lint gate."
+    },
+    {
+      "id": "precommit-ruff-check",
+      "source": "hook",
+      "status": "N/A",
+      "command": "poetry run ruff check",
+      "notes": "Second command in the codemie-pre-commit hook chain; identical to the final step of 'make ruff', already executed and PASSing as the lint gate."
+    },
+    {
+      "id": "precommit-license",
+      "source": "hook",
+      "status": "N/A",
+      "command": "poetry run python scripts/license_headers/check_license_headers.py --check --quiet",
+      "notes": "Third command in the codemie-pre-commit hook chain; byte-identical to the 'make license-check' recipe, already executed and PASSing as the license gate."
+    },
+    {
+      "id": "commit-msg",
+      "source": "hook",
+      "status": "PASS",
+      "duration_ms": 90,
+      "command": "bash scripts/git-hooks/commit_msg.sh <msg-file>",
+      "exit_code": 0,
+      "notes": "Ran the hook script against each of the branch's 2 commit messages; both exit 0: 'EPMCDME-14305: Document authorizationServer in the example MCP catalog' and 'EPMCDME-14305: Publish the OAuth issuer in the managed MCP catalog'. Both carry the required EPMCDME-<n>: prefix."
+    },
+    {
+      "id": "gitleaks-staged",
+      "source": "hook",
+      "status": "SKIPPED",
+      "duration_ms": 351,
+      "command": "bash scripts/git-hooks/validate_secrets.sh",
+      "exit_code": 0,
+      "notes": "Self-skipped -- exited 0 with nothing to scan: '0 commits scanned', 'scanned ~0 bytes (0)'. The index is empty, so 'gitleaks protect --staged' had no diff. Docker was detected and used, so the engine side of the hook is healthy. Merge-relevant coverage comes from the full-tree 'secrets' gate and the branch-scoped scan recorded there."
+    },
+    {
+      "id": "prepush-pytest",
+      "source": "hook",
+      "status": "FAIL",
+      "duration_ms": 361370,
+      "command": "poetry run pytest tests/ --ignore=tests/enterprise/ -W ignore::DeprecationWarning --cov --cov-report=xml:coverage.xml",
+      "exit_code": 1,
+      "notes": "Executed as the coverage step of 'make sonar-local', which runs the same command over a superset scope (tests/ without the enterprise ignore). Same 14 failures and same environment root cause as the unit gate -- see that gate's notes. Note the hook is opt-in: CODEMIE_PREPUSH_ENABLED defaults to false, so 'git push' would skip it on this machine and never surface these failures."
+    },
+    {
+      "id": "prepush-sonar",
+      "source": "hook",
+      "status": "N/A",
+      "command": "SONAR_SKIP_TESTS=1 make sonar-local",
+      "notes": "Second command in the codemie-pre-push hook chain; already executed under the 'sonar' gate, which records the sonar-scanner-not-found result. Also opt-in behind CODEMIE_PREPUSH_ENABLED."
+    },
+    {
+      "id": "ci-wait-ci-init",
+      "source": "ci",
+      "status": "N/A",
+      "command": ".gitlab-ci.yml job wait-ci-init (extends .wait-ci-init-template)",
+      "notes": "Not runnable locally and runs no gate of its own: the only pipeline job is a pre-ci guard from the external template project epm-cdme/codemie-gitlab-templates@0.1.1 that waits on the external commit contexts 'ci-pipeline' and 'compliance-report'. Consistent with the guide's 'After merge' section -- no in-repo pipeline executes lint/build/test, so whatever was not run locally was not run. Post-merge coverage comes from the auto_epm-cdme_vcs description bot (text only) and a human-triggered /sanity regression run."
+    }
+  ],
+  "failures": {
+    "unit": "tests/codemie/service/settings/test_settings_transfer_service.py::TestValidateProjects::test_rejects_same_source_and_target\n  /home/taras_spashchenko/EPAM/cm/codemie/tests/codemie/service/settings/test_settings_transfer_service.py:146: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.\n    SettingsTransferService._validate_projects(\"same\", \"same\")\n\ntests/codemie/service/settings/test_settings_transfer_service.py::TestValidateAliasesPresent::test_rejects_row_with_empty_alias\n  /home/taras_spashchenko/EPAM/cm/codemie/tests/codemie/service/settings/test_settings_transfer_service.py:190: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.\n    SettingsTransferService._validate_aliases_present([row])\n\ntests/codemie/service/settings/test_settings_transfer_service.py::TestTransfer::test_null_alias_trigger_row_is_rejected_before_response_construction\n  /home/taras_spashchenko/EPAM/cm/codemie/src/codemie/service/settings/settings_transfer_service.py:283: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.\n    cls._validate_aliases_present(candidates)\n\ntests/codemie/service/test_mcp_config_service_auth_crud.py::test_update_rejects_auth_config_id_change_when_credentials_exist\n  /home/taras_spashchenko/EPAM/cm/codemie/src/codemie/service/mcp_config_service.py:404: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.\n    cls._apply_config_field_update(\n\ntests/codemie/service/test_mcp_config_service_auth_validation.py: 11 warnings\n  /home/taras_spashchenko/EPAM/cm/codemie/src/codemie/service/mcp_config_service.py:281: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.\n    _validate_auth_config_for_save(request.config)\n\ntests/codemie/service/test_mcp_config_service_auth_validation.py: 11 warnings\n  /home/taras_spashchenko/EPAM/cm/codemie/src/codemie/service/mcp_config_service.py:473: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.\n    _validate_auth_config_for_save(mcp_config.config, config_id=config_id)\n\ntests/codemie_tools/qa/zephyr_squad/test_api_wrapper.py::test_request_successfull\ntests/codemie_tools/qa/zephyr_squad/test_api_wrapper.py::test_request_failure\ntests/codemie_tools/qa/zephyr_squad/test_api_wrapper.py::test_request_with_custom_headers_and_content_type\ntests/codemie_tools/qa/zephyr_squad/test_api_wrapper.py::test_request_without_explicit_content_type\n  /home/taras_spashchenko/EPAM/cm/codemie/.venv/lib/python3.12/site-packages/jwt/api_jwt.py:147: InsecureKeyLengthWarning: The HMAC key is 15 bytes long, which is below the minimum recommended length of 32 bytes for SHA256. See RFC 7518 Section 3.2.\n    return self._jws.encode(\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n=========================== short test summary info ============================\nFAILED tests/codemie/datasource/loader/test_xlsb_real_fixtures.py::test_load_xlsx_visible_only_returns_visible_sheets\nFAILED tests/codemie/datasource/loader/test_xlsb_real_fixtures.py::test_load_xlsx_all_sheets_includes_hidden_and_very_hidden\nFAILED tests/codemie/datasource/loader/test_xlsb_real_fixtures.py::test_xlsb_loader_reads_all_sheets\nFAILED tests/codemie/datasource/loader/test_xlsb_real_fixtures.py::test_extract_documents_from_bytes_reads_xlsb\nFAILED tests/codemie/datasource/loader/test_xlsb_real_fixtures.py::test_formula_cached_value_present_in_output\nFAILED tests/codemie/datasource/loader/test_xlsb_real_fixtures.py::test_chat_full_read_contains_data_sheet\nFAILED tests/codemie/datasource/loader/test_xlsb_real_fixtures.py::test_chat_get_sheet_names_visible_only\nFAILED tests/codemie/datasource/loader/test_xlsb_real_fixtures.py::test_chat_get_sheet_names_all\nFAILED tests/codemie/datasource/loader/test_xlsb_real_fixtures.py::test_chat_sheet_by_index\nFAILED tests/codemie/datasource/loader/test_xlsb_real_fixtures.py::test_chat_filter_values\nFAILED tests/codemie/datasource/loader/test_xlsb_real_fixtures.py::test_macro_variant_reads_all_sheets_and_cached_formula\nFAILED tests/codemie/rest_api/routers/test_oauth_redis_lazy_init.py::test_app_starts_without_redis_package_when_pkce_disabled\nFAILED tests/codemie_tools/data_management/code_executor/test_filesystem_policy.py::test_guard_allows_matplotlib_png_generation\nFAILED tests/codemie_tools/data_management/code_executor/test_filesystem_policy.py::test_guard_allows_openpyxl_to_save_workbook\n=== 14 failed, 14690 passed, 163 skipped, 189 warnings in 174.75s (0:02:54) ====\nmake: *** [Makefile:31: test] Error 1\nmake: Leaving directory '/home/taras_spashchenko/EPAM/cm/codemie'",
+    "secrets": "make: Entering directory '/home/taras_spashchenko/EPAM/cm/codemie'\ndocker run --rm -v \"$(pwd):/workspace\" ghcr.io/gitleaks/gitleaks:v8.30.1 \\\n    dir --no-banner --verbose --config=/workspace/.gitleaks.toml /workspace\nFinding:     http_headers = { \"CONTEXT7_API_KEY\" = \"ctx7sk-75503c44-331a-4aea-966c-05bd33f8435b\" }\nSecret:      ctx7sk-75503c44-331a-4aea-966c-05bd33f8435b\nRuleID:      generic-api-key\nEntropy:     4.016284\nFile:        /workspace/.codex/config.toml\nLine:        12\nFingerprint: /workspace/.codex/config.toml:generic-api-key:12\n\nFinding:     \"BRAVE_API_KEY\": \"BSAKZctk38PR51PfkjMzs3ouVy-L9ay\"\nSecret:      BSAKZctk38PR51PfkjMzs3ouVy-L9ay\nRuleID:      generic-api-key\nEntropy:     4.696132\nFile:        /workspace/.mcp.json.lock\nLine:        11\nFingerprint: /workspace/.mcp.json.lock:generic-api-key:11\n\nFinding:     export ANTHROPIC_AUTH_TOKEN=\"sk-PfyXjnkWww1Rk9P_xYzL6A\"\nSecret:      sk-PfyXjnkWww1Rk9P_xYzL6A\nRuleID:      generic-api-key\nEntropy:     4.293661\nFile:        /workspace/run_claude.sh\nLine:        6\nFingerprint: /workspace/run_claude.sh:generic-api-key:6\n\nFinding:     \"CONTEXT7_API_KEY\": \"ctx7sk-75503c44-331a-4aea-966c-05bd33f8435b\"\nSecret:      ctx7sk-75503c44-331a-4aea-966c-05bd33f8435b\nRuleID:      generic-api-key\nEntropy:     4.016284\nFile:        /workspace/opencode.json\nLine:        303\nFingerprint: /workspace/opencode.json:generic-api-key:303\n\n3:27PM INF scanned ~34947428 bytes (34.95 MB) in 14.1s\n3:27PM WRN leaks found: 4\nmake: *** [Makefile:55: gitleaks] Error 1\nmake: Leaving directory '/home/taras_spashchenko/EPAM/cm/codemie'",
+    "prepush-pytest": "  /home/taras_spashchenko/EPAM/cm/codemie/tests/codemie/service/settings/test_settings_transfer_service.py:190: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.\n    SettingsTransferService._validate_aliases_present([row])\n\ntests/codemie/service/settings/test_settings_transfer_service.py::TestTransfer::test_null_alias_trigger_row_is_rejected_before_response_construction\n  /home/taras_spashchenko/EPAM/cm/codemie/src/codemie/service/settings/settings_transfer_service.py:283: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.\n    cls._validate_aliases_present(candidates)\n\ntests/codemie/service/test_mcp_config_service_auth_crud.py::test_update_rejects_auth_config_id_change_when_credentials_exist\n  /home/taras_spashchenko/EPAM/cm/codemie/src/codemie/service/mcp_config_service.py:404: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.\n    cls._apply_config_field_update(\n\ntests/codemie/service/test_mcp_config_service_auth_validation.py: 11 warnings\n  /home/taras_spashchenko/EPAM/cm/codemie/src/codemie/service/mcp_config_service.py:281: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.\n    _validate_auth_config_for_save(request.config)\n\ntests/codemie/service/test_mcp_config_service_auth_validation.py: 11 warnings\n  /home/taras_spashchenko/EPAM/cm/codemie/src/codemie/service/mcp_config_service.py:473: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.\n    _validate_auth_config_for_save(mcp_config.config, config_id=config_id)\n\ntests/codemie_tools/qa/zephyr_squad/test_api_wrapper.py::test_request_successfull\ntests/codemie_tools/qa/zephyr_squad/test_api_wrapper.py::test_request_failure\ntests/codemie_tools/qa/zephyr_squad/test_api_wrapper.py::test_request_with_custom_headers_and_content_type\ntests/codemie_tools/qa/zephyr_squad/test_api_wrapper.py::test_request_without_explicit_content_type\n  /home/taras_spashchenko/EPAM/cm/codemie/.venv/lib/python3.12/site-packages/jwt/api_jwt.py:147: InsecureKeyLengthWarning: The HMAC key is 15 bytes long, which is below the minimum recommended length of 32 bytes for SHA256. See RFC 7518 Section 3.2.\n    return self._jws.encode(\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n\n---------- coverage: platform linux, python 3.12.12-final-0 ----------\nCoverage XML written to file coverage.xml\n\n=========================== short test summary info ============================\nFAILED tests/codemie/datasource/loader/test_xlsb_real_fixtures.py::test_load_xlsx_visible_only_returns_visible_sheets\nFAILED tests/codemie/datasource/loader/test_xlsb_real_fixtures.py::test_load_xlsx_all_sheets_includes_hidden_and_very_hidden\nFAILED tests/codemie/datasource/loader/test_xlsb_real_fixtures.py::test_xlsb_loader_reads_all_sheets\nFAILED tests/codemie/datasource/loader/test_xlsb_real_fixtures.py::test_extract_documents_from_bytes_reads_xlsb\nFAILED tests/codemie/datasource/loader/test_xlsb_real_fixtures.py::test_formula_cached_value_present_in_output\nFAILED tests/codemie/datasource/loader/test_xlsb_real_fixtures.py::test_chat_full_read_contains_data_sheet\nFAILED tests/codemie/datasource/loader/test_xlsb_real_fixtures.py::test_chat_get_sheet_names_visible_only\nFAILED tests/codemie/datasource/loader/test_xlsb_real_fixtures.py::test_chat_get_sheet_names_all\nFAILED tests/codemie/datasource/loader/test_xlsb_real_fixtures.py::test_chat_sheet_by_index\nFAILED tests/codemie/datasource/loader/test_xlsb_real_fixtures.py::test_chat_filter_values\nFAILED tests/codemie/datasource/loader/test_xlsb_real_fixtures.py::test_macro_variant_reads_all_sheets_and_cached_formula\nFAILED tests/codemie/rest_api/routers/test_oauth_redis_lazy_init.py::test_app_starts_without_redis_package_when_pkce_disabled\nFAILED tests/codemie_tools/data_management/code_executor/test_filesystem_policy.py::test_guard_allows_matplotlib_png_generation\nFAILED tests/codemie_tools/data_management/code_executor/test_filesystem_policy.py::test_guard_allows_openpyxl_to_save_workbook\n=== 14 failed, 14690 passed, 163 skipped, 189 warnings in 361.37s (0:06:01) ====\n[sonar-local] coverage generation exited with code 1\nmake: *** [Makefile:68: sonar-local] Error 1\nmake: Leaving directory '/home/taras_spashchenko/EPAM/cm/codemie'"
+  },
+  "notes": "Both FAIL gates are environment conditions on this machine, not defects in the change: 'secrets' fires only on untracked git-ignored local tool files (branch commits scan clean), and 'unit' fails on a stale venv missing the declared python-calamine dependency plus 2 sandbox-subprocess tests that reproduce in isolation in untouched code. The change's own tests pass 25/25 and lint/build/license are green. Gates still unverified for merge: sonar (no sonar-scanner CLI) and make test-harness (docker stack down) -- the latter is required in the MR description by the auto_epm-cdme_vcs bot."
+}

@@ -20,6 +20,7 @@ from httpx import AsyncClient, ASGITransport
 
 from codemie.rest_api.main import app
 from codemie.rest_api.security.user import User
+from codemie.configs import managed_mcp_config as mcp_config
 from codemie.configs.managed_mcp_config import ManagedMcpServer
 
 
@@ -104,6 +105,7 @@ async def test_list_managed_servers_serializes_oauth_in_camel_case():
                 "scope": "openid profile email",
                 "callbackHost": "localhost",
                 "callbackPort": 3118,
+                "authorizationServer": None,
                 "authorizationUrl": "https://auth.example.com/realms/codemie/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login",
                 "tokenUrl": "https://auth.example.com/realms/codemie/protocol/openid-connect/token",
             },
@@ -121,3 +123,36 @@ async def test_list_managed_servers_without_client_param():
         mock_load.assert_called_once_with(client=None)
         assert response.status_code == status.HTTP_200_OK
         assert response.json() == []
+
+
+@pytest.mark.asyncio
+async def test_authorization_server_survives_yaml_to_http(tmp_path, monkeypatch):
+    # Closes the YAML -> HTTP seam: the real loader runs, reading
+    # config.CUSTOMER_CONFIG_DIR at call time. Patching the loader instead
+    # would stub out the very step that drops an undeclared key.
+    (tmp_path / "managed-mcp-servers.yaml").write_text(
+        """
+servers:
+  - name: onehub_core
+    transport: http
+    url: https://mcp.example.com/mcp/onehub_core
+    oauth:
+      clientId: codemie-mcp-proxy
+      scope: openid profile email
+      callbackPort: 3118
+      authorizationServer: ["https://auth.example.com/realms/codemie"]
+      authorizationUrl: https://auth.example.com/realms/codemie/protocol/openid-connect/auth
+      tokenUrl: https://auth.example.com/realms/codemie/protocol/openid-connect/token
+"""
+    )
+    monkeypatch.setattr(mcp_config.config, "CUSTOMER_CONFIG_DIR", tmp_path)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+        response = await ac.get(
+            "/v1/mcp/managed-servers?client=claude-desktop",
+            headers={"Authorization": "Bearer t"},
+        )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json()[0]["oauth"]["authorizationServer"] == ["https://auth.example.com/realms/codemie"]

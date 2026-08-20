@@ -275,6 +275,61 @@ servers:
     mock_logger.warning.assert_called_once()
 
 
+def test_loads_oauth_authorization_server_list(tmp_path: Path):
+    # The IdP issuer is published as a list so a client can use issuer
+    # discovery instead of fabricating metadata from tokenUrl's origin.
+    _write(
+        tmp_path,
+        """
+servers:
+  - name: with_issuer
+    transport: http
+    url: https://mcp.example.com/mcp/with_issuer
+    oauth:
+      clientId: codemie-mcp-proxy
+      scope: openid profile email
+      callbackPort: 3118
+      authorizationServer: ["https://auth.example.com/realms/codemie"]
+      authorizationUrl: https://auth.example.com/realms/codemie/protocol/openid-connect/auth
+      tokenUrl: https://auth.example.com/realms/codemie/protocol/openid-connect/token
+""",
+    )
+    servers = load_managed_mcp_servers(base_dir=tmp_path)
+
+    assert [s.name for s in servers] == ["with_issuer"]
+    assert servers[0].oauth.authorization_server == ["https://auth.example.com/realms/codemie"]
+
+
+def test_skips_entry_with_scalar_authorization_server(tmp_path: Path):
+    # `authorizationServer` is a list, never a scalar. A bare string is a
+    # validation error like any other, so the entry is skipped and logged
+    # while the rest of the catalog still loads.
+    _write(
+        tmp_path,
+        """
+servers:
+  - name: scalar_issuer
+    transport: http
+    url: https://mcp.example.com/mcp/scalar
+    oauth:
+      clientId: codemie-mcp-proxy
+      scope: openid
+      callbackPort: 3118
+      authorizationServer: https://auth.example.com/realms/codemie
+      authorizationUrl: https://auth.example.com/authorize
+      tokenUrl: https://auth.example.com/token
+  - name: good
+    transport: http
+    url: https://mcp.example.com/mcp/good
+""",
+    )
+    with patch("codemie.configs.managed_mcp_config.logger") as mock_logger:
+        servers = load_managed_mcp_servers(base_dir=tmp_path)
+
+    assert [s.name for s in servers] == ["good"]
+    mock_logger.warning.assert_called_once()
+
+
 def test_filters_by_client_is_unaffected_by_oauth(tmp_path: Path):
     _write(tmp_path, OAUTH_YAML)
 
@@ -313,6 +368,8 @@ def test_example_file_is_valid():
     assert oauth.token_url.startswith("https://")
     assert 1 <= oauth.callback_port <= 65535
     assert oauth.callback_host == "localhost"
+    assert isinstance(oauth.authorization_server, list) and oauth.authorization_server
+    assert all(u.startswith("https://") for u in oauth.authorization_server)
 
     # The loader reads `managed-mcp-servers.yaml`, so the `.example.yaml` file
     # is documentation only and must NOT be picked up.

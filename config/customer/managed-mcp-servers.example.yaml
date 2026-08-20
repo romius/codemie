@@ -20,8 +20,17 @@
 #     scope:            required -- space-delimited scopes
 #     callbackHost:     optional -- loopback redirect host (default: localhost)
 #     callbackPort:     required -- loopback redirect port, 1..65535
-#     authorizationUrl: required -- full authorize URL, including query params
-#                       such as kc_idp_hint and prompt
+#     authorizationServer: optional -- YAML LIST of IdP issuer URLs (for Keycloak,
+#                       the realm URL, e.g. https://auth.example.com/realms/codemie).
+#                       Publish it whenever the issuer differs from the origin of
+#                       tokenUrl. A bare scalar value is INVALID and skips the whole
+#                       entry with a warning.
+#     authorizationUrl: required -- full authorize URL. A client that uses issuer
+#                       discovery (see authorizationServer) reads
+#                       authorization_endpoint from the IdP's
+#                       /.well-known/openid-configuration instead, and so ignores
+#                       query params such as kc_idp_hint and prompt -- an accepted
+#                       side effect. They still apply to clients in explicit mode.
 #     tokenUrl:         required -- token endpoint
 servers:
   - name: example
@@ -35,5 +44,6 @@ servers:
       scope: openid profile email
       callbackHost: localhost
       callbackPort: 3118
+      authorizationServer: ["https://auth.example.com/realms/codemie"]
       authorizationUrl: https://auth.example.com/realms/codemie/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login
       tokenUrl: https://auth.example.com/realms/codemie/protocol/openid-connect/token

@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "task": "Add an optional camelCase-aliased `authorizationServer` field to ManagedMcpOAuthConfig so a managed MCP catalog entry can publish its IdP issuer, document it in the example ConfigMap YAML, and cover the YAML-to-HTTP round trip with tests.",
+  "generated": "2026-08-20T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 2, "label": "S" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 2, "label": "S" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 13,
+  "size": "S",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "technical_risk",
+      "reason": "Base risk is S: the change is one additive optional field on ManagedMcpOAuthConfig, and the module already contains five sibling `Optional[...] = Field(default=None, alias=...)` fields to copy, with no persisted state and trivial rollback. Bumped to M by the authorization red flag — the published value is an OAuth issuer consumed by external agent clients for RFC 9207 validation, so the secret-free invariant is load-bearing and the fail-closed per-entry validation means a malformed ConfigMap value silently drops a whole server from the catalog. The definitive acceptance signal (no `Issuer mismatch` in the Claude Desktop log after a ConfigMap edit) is out-of-repo and unreachable by CI, so in-repo tests can prove the key is served but not that the flow completes."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "4 modified files, 0 new: `src/codemie/configs/managed_mcp_config.py`, `config/customer/managed-mcp-servers.example.yaml`, `tests/codemie/configs/test_managed_mcp_config.py`, `tests/codemie/rest_api/routers/test_mcp_managed.py`. The guide's modified/new split puts 4-modified/0-new squarely in S; the change spans 3 directories (config/, src/, tests/), which is the only pull toward M. Two of the four files are tests, so the production surface is a single 153-line module plus its example-YAML documentation. Known test churn: the two router tests that assert the whole JSON body by equality pin all six current `oauth` keys and must be updated."
+    },
+    {
+      "dimension": "component_scope",
+      "reason": "One component. This is a verbatim match for the guide's S archetype 'add a new field to an existing endpoint response' — no layer boundary is crossed because FastAPI serializes `response_model` by alias, so the 32-line passthrough router needs no change and the pydantic model is itself the wire contract. No service, repository, database, migration, or enterprise module is in the path. Anchored against EPMCDME-14072 (commit 224fd8deb), which created this entire six-field `oauth` block across these same four files and measured actual S / total 14; the present task is strictly smaller (one field added to that existing model), which is why it lands one point below at 13."
+    }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from S (2) to M (3): affects authorization — the endpoint publishes the IdP issuer used by external clients for RFC 9207 authorization-response validation, making the secret-free contract and fail-closed entry validation security-relevant."
+  ],
+  "split_recommendation": null
+}
