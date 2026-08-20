@@ -324,6 +324,7 @@ def initiate_oauth2_enabled(
         user=user,
         auth_config_id=auth_config_id,
         mcp_server_url=mcp_config.config.url,
+        mcp_config_id=mcp_config.id,
     )
     return OAuth2InitiateResponse.model_validate(response_data.model_dump())
 
@@ -424,6 +425,7 @@ def initiate_saml_enabled(
         raw_auth_config=raw_auth_config,
         user=user,
         auth_config_id=auth_config_id,
+        mcp_config_id=mcp_config.id,
     )
     return SAMLInitiateResponse.model_validate(response_data.model_dump())
 

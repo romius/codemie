@@ -14,14 +14,40 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, NoReturn, Protocol
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from fastapi import status
 
+from codemie.configs.logger import logger
 from codemie.core.exceptions import ExtendedHTTPException, MCPAuthenticationRequiredException
+
+# \x00-\x1f already covers CR (\x0d) and LF (\x0a); \x7f is DEL.
+_LOG_UNSAFE_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _sanitize_log_value(value: str | None) -> str | None:
+    """Neutralize CR/LF/control chars in client-supplied values before logging (CWE-117).
+
+    The diagnostics endpoint is unauthenticated, so its string fields are
+    attacker-controllable; sanitizing at the source keeps the log line safe
+    regardless of the logger's own escaping or the runtime environment.
+    """
+    if value is None:
+        return None
+    return _LOG_UNSAFE_CHARS.sub(" ", value)
+
+
+def _sanitize_log_field(value: object) -> str:
+    """Stringify any log field and neutralize CR/LF/control chars (CWE-117).
+
+    Values reaching the mcp_auth log lines come from user-named configs, client-supplied flow
+    ids and remote authorization-server documents, so none of them are trusted.
+    """
+    return _LOG_UNSAFE_CHARS.sub(" ", str(value))
 
 
 class CallbackPageError(Exception):
@@ -67,6 +93,7 @@ def _is_missing_required_value(value: Any) -> bool:
 
 
 def _raise_client_error(message: str, details: str, *, code: int = status.HTTP_400_BAD_REQUEST) -> NoReturn:
+    logger.warning(f"MCP auth client error: {message} details={_sanitize_log_value(details)}")
     raise ExtendedHTTPException(code=code, message=message, details=details, help="Review the MCP auth configuration.")
 
 
@@ -124,3 +151,56 @@ def _build_discovered_config_error_payload(
         "status": "config_error",
         "error_context": dict(error_context),
     }
+
+
+def _log_state_prefix(state: str | None) -> str | None:
+    """First 12 chars of an OAuth2 state — enough to join initiate<->callback, never reversible.
+
+    Sanitized because the callback receives ``state`` as an unauthenticated query parameter and
+    logs it before verification. The sanitizer substitutes one character per character, so the
+    prefix still matches the one initiate emitted for the same flow.
+    """
+    return _sanitize_log_value(state[:12]) if isinstance(state, str) else None
+
+
+_MAX_LOGGED_FIELD_CHARS = 256
+
+
+def _log_field(value: str | None) -> str | None:
+    """Sanitize and bound one authorize-request field.
+
+    These values come off a URL a remote authorization server chose, so their length is not ours
+    to trust — an unbounded one could pad a single log line arbitrarily.
+    """
+    sanitized = _sanitize_log_value(value)
+    if sanitized is None:
+        return None
+    return sanitized[:_MAX_LOGGED_FIELD_CHARS] or None
+
+
+def _describe_authorize_request(auth_url: str) -> dict[str, str | None]:
+    """Loggable, non-secret view of an authorize URL, including the state prefix that ties an
+    initiate log line to its callback. Never raises (AC8) — malformed input degrades to all-None
+    fields instead, so observing a flow can never break it."""
+    fields: dict[str, str | None] = {
+        "as_host": None,
+        "client_id": None,
+        "redirect_uri": None,
+        "resource": None,
+        "scope": None,
+        "state_prefix": None,
+    }
+    try:
+        parts = urlsplit(auth_url)
+        query = dict(parse_qsl(parts.query))
+        # hostname, not netloc: netloc would carry any user:password@ prefix into the log line.
+        host = parts.hostname
+        fields["as_host"] = _log_field(f"{host}:{parts.port}" if host and parts.port else host)
+        for key in ("client_id", "redirect_uri", "resource", "scope"):
+            fields[key] = _log_field(query.get(key))
+        # Truncated here so no caller can accidentally log a full state.
+        # SAML carries the same correlation value under RelayState.
+        fields["state_prefix"] = _log_state_prefix(query.get("state") or query.get("RelayState"))
+    except Exception:  # noqa: BLE001 - the contract is "never raises", not "never raises ValueError"
+        pass
+    return fields

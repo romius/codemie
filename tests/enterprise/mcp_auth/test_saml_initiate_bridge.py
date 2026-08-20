@@ -181,7 +181,7 @@ def test_build_saml_initiate_response_derives_platform_acs_url(monkeypatch) -> N
 
     def fake_build_saml_initiate_response(**kwargs):
         captured.update(kwargs)
-        return {"auth_url": "https://idp.example.com/sso?SAMLRequest=req&RelayState=relay"}
+        return SimpleNamespace(auth_url="https://idp.example.com/sso?SAMLRequest=req&RelayState=relay")
 
     monkeypatch.setattr(mcp_auth_dependencies.config, "CALLBACK_API_BASE_URL", "http://localhost:8080")
     monkeypatch.setattr(mcp_auth_dependencies, "_saml_relay_state_store", SimpleNamespace())
@@ -200,9 +200,10 @@ def test_build_saml_initiate_response_derives_platform_acs_url(monkeypatch) -> N
         raw_auth_config=_build_mcp_config().config.auth_config,
         user=_build_user(),
         auth_config_id="auth-config-1",
+        mcp_config_id="mcp-config-1",
     )
 
-    assert response["auth_url"].startswith("https://idp.example.com/sso")
+    assert response.auth_url.startswith("https://idp.example.com/sso")
     assert captured["acs_url"] == "http://localhost:8080/v1/mcp-auth/saml/acs"
     assert captured["auth_config_id"] == "auth-config-1"
     assert captured["session_binding_hash"] == hashlib.sha256("Bearer token-123".encode("utf-8")).hexdigest()
@@ -272,6 +273,7 @@ def test_build_saml_initiate_response_translates_missing_authn_request_id(monkey
             raw_auth_config=_build_mcp_config().config.auth_config,
             user=_build_user(),
             auth_config_id="auth-config-1",
+            mcp_config_id="mcp-config-1",
         )
 
     assert exc_info.value.code == status.HTTP_500_INTERNAL_SERVER_ERROR

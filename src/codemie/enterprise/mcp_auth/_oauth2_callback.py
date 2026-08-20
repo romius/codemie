@@ -33,6 +33,7 @@ from ._callback_pages import (
 from ._common import (
     CallbackPageError,
     _is_discovered_auth_config_id,
+    _log_state_prefix,
     _raise_client_error,
 )
 from ._constants import (
@@ -477,7 +478,8 @@ def build_oauth2_callback_response(
 ) -> HTMLResponse:
     logger.info(
         "MCP OAuth2 callback received: "
-        f"has_code={code is not None} has_state={state is not None} has_error={error is not None}"
+        f"has_code={code is not None} has_state={state is not None} has_error={error is not None} "
+        f"state={_log_state_prefix(state)}"
     )
     try:
         return _build_oauth2_callback_response(
@@ -519,7 +521,8 @@ def _build_oauth2_callback_response(
         logger.warning(
             "MCP OAuth2 callback received identity provider error: "
             f"error={error!r} auth_config_id={auth_config_id} server_name={server_name} "
-            f"error_description={error_description!r} error_uri={error_uri!r}"
+            f"error_description={error_description!r} error_uri={error_uri!r} "
+            f"state={_log_state_prefix(state)}"
         )
         return _build_error_callback_response(
             CallbackPageError(

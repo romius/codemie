@@ -28,6 +28,7 @@ from ._common import (
     _build_discovered_initiate_url,
     _candidate_string,
     _get_discovery_candidate_field,
+    _sanitize_log_field,
 )
 from ._constants import (
     _CLIENT_METADATA_DOCUMENT_PATH,
@@ -163,6 +164,30 @@ def _build_discovered_resolved_payload(
     return payload
 
 
+def _log_discovered_flow_resolved(resolution: Any, *, mcp_config_id: Any, mcp_config_name: Any, user_id: Any) -> None:
+    """Record a resolved discovered flow's provenance. Never raises (AC8).
+
+    This runs outside the resolution try/except so a logging problem is not misreported as a
+    resolution failure — which also means nothing else would catch it.
+    """
+    try:
+        snapshot = resolution.snapshot
+        logger.info(
+            f"MCP OAuth2 discovered flow resolved: status={_sanitize_log_field(resolution.status)} "
+            f"mcp_config_id={mcp_config_id} mcp_config_name={_sanitize_log_field(mcp_config_name)} "
+            f"auth_config_id={_sanitize_log_field(resolution.auth_config_id)} "
+            f"discovered_flow_id={_sanitize_log_field(resolution.discovered_flow_id)} "
+            f"user_id={user_id} issuer={_sanitize_log_field(snapshot.issuer)} "
+            f"as_hostname={_sanitize_log_field(snapshot.as_hostname)} "
+            f"canonical_resource={_sanitize_log_field(snapshot.canonical_resource)} "
+            f"registration_method={_sanitize_log_field(snapshot.registration_method)} "
+            f"registration_reason_code={_sanitize_log_field(snapshot.registration_reason_code)} "
+            f"registration_profile_fingerprint={_sanitize_log_field(snapshot.registration_profile_fingerprint)}"
+        )
+    except Exception as exc:
+        logger.warning(f"MCP OAuth2 discovered flow resolution logging failed: {exc}")
+
+
 async def _resolve_discovered_candidate_payload(
     *,
     candidate: Mapping[str, Any],
@@ -218,10 +243,24 @@ async def _resolve_discovered_candidate_payload(
         logger.warning(f"MCP auth discovered flow payload build failed: {exc}")
         return _build_discovered_failure_payload(candidate, mcp_config_name, "discovered_flow_resolution_failed")
 
+    _log_discovered_flow_resolved(
+        resolution, mcp_config_id=mcp_config_id, mcp_config_name=mcp_config_name, user_id=user_id
+    )
+
     if resolution.status == "config_error":
+        error_context = resolution.error_context if isinstance(resolution.error_context, Mapping) else {}
+        attempted_mechanisms = error_context.get("attempted_mechanisms")
+        failure_reasons = error_context.get("failure_reasons")
+        logger.warning(
+            f"MCP OAuth2 discovered flow resolution failed with config_error: "
+            f"mcp_config_id={mcp_config_id} "
+            f"discovered_flow_id={_sanitize_log_field(resolution.discovered_flow_id)} "
+            f"attempted_mechanisms={_sanitize_log_field(attempted_mechanisms)} "
+            f"failure_reasons={_sanitize_log_field(failure_reasons)}"
+        )
         return _build_discovered_config_error_payload(
             candidate,
-            resolution.error_context or {},
+            error_context,
             as_hostname=resolution.as_hostname,
         )
 

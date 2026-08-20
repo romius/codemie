@@ -214,9 +214,18 @@ async def test_discovered_auth_gate_registration_failures_return_config_error_pa
     async def fake_resolve_discovered_oauth2_flow(**kwargs: Any) -> SimpleNamespace:
         return SimpleNamespace(
             status="config_error",
+            auth_config_id=None,
             discovered_flow_id=kwargs["discovered_flow_id"],
             as_hostname="auth.example.com",
-            snapshot=SimpleNamespace(discovered_flow_id=kwargs["discovered_flow_id"]),
+            snapshot=SimpleNamespace(
+                discovered_flow_id=kwargs["discovered_flow_id"],
+                issuer=None,
+                as_hostname="auth.example.com",
+                canonical_resource=None,
+                registration_method=None,
+                registration_reason_code=None,
+                registration_profile_fingerprint=None,
+            ),
             error_context={
                 "server_name": "Catalog",
                 "attempted_mechanisms": attempted_mechanisms,

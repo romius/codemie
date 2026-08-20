@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import re
 from typing import Literal
 
 from fastapi import status
@@ -22,20 +21,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from codemie.configs.logger import logger
-
-_LOG_UNSAFE_CHARS = re.compile(r"[\r\n\x00-\x1f\x7f]")
-
-
-def _sanitize_log_value(value: str | None) -> str | None:
-    """Neutralize CR/LF/control chars in client-supplied values before logging (CWE-117).
-
-    The diagnostics endpoint is unauthenticated, so its string fields are
-    attacker-controllable; sanitizing at the source keeps the log line safe
-    regardless of the logger's own escaping or the runtime environment.
-    """
-    if value is None:
-        return None
-    return _LOG_UNSAFE_CHARS.sub(" ", value)
+from codemie.enterprise.mcp_auth._common import _sanitize_log_value
 
 
 class OAuth2CallbackDiagnostics(BaseModel):
@@ -49,15 +35,19 @@ class OAuth2CallbackDiagnostics(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    result: Literal["success", "error"]
+    result: Literal["success", "error", "timeout"]
     auth_config_id: str | None = Field(default=None, max_length=256)
-    opener_present: bool
+    # Optional: only the bridge page has a window.opener to report on. A timeout is reported by
+    # the parent window, which omits it rather than asserting a meaningless false.
+    opener_present: bool | None = None
     target_origin: str | None = Field(default=None, max_length=256)
     post_message_attempted: bool = False
     post_message_error: str | None = Field(default=None, max_length=512)
     window_should_close: bool = False
     bridge_error_code: str | None = Field(default=None, max_length=128)
     idp_error_code: str | None = Field(default=None, max_length=128)
+    waited_ms: int | None = Field(default=None, ge=0, le=3_600_000)
+    phase: str | None = Field(default=None, max_length=64)
 
 
 def build_oauth2_callback_diagnostics_response(payload: OAuth2CallbackDiagnostics) -> Response:
@@ -65,8 +55,19 @@ def build_oauth2_callback_diagnostics_response(payload: OAuth2CallbackDiagnostic
 
     Failure-shaped outcomes (an ``error`` result, a lost ``window.opener``, or a
     ``postMessage`` exception) log at WARNING so they are easy to find; clean
-    successes log at INFO.
+    successes log at INFO. A ``timeout`` result — the client gave up waiting for
+    a callback that never arrived — logs its own distinct WARNING message.
     """
+
+    if payload.result == "timeout":
+        logger.warning(
+            "MCP OAuth2 callback never observed by client: "
+            f"auth_config_id={_sanitize_log_value(payload.auth_config_id)} "
+            f"waited_ms={payload.waited_ms} "
+            f"phase={_sanitize_log_value(payload.phase)} "
+            f"target_origin={_sanitize_log_value(payload.target_origin)}"
+        )
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     message = (
         "MCP OAuth2 callback client diagnostics: "
@@ -78,7 +79,7 @@ def build_oauth2_callback_diagnostics_response(payload: OAuth2CallbackDiagnostic
         f"bridge_error_code={_sanitize_log_value(payload.bridge_error_code)} "
         f"idp_error_code={_sanitize_log_value(payload.idp_error_code)}"
     )
-    if payload.result == "error" or not payload.opener_present or payload.post_message_error:
+    if payload.result == "error" or payload.opener_present is False or payload.post_message_error:
         logger.warning(message)
     else:
         logger.info(message)

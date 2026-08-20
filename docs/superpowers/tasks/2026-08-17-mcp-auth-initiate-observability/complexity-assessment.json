@@ -1,0 +1,103 @@
+{
+  "schema": 1,
+  "task": "Add structured INFO/WARNING observability logging across the mcp_auth OAuth2 initiate/discovery bridge layer plus a fire-and-forget UI timeout beacon in codemie-ui's useAuthCallbackListener hook.",
+  "generated": "2026-08-17T00:00:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 4,
+      "label": "L"
+    },
+    "requirements_clarity": {
+      "score": 2,
+      "label": "S"
+    },
+    "technical_risk": {
+      "score": 4,
+      "label": "L"
+    },
+    "file_change_estimate": {
+      "score": 4,
+      "label": "L"
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS"
+    },
+    "affected_layers": {
+      "score": 3,
+      "label": "M"
+    }
+  },
+  "total": 18,
+  "size": "M",
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "5 backend bridge files (_common.py, _initiate.py, _discovery.py, _oauth2_callback.py, _diagnostics.py) plus 1 frontend hook (useAuthCallbackListener.ts) span 2 layers; base M bumped to L because _common.py is a core shared utility used across ~15 call sites in _initiate.py, _oauth2_callback.py, and _post_auth.py, and the CWE-117 sanitizer may relocate into it."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "Base M \u2014 established log-line conventions (message prefix, key=value pairs, INFO/WARNING split, CWE-117 sanitizer) already exist verbatim in the same package. Bumped to L by the explicit security requirement: no secrets logged (client_secret, full state, code_verifier, tokens), enforced sanitization, and a dedicated test asserting state redaction (AC7)."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "9 files touched, all modified, 0 new files: 5 backend bridge files + 2 existing backend test files + 1 frontend hook + 1 existing frontend test file, spanning 3-4 directories (mcp_auth/, tests/enterprise/mcp_auth/, codemie-ui/src/hooks/, codemie-ui/src/hooks/__tests__/)."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from M to L: touches core shared utility _common.py (used across ~15 call sites in 3 files).",
+    "Technical Risk bumped from M to L: security/compliance requirement \u2014 no-secrets-in-logs constraint (AC7) with CWE-117 sanitizer and a dedicated state-redaction test."
+  ],
+  "split_recommendation": null,
+  "actual": {
+    "assessed_at": "2026-08-20",
+    "dimensions": {
+      "component_scope": {
+        "score": 4,
+        "label": "L",
+        "reason": "Predicted 5 backend files + 1 hook; actual 6 backend source files (router.py was also needed to thread mcp_config_id into the static and SAML builders) + 1 hook, across 2 repos. The _common.py concern proved real: three shared helpers now serve every initiate path, the discovery resolver and the callback."
+      },
+      "requirements_clarity": {
+        "score": 2,
+        "label": "S",
+        "reason": "Nine ACs were unambiguous and each mapped to a task. The one genuine open question surfaced only at review (CR-005 - whether the timeout beacon can carry a state prefix) and was resolved by a scoping decision, not rework."
+      },
+      "technical_risk": {
+        "score": 5,
+        "label": "XL",
+        "reason": "Bumped from L. The security requirement bit exactly where predicted but harder: the CWE-117 sanitizer was bypassed by _log_state_prefix on a value the callback receives unauthenticated and logs before verification (AC7 fail), and observing the flow could break it two ways - an unguarded duplicate authorize-URL parse raising after the PKCE write (AC8), and a resolution INFO whose attribute reads sat inside the handler that reports resolution failure. All three were found by code review, not by the implementation's own tests."
+      },
+      "file_change_estimate": {
+        "score": 5,
+        "label": "XL",
+        "reason": "Bumped from L. 1372 insertions / 30 deletions across 10 codemie files plus 191 insertions across 2 codemie-ui files. Test code dominates: 944 lines added to test_oauth2_initiate_bridge.py alone. Two pre-existing bridge test files also needed realignment once the branch widened build_saml_initiate_response and started reading resolution.auth_config_id."
+      },
+      "dependencies": {
+        "score": 1,
+        "label": "XS",
+        "reason": "Confirmed. codemie-enterprise stayed untouched - the authorize URL and the discovered-flow snapshot already exposed every field needed, exactly as scoped."
+      },
+      "affected_layers": {
+        "score": 3,
+        "label": "M",
+        "reason": "Confirmed: bridge/service layer, REST router, and the frontend hook."
+      }
+    },
+    "total": 20,
+    "size": "L",
+    "predicted_total": 18,
+    "predicted_size": "M",
+    "variance": "+2 (M -> L)",
+    "drivers": [
+      "technical_risk L->XL: the three blocking review findings were all in the observability code's own failure modes - a log line that could forge log lines, a log line that could 500 a successful flow, and a log line whose failure was reported as a business failure.",
+      "file_change_estimate L->XL: the test-to-source ratio was far higher than assumed (~10:1 by line count), because every log line needed a caplog assertion per flow path.",
+      "Unpredicted: widening two public builder signatures broke pre-existing bridge tests the plan's in-scope file list never named. The quality gates caught it; the review lenses had flagged the risk (CR-016) and an incomplete grep of src/ only had let it through."
+    ],
+    "lessons": [
+      "A logging-only ticket is not low-risk when the values logged are attacker-influenced and the code runs on an authentication path.",
+      "Plan in-scope file lists should include the files a signature change forces, not only the files carrying the feature.",
+      "Moving a log call out of a broad try/except is correct for attribution but transfers the raise risk - it needs its own guard in the same change."
+    ]
+  }
+}

@@ -20,10 +20,17 @@ from fastapi import status
 from fastapi.responses import Response
 from pydantic import ValidationError
 
+from codemie.configs.logger import logger
 from codemie.core.exceptions import ExtendedHTTPException, MCPAuthenticationRequiredException
 from codemie.rest_api.security.user import User
 
-from ._common import _build_discovered_initiate_url, _raise_client_error
+from ._common import (
+    _build_discovered_initiate_url,
+    _describe_authorize_request,
+    _raise_client_error,
+    _sanitize_log_field,
+    _sanitize_log_value,
+)
 from ._constants import (
     _INSTALL_ENTERPRISE_MCP_AUTH_HELP,
     _INVALID_MCP_AUTH_CONFIG_MESSAGE,
@@ -48,7 +55,12 @@ if TYPE_CHECKING:
 
 
 def build_oauth2_initiate_response(
-    *, raw_auth_config: dict[str, Any], user: User, auth_config_id: str, mcp_server_url: str | None
+    *,
+    raw_auth_config: dict[str, Any],
+    user: User,
+    auth_config_id: str,
+    mcp_server_url: str | None,
+    mcp_config_id: str,
 ) -> OAuth2InitiateResponseData:
     if raw_auth_config.get("auth_type") != "oauth2":
         _raise_client_error(
@@ -78,7 +90,7 @@ def build_oauth2_initiate_response(
         _raise_client_error(_INVALID_OAUTH2_CONFIG_MESSAGE, f"Stored OAuth2 auth_config is invalid: {exc}")
 
     try:
-        return _build_enterprise_initiate_response(
+        response = _build_enterprise_initiate_response(
             auth_config=auth_config,
             pkce_store=pkce_store,
             signing_key=redis_encryption.signing_key,
@@ -97,6 +109,16 @@ def build_oauth2_initiate_response(
             details=str(exc),
             help=_MCP_AUTH_REDIS_RETRY_HELP,
         ) from exc
+
+    authorize_request = _describe_authorize_request(response.auth_url)
+    logger.info(
+        "MCP OAuth2 initiate issued: flow=static "
+        f"mcp_config_id={mcp_config_id} auth_config_id={auth_config_id} user_id={user.id} "
+        f"state={authorize_request['state_prefix']} as_host={authorize_request['as_host']} "
+        f"client_id={authorize_request['client_id']} redirect_uri={authorize_request['redirect_uri']} "
+        f"resource={authorize_request['resource']} scope={authorize_request['scope']}"
+    )
+    return response
 
 
 def build_discovered_oauth2_initiate_response(
@@ -127,6 +149,7 @@ def build_discovered_oauth2_initiate_response(
     )
 
     # Heal on genuine absence
+    snapshot_healed = False
     if _probe is None:
         from codemie.service.mcp.toolkit_service import MCPToolkitService  # lazy — avoids import cycle
 
@@ -134,6 +157,13 @@ def build_discovered_oauth2_initiate_response(
             mcp_config=mcp_config,
             user_id=user.id,
             session_binding_hash=session_binding_hash,
+        )
+        snapshot_healed = _new_flow_id is not None
+        logger.warning(
+            "MCP OAuth2 initiate: discovered snapshot missing, heal attempted: "
+            f"mcp_config_id={mcp_config.id} "
+            f"requested_flow_id={_sanitize_log_field(discovered_flow_id)} "
+            f"user_id={user.id} new_flow_id={_sanitize_log_field(_new_flow_id)}"
         )
         if _new_flow_id is not None:
             _probe = _store.get_for_binding(user.id, session_binding_hash, mcp_config.id)
@@ -177,7 +207,7 @@ def build_discovered_oauth2_initiate_response(
         ) from exc
 
     try:
-        return _build_enterprise_initiate_response(
+        response = _build_enterprise_initiate_response(
             auth_config=snapshot.flow_config,
             pkce_store=pkce_store,
             signing_key=redis_encryption.signing_key,
@@ -197,6 +227,37 @@ def build_discovered_oauth2_initiate_response(
             details=str(exc),
             help=_MCP_AUTH_REDIS_RETRY_HELP,
         ) from exc
+
+    authorize_request = _describe_authorize_request(response.auth_url)
+    logger.info(
+        "MCP OAuth2 initiate issued: flow=discovered "
+        f"mcp_config_id={mcp_config.id} auth_config_id={_sanitize_log_field(snapshot.discovered_auth_id)} "
+        f"discovered_flow_id={_sanitize_log_field(snapshot.discovered_flow_id)} "
+        f"requested_flow_id={_sanitize_log_field(discovered_flow_id)} "
+        f"user_id={user.id} state={authorize_request['state_prefix']} "
+        f"as_host={authorize_request['as_host']} "
+        f"client_id={authorize_request['client_id']} redirect_uri={authorize_request['redirect_uri']} "
+        f"resource={authorize_request['resource']} scope={authorize_request['scope']} "
+        f"issuer={_sanitize_log_field(snapshot.issuer)} "
+        f"registration_method={_sanitize_log_field(snapshot.registration_method)} "
+        f"registration_reason_code={_sanitize_log_field(snapshot.registration_reason_code)} "
+        f"registration_profile_fingerprint={_sanitize_log_field(snapshot.registration_profile_fingerprint)} "
+        f"snapshot_healed={str(snapshot_healed).lower()}"
+    )
+    return response
+
+
+def _stored_auth_config_id(mcp_config: Any) -> str | None:
+    """The stored auth-config id for a config, or None when the flow is discovery-driven.
+
+    The recovery route resolves only an MCPConfig, but AC1 wants `auth_config_id` on every
+    initiate log line so recovery joins to the callback like the other flows do.
+    """
+    raw_auth_config = getattr(getattr(mcp_config, "config", None), "auth_config", None)
+    if not isinstance(raw_auth_config, dict):
+        return None
+    auth_config_id = raw_auth_config.get("id")
+    return auth_config_id if isinstance(auth_config_id, str) else None
 
 
 def build_recovery_oauth2_initiate_response(
@@ -228,13 +289,19 @@ def build_recovery_oauth2_initiate_response(
         session_binding_hash=session_binding_hash,
     )
     if exhausted_decision is not None:
+        logger.warning(
+            "MCP OAuth2 recovery initiate exhausted: "
+            f"mcp_config_id={mcp_config.id} "
+            f"recovery_flow_id={_sanitize_log_field(recovery_flow_id)} "
+            f"user_id={user.id} source=precheck"
+        )
         server_payload = _map_scope_recovery_decision(exhausted_decision, workflow_execution_id=None)
         raise MCPAuthenticationRequiredException({"error": "authentication_required", "servers": [server_payload]})
 
     redirect_uri, redirect_uri_hostname, localhost_warning = _deps.build_redirect_uri()
     pkce_store, redis_encryption = _deps._require_initialized_mcp_auth_components()
     try:
-        return _build_enterprise_recovery_initiate_response(
+        response = _build_enterprise_recovery_initiate_response(
             recovery_flow_id=recovery_flow_id,
             mcp_config_id=mcp_config.id,
             pkce_store=pkce_store,
@@ -246,6 +313,12 @@ def build_recovery_oauth2_initiate_response(
             localhost_warning=localhost_warning,
         )
     except RecoveryAttemptsExhausted as exc:
+        logger.warning(
+            "MCP OAuth2 recovery initiate exhausted: "
+            f"mcp_config_id={mcp_config.id} "
+            f"recovery_flow_id={_sanitize_log_field(recovery_flow_id)} "
+            f"user_id={user.id} source=exception"
+        )
         server_payload = _map_scope_recovery_decision(exc.decision, workflow_execution_id=None)
         raise MCPAuthenticationRequiredException(
             {"error": "authentication_required", "servers": [server_payload]}
@@ -257,6 +330,18 @@ def build_recovery_oauth2_initiate_response(
             details=str(exc),
             help=_MCP_AUTH_REDIS_RETRY_HELP,
         ) from exc
+
+    authorize_request = _describe_authorize_request(response.auth_url)
+    logger.info(
+        "MCP OAuth2 initiate issued: flow=recovery "
+        f"mcp_config_id={mcp_config.id} "
+        f"auth_config_id={_sanitize_log_field(_stored_auth_config_id(mcp_config))} "
+        f"recovery_flow_id={_sanitize_log_field(recovery_flow_id)} user_id={user.id} "
+        f"state={authorize_request['state_prefix']} as_host={authorize_request['as_host']} "
+        f"client_id={authorize_request['client_id']} redirect_uri={authorize_request['redirect_uri']} "
+        f"resource={authorize_request['resource']} scope={authorize_request['scope']}"
+    )
+    return response
 
 
 def _load_discovered_flow_snapshot_for_binding_or_error(
@@ -292,7 +377,7 @@ def _load_discovered_flow_snapshot_for_binding_or_error(
 
 
 def build_saml_initiate_response(
-    *, raw_auth_config: dict[str, Any], user: User, auth_config_id: str
+    *, raw_auth_config: dict[str, Any], user: User, auth_config_id: str, mcp_config_id: str
 ) -> SAMLInitiateResponseData:
     if raw_auth_config.get("auth_type") != "saml":
         _raise_client_error(
@@ -321,7 +406,7 @@ def build_saml_initiate_response(
         _raise_client_error(_INVALID_MCP_AUTH_CONFIG_MESSAGE, f"Stored SAML auth_config is invalid: {exc}")
 
     try:
-        return _build_enterprise_initiate_response(
+        response = _build_enterprise_initiate_response(
             auth_config=auth_config,
             relay_state_store=relay_state_store,
             signing_key=redis_encryption.signing_key,
@@ -344,6 +429,15 @@ def build_saml_initiate_response(
             details=str(exc),
             help="Retry the authentication flow. If the problem persists, contact your administrator.",
         ) from exc
+
+    authorize_request = _describe_authorize_request(response.auth_url)
+    logger.info(
+        "MCP SAML initiate issued: "
+        f"mcp_config_id={mcp_config_id} auth_config_id={auth_config_id} user_id={user.id} "
+        f"relay_state={authorize_request['state_prefix']} idp_host={authorize_request['as_host']} "
+        f"acs_url={_sanitize_log_value(acs_url)}"
+    )
+    return response
 
 
 def build_saml_metadata_response(*, auth_config_id: str | None) -> Response:

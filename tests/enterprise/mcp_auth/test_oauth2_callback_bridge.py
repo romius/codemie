@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import re
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -1051,6 +1052,49 @@ def test_callback_logs_success_page_served_with_target_origin(monkeypatch) -> No
     assert "auth-code" not in text
 
 
+def test_callback_diagnostics_timeout_result_logs_distinct_warning_message(monkeypatch) -> None:
+    from codemie.enterprise.mcp_auth import _diagnostics
+
+    warned: list[str] = []
+    monkeypatch.setattr(_diagnostics.logger, "warning", lambda message, *a, **k: warned.append(message))
+    monkeypatch.setattr(_diagnostics.logger, "info", lambda message, *a, **k: warned.append(message))
+
+    client = _build_enabled_client()
+    resp = client.post(
+        "/v1/mcp-auth/oauth2/callback-diagnostics",
+        json={
+            "result": "timeout",
+            "auth_config_id": "auth-config-1",
+            "target_origin": "https://app.example.com",
+            "waited_ms": 45000,
+            "phase": "awaiting_callback",
+        },
+    )
+
+    assert resp.status_code == status.HTTP_204_NO_CONTENT
+    assert len(warned) == 1
+    message = warned[0]
+    assert "MCP OAuth2 callback never observed by client" in message
+    assert "MCP OAuth2 callback client diagnostics" not in message
+    assert "waited_ms=45000" in message
+    assert "phase=awaiting_callback" in message
+    assert (
+        "opener_present" not in message
+    ), "opener_present describes the bridge page's window; the parent reporting a timeout has none"
+    assert "target_origin=https://app.example.com" in message
+    assert "auth_config_id=auth-config-1" in message
+
+
+def test_callback_diagnostics_rejects_waited_ms_over_ceiling() -> None:
+    client = _build_enabled_client()
+    resp = client.post(
+        "/v1/mcp-auth/oauth2/callback-diagnostics",
+        json={"result": "timeout", "waited_ms": 4_000_000},
+    )
+
+    assert resp.status_code == 422
+
+
 def test_callback_diagnostics_sanitizes_newlines_in_logged_fields(monkeypatch) -> None:
     from codemie.enterprise.mcp_auth import _diagnostics
 
@@ -1078,3 +1122,168 @@ def test_callback_diagnostics_sanitizes_newlines_in_logged_fields(monkeypatch) -
     assert "\n" not in message
     assert "\r" not in message
     assert "boom INFO: forged log line" in message
+
+
+# ── Task 8: callback entry log and IdP-error log carry the initiate's state prefix (AC5) ──
+
+
+def _extract_log_field(message: str, key: str) -> str | None:
+    """Read a `key=value` field back out of an emitted log line."""
+    match = re.search(rf"(?:^|\s){re.escape(key)}=(\S*)", message)
+    return match.group(1) if match else None
+
+
+def test_callback_entry_log_state_prefix_joins_to_initiate(monkeypatch) -> None:
+    """The two lines must join on a value each side emitted independently, so the flow is
+    traceable even when verification fails before auth_config_id becomes available.
+
+    The comparison is between the two *emitted* log lines - deriving the expected value with
+    _log_state_prefix would only prove the helper equals itself.
+    """
+    from codemie.configs.logger import logger as shared_logger
+
+    pkce_store, _, _, _, _ = _set_default_bridge_state(monkeypatch)
+    pkce_store.consume.return_value = _build_pkce_state()
+
+    import codemie_enterprise.mcp_auth as enterprise_mcp_auth
+
+    # Distinct characters throughout: a repeated-character state cannot reveal a wrong slice.
+    known_state = "Nq8Wz3Ek5Ty7Ui1Op2As4Df6Gh9Jk0Lx-_ZcVbNm"
+    auth_url = (
+        "https://idp.example.com/oauth2/authorize"
+        f"?client_id=client-1&redirect_uri=https://codemie.example.com/callback&state={known_state}"
+    )
+    monkeypatch.setattr(enterprise_mcp_auth, "OAuth2AuthConfig", SimpleNamespace(model_validate=lambda raw: raw))
+    monkeypatch.setattr(
+        enterprise_mcp_auth,
+        "build_oauth2_initiate_response",
+        lambda **kwargs: SimpleNamespace(
+            auth_url=auth_url,
+            redirect_uri_hostname=kwargs["redirect_uri_hostname"],
+            localhost_warning=kwargs["localhost_warning"],
+        ),
+    )
+    monkeypatch.setattr(enterprise_mcp_auth, "MCPAuthRedisUnavailable", RuntimeError)
+
+    initiate_logs: list[str] = []
+    monkeypatch.setattr(shared_logger, "info", lambda message, *a, **k: initiate_logs.append(message))
+
+    # Drive the known state through initiate first, mirroring how a real flow issues it.
+    initiate_response = mcp_auth_dependencies.build_oauth2_initiate_response(
+        raw_auth_config=_build_auth_config(),
+        user=SimpleNamespace(id="user-1", auth_token="Bearer token-123"),
+        auth_config_id="auth-config-1",
+        mcp_server_url="https://mcp.example.com/",
+        mcp_config_id="mcp-config-1",
+    )
+    assert initiate_response.auth_url == auth_url
+
+    issued = [m for m in initiate_logs if m.startswith("MCP OAuth2 initiate issued:")]
+    assert len(issued) == 1
+    initiate_state = _extract_log_field(issued[0], "state")
+    assert initiate_state and initiate_state != known_state, "initiate must emit a truncated state"
+
+    captured: list[str] = []
+    monkeypatch.setattr(shared_logger, "info", lambda message, *a, **k: captured.append(message))
+
+    client = _build_enabled_client()
+    response = client.get(
+        "/v1/mcp-auth/oauth2/callback",
+        params={"code": "auth-code", "state": known_state},
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    entry_logs = [message for message in captured if message.startswith("MCP OAuth2 callback received:")]
+    assert len(entry_logs) == 1
+    callback_state = _extract_log_field(entry_logs[0], "state")
+
+    assert (
+        callback_state == initiate_state
+    ), "the callback line must join to the initiate line on the value each side actually emitted"
+    assert known_state not in entry_logs[0]
+
+
+def test_callback_idp_error_log_includes_state_prefix(monkeypatch) -> None:
+    """The IdP-error branch log must carry the same state prefix as the entry log, so it stays
+    joinable to initiate even when auth_config_id cannot be resolved from the state."""
+    from codemie.configs.logger import logger as shared_logger
+    from codemie.enterprise.mcp_auth._common import _log_state_prefix
+
+    client = _build_enabled_client()
+    _set_default_bridge_state(monkeypatch)
+    monkeypatch.setattr(
+        mcp_auth_dependencies,
+        "_decode_and_verify_oauth2_callback_state",
+        lambda state, signing_key: _build_state_payload(),
+    )
+
+    captured: list[str] = []
+    monkeypatch.setattr(shared_logger, "warning", lambda message, *a, **k: captured.append(message))
+
+    known_state = "e" * 40
+    response = client.get(
+        "/v1/mcp-auth/oauth2/callback",
+        params={"error": "access_denied", "state": known_state},
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    idp_error_logs = [message for message in captured if "identity provider error" in message]
+    assert len(idp_error_logs) == 1
+    assert f"state={_log_state_prefix(known_state)}" in idp_error_logs[0]
+
+
+# ── Code-review fix: the callback logs `state` before it is verified (AC7, CWE-117) ──
+
+
+def test_callback_entry_log_neutralizes_control_characters_in_state(monkeypatch) -> None:
+    """`state` reaches the entry log straight from an unauthenticated query parameter, before any
+    verification. Truncating to 12 characters bounds the injected text but does not neutralize it,
+    so a CR/LF in the first 12 characters forged a second log line."""
+    from codemie.configs.logger import logger as shared_logger
+
+    _set_default_bridge_state(monkeypatch)
+
+    captured: list[str] = []
+    monkeypatch.setattr(shared_logger, "info", lambda message, *a, **k: captured.append(message))
+
+    client = _build_enabled_client()
+    response = client.get(
+        "/v1/mcp-auth/oauth2/callback",
+        params={"code": "auth-code", "state": "a\nWARNING: forged line"},
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    entry_logs = [message for message in captured if message.startswith("MCP OAuth2 callback received:")]
+    assert len(entry_logs) == 1
+    message = entry_logs[0]
+    assert "\n" not in message
+    assert "\r" not in message
+    assert "state=a WARNING: " in message
+
+
+def test_callback_idp_error_log_neutralizes_control_characters_in_state(monkeypatch) -> None:
+    """Same exposure on the identity-provider-error branch, which also logs the raw state."""
+    from codemie.configs.logger import logger as shared_logger
+
+    client = _build_enabled_client()
+    _set_default_bridge_state(monkeypatch)
+    monkeypatch.setattr(
+        mcp_auth_dependencies,
+        "_decode_and_verify_oauth2_callback_state",
+        lambda state, signing_key: _build_state_payload(),
+    )
+
+    captured: list[str] = []
+    monkeypatch.setattr(shared_logger, "warning", lambda message, *a, **k: captured.append(message))
+
+    response = client.get(
+        "/v1/mcp-auth/oauth2/callback",
+        params={"error": "access_denied", "state": "e\r\nERROR: forged"},
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    idp_error_logs = [message for message in captured if "identity provider error" in message]
+    assert len(idp_error_logs) == 1
+    message = idp_error_logs[0]
+    assert "\n" not in message
+    assert "\r" not in message
