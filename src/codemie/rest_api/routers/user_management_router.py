@@ -132,7 +132,6 @@ def list_users(
         ),
     ),
     user: User = Depends(authenticate),
-    _: None = Depends(admin_or_maintainer_or_auditor_access),
 ):
     """List all users with pagination and filters
 

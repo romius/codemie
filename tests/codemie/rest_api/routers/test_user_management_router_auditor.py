@@ -160,7 +160,6 @@ class TestAuditorReadRouteDependencyWiring:
     @pytest.mark.parametrize(
         "path",
         [
-            "/v1/admin/users",
             "/v1/admin/users/{user_id}/projects",
             "/v1/admin/users/{user_id}/knowledge-bases",
             "/v1/admin/users/{user_id}/budgets",
@@ -170,6 +169,16 @@ class TestAuditorReadRouteDependencyWiring:
         route = self._find_route(path, "GET")
         dependency_functions = [dep.call for dep in route.dependant.dependencies]
         assert admin_or_maintainer_or_auditor_access in dependency_functions
+        assert admin_access_only not in dependency_functions
+
+    def test_list_users_route_has_no_role_gate(self):
+        """GET /v1/admin/users (EPMCDME-14298): restored to authenticate-only so
+        project admins can list their own projects' users; is_project_admin scoping
+        happens in list_users_with_flow, not via a route-level role dependency.
+        """
+        route = self._find_route("/v1/admin/users", "GET")
+        dependency_functions = [dep.call for dep in route.dependant.dependencies]
+        assert admin_or_maintainer_or_auditor_access not in dependency_functions
         assert admin_access_only not in dependency_functions
 
 
