@@ -1,0 +1,565 @@
+# Production managed MCP catalog.
+# Copy this content into the `managed-mcp-servers.yaml` key of the
+# `codemie-customer-config` ConfigMap. Schema: see managed-mcp-servers.example.yaml.
+#
+# `url` points at the CodeMie MCP proxy, not at the upstream MCP server: the
+# proxy owns the per-server token exchange, so clients only ever hold a
+# CodeMie-realm token. The upstream `https://mcp.epam.com/mcp/<key>` endpoints
+# and their audiences are proxy-side configuration and are deliberately absent
+# from this client-facing catalog.
+#
+# Every server carries its own full `oauth` block. The values are identical
+# today because all servers share one public OAuth client, but each entry is
+# independent: change one server's OAuth parameters without touching the rest.
+servers:
+  - name: expertise_search
+    transport: http
+    url: https://codemie.lab.epam.com/mcp/mcp-proxy/expertise_search
+    auth: oauth
+    description: >-
+      Provides access to integrated organizational knowledge by connecting employee expertise,
+      project data, and case studies. This empowers clients to quickly find relevant information
+      for resource management, project insights and decision support within an EPAM company.
+    oauth:
+      clientId: codemie-mcp-proxy
+      scope: openid profile email
+      callbackHost: localhost
+      callbackPort: 3118
+      authorizationServer: ["https://auth.codemie.lab.epam.com/realms/codemie-prod"]
+      authorizationUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login
+      tokenUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/token
+
+  - name: data_catalog
+    transport: http
+    url: https://codemie.lab.epam.com/mcp/mcp-proxy/data_catalog
+    auth: oauth
+    description: >-
+      Enables efficient discovery, exploration, and governance of data assets within EPAM data
+      catalog, providing users with detailed information, search capabilities, and metadata
+      management through structured tools and protocols.
+    oauth:
+      clientId: codemie-mcp-proxy
+      scope: openid profile email
+      callbackHost: localhost
+      callbackPort: 3118
+      authorizationServer: ["https://auth.codemie.lab.epam.com/realms/codemie-prod"]
+      authorizationUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login
+      tokenUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/token
+
+  - name: delivery_central
+    transport: http
+    url: https://codemie.lab.epam.com/mcp/mcp-proxy/delivery_central
+    auth: oauth
+    description: Delivery Central
+    oauth:
+      clientId: codemie-mcp-proxy
+      scope: openid profile email
+      callbackHost: localhost
+      callbackPort: 3118
+      authorizationServer: ["https://auth.codemie.lab.epam.com/realms/codemie-prod"]
+      authorizationUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login
+      tokenUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/token
+
+  - name: heroes
+    transport: http
+    url: https://codemie.lab.epam.com/mcp/mcp-proxy/heroes
+    auth: oauth
+    description: Heroes
+    oauth:
+      clientId: codemie-mcp-proxy
+      scope: openid profile email
+      callbackHost: localhost
+      callbackPort: 3118
+      authorizationServer: ["https://auth.codemie.lab.epam.com/realms/codemie-prod"]
+      authorizationUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login
+      tokenUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/token
+
+  - name: learn
+    transport: http
+    url: https://codemie.lab.epam.com/mcp/mcp-proxy/learn
+    auth: oauth
+    description: Learn MCP server is designed to support and manage the learning process.
+    oauth:
+      clientId: codemie-mcp-proxy
+      scope: openid profile email
+      callbackHost: localhost
+      callbackPort: 3118
+      authorizationServer: ["https://auth.codemie.lab.epam.com/realms/codemie-prod"]
+      authorizationUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login
+      tokenUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/token
+
+  - name: matching_model
+    transport: http
+    url: https://codemie.lab.epam.com/mcp/mcp-proxy/matching_model
+    auth: oauth
+    description: >-
+      MCP for EPAM talent matching. Combines two services:
+
+      – Relevance Score: computes position–candidate match scores with full attribute breakdown
+      (skills, seniority, location, availability, languages); supports what-if skill analysis and
+      candidate–candidate comparison.
+
+      – Similar Candidates: finds similar employees by embedding similarity, searches candidates
+      by free-text description, ranks candidates for a position, and suggests open positions for
+      an employee.
+    oauth:
+      clientId: codemie-mcp-proxy
+      scope: openid profile email
+      callbackHost: localhost
+      callbackPort: 3118
+      authorizationServer: ["https://auth.codemie.lab.epam.com/realms/codemie-prod"]
+      authorizationUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login
+      tokenUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/token
+
+  - name: notebooks
+    transport: http
+    url: https://codemie.lab.epam.com/mcp/mcp-proxy/notebooks
+    auth: oauth
+    description: Provides access to OneHub Notebooks
+    oauth:
+      clientId: codemie-mcp-proxy
+      scope: openid profile email
+      callbackHost: localhost
+      callbackPort: 3118
+      authorizationServer: ["https://auth.codemie.lab.epam.com/realms/codemie-prod"]
+      authorizationUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login
+      tokenUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/token
+
+  - name: onehub_core
+    transport: http
+    url: https://codemie.lab.epam.com/mcp/mcp-proxy/onehub_core
+    auth: oauth
+    description: >-
+      Provides access to integrated organizational knowledge by connecting employee expertise,
+      project data, and case studies. This empowers clients to quickly find relevant information
+      for resource management, project insights and decision support within an EPAM company.
+    oauth:
+      clientId: codemie-mcp-proxy
+      scope: openid profile email
+      callbackHost: localhost
+      callbackPort: 3118
+      authorizationServer: ["https://auth.codemie.lab.epam.com/realms/codemie-prod"]
+      authorizationUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login
+      tokenUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/token
+
+  - name: people_central
+    transport: http
+    url: https://codemie.lab.epam.com/mcp/mcp-proxy/people_central
+    auth: oauth
+    description: >-
+      Provides data-driven tools and processes documentation to streamline HR and people
+      management tasks relating to staffing, performance, retention and recognition.
+    oauth:
+      clientId: codemie-mcp-proxy
+      scope: openid profile email
+      callbackHost: localhost
+      callbackPort: 3118
+      authorizationServer: ["https://auth.codemie.lab.epam.com/realms/codemie-prod"]
+      authorizationUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login
+      tokenUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/token
+
+  - name: epm_prj
+    transport: http
+    url: https://codemie.lab.epam.com/mcp/mcp-proxy/epm_prj
+    auth: oauth
+    description: Project MCP. Provides access to the project and delivery streams data.
+    oauth:
+      clientId: codemie-mcp-proxy
+      scope: openid profile email
+      callbackHost: localhost
+      callbackPort: 3118
+      authorizationServer: ["https://auth.codemie.lab.epam.com/realms/codemie-prod"]
+      authorizationUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login
+      tokenUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/token
+
+  - name: query
+    transport: http
+    url: https://codemie.lab.epam.com/mcp/mcp-proxy/query
+    auth: oauth
+    description: >-
+      The Query MCP server acts as a centralized knowledge platform for the EPAM company. It
+      enables clients to quickly find answers, search documentation and retrieve content from
+      documents.
+    oauth:
+      clientId: codemie-mcp-proxy
+      scope: openid profile email
+      callbackHost: localhost
+      callbackPort: 3118
+      authorizationServer: ["https://auth.codemie.lab.epam.com/realms/codemie-prod"]
+      authorizationUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login
+      tokenUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/token
+
+  - name: radar
+    transport: http
+    url: https://codemie.lab.epam.com/mcp/mcp-proxy/radar
+    auth: oauth
+    description: >-
+      Provides access to EPAM data, such as people, positions, projects, and hiring processes,
+      enabling advanced search, filtering, analysis, and reporting across multiple business
+      domains. [Radar KB](https://kb.epam.com/pages/viewpage.action?pageId=2806068910&spaceKey=EPMSRDR&title=MCP%2BRadar%2BConcept)
+    oauth:
+      clientId: codemie-mcp-proxy
+      scope: openid profile email
+      callbackHost: localhost
+      callbackPort: 3118
+      authorizationServer: ["https://auth.codemie.lab.epam.com/realms/codemie-prod"]
+      authorizationUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login
+      tokenUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/token
+
+  - name: staffing
+    transport: http
+    url: https://codemie.lab.epam.com/mcp/mcp-proxy/staffing
+    auth: oauth
+    description: >-
+      Provides detailed information and perform operations related to employees, applicants,
+      positions, projects, requisitions, skills, and staffing processes within an IT company’s
+      staffing management system.
+    oauth:
+      clientId: codemie-mcp-proxy
+      scope: openid profile email
+      callbackHost: localhost
+      callbackPort: 3118
+      authorizationServer: ["https://auth.codemie.lab.epam.com/realms/codemie-prod"]
+      authorizationUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login
+      tokenUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/token
+
+  - name: telescope
+    transport: http
+    url: https://codemie.lab.epam.com/mcp/mcp-proxy/telescope
+    auth: oauth
+    description: Supernova platform MCP server. Access availability calendars data.
+    oauth:
+      clientId: codemie-mcp-proxy
+      scope: openid profile email
+      callbackHost: localhost
+      callbackPort: 3118
+      authorizationServer: ["https://auth.codemie.lab.epam.com/realms/codemie-prod"]
+      authorizationUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login
+      tokenUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/token
+
+  - name: talk
+    transport: http
+    url: https://codemie.lab.epam.com/mcp/mcp-proxy/talk
+    auth: oauth
+    description: >-
+      Experimental: 1-on-1 talk info and create/update by UPSA/PMC/Global ID. Use Gql_OneHub_User
+      first to resolve a person to an id.
+    oauth:
+      clientId: codemie-mcp-proxy
+      scope: openid profile email
+      callbackHost: localhost
+      callbackPort: 3118
+      authorizationServer: ["https://auth.codemie.lab.epam.com/realms/codemie-prod"]
+      authorizationUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login
+      tokenUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/token
+
+  - name: videoportal
+    transport: http
+    url: https://codemie.lab.epam.com/mcp/mcp-proxy/videoportal
+    auth: oauth
+    description: Videoportal
+    oauth:
+      clientId: codemie-mcp-proxy
+      scope: openid profile email
+      callbackHost: localhost
+      callbackPort: 3118
+      authorizationServer: ["https://auth.codemie.lab.epam.com/realms/codemie-prod"]
+      authorizationUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login
+      tokenUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/token
+
+  - name: wearecommunity
+    transport: http
+    url: https://codemie.lab.epam.com/mcp/mcp-proxy/wearecommunity
+    auth: oauth
+    description: We Are Community
+    oauth:
+      clientId: codemie-mcp-proxy
+      scope: openid profile email
+      callbackHost: localhost
+      callbackPort: 3118
+      authorizationServer: ["https://auth.codemie.lab.epam.com/realms/codemie-prod"]
+      authorizationUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login
+      tokenUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/token
+
+  - name: botcraft
+    transport: http
+    url: https://codemie.lab.epam.com/mcp/mcp-proxy/botcraft
+    auth: oauth
+    description: >-
+      BotCraft - tools for building bots. Can be accessed via any MCP Gateway enabled client, via
+      BotCraft itself as a client.
+    oauth:
+      clientId: codemie-mcp-proxy
+      scope: openid profile email
+      callbackHost: localhost
+      callbackPort: 3118
+      authorizationServer: ["https://auth.codemie.lab.epam.com/realms/codemie-prod"]
+      authorizationUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login
+      tokenUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/token
+
+  - name: cipr
+    transport: http
+    url: https://codemie.lab.epam.com/mcp/mcp-proxy/cipr
+    auth: oauth
+    description: Cipr
+    oauth:
+      clientId: codemie-mcp-proxy
+      scope: openid profile email
+      callbackHost: localhost
+      callbackPort: 3118
+      authorizationServer: ["https://auth.codemie.lab.epam.com/realms/codemie-prod"]
+      authorizationUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login
+      tokenUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/token
+
+  - name: doc_intelligence
+    transport: http
+    url: https://codemie.lab.epam.com/mcp/mcp-proxy/doc_intelligence
+    auth: oauth
+    description: Doc Intelligence
+    oauth:
+      clientId: codemie-mcp-proxy
+      scope: openid profile email
+      callbackHost: localhost
+      callbackPort: 3118
+      authorizationServer: ["https://auth.codemie.lab.epam.com/realms/codemie-prod"]
+      authorizationUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login
+      tokenUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/token
+
+  - name: feedback
+    transport: http
+    url: https://codemie.lab.epam.com/mcp/mcp-proxy/feedback
+    auth: oauth
+    description: >-
+      API for managing reviews in the Feedback system, which is used for collecting and processing
+      feedback for employees. The API allows for creating, retrieving, updating, and deleting
+      reviews, as well as managing review forms and due dates. It also provides endpoints for
+      counting reviews based on specific criteria and for changing the status of reviews (e.g.,
+      refusing or sharing a review).
+    oauth:
+      clientId: codemie-mcp-proxy
+      scope: openid profile email
+      callbackHost: localhost
+      callbackPort: 3118
+      authorizationServer: ["https://auth.codemie.lab.epam.com/realms/codemie-prod"]
+      authorizationUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login
+      tokenUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/token
+
+  - name: gcf
+    transport: http
+    url: https://codemie.lab.epam.com/mcp/mcp-proxy/gcf
+    auth: oauth
+    description: Global Competency Framework
+    oauth:
+      clientId: codemie-mcp-proxy
+      scope: openid profile email
+      callbackHost: localhost
+      callbackPort: 3118
+      authorizationServer: ["https://auth.codemie.lab.epam.com/realms/codemie-prod"]
+      authorizationUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login
+      tokenUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/token
+
+  - name: km_grounding
+    transport: http
+    url: https://codemie.lab.epam.com/mcp/mcp-proxy/km_grounding
+    auth: oauth
+    description: >-
+      Business glossary and data map for EPAM: helps AI turn questions into the right concepts and
+      source tables before querying.
+    oauth:
+      clientId: codemie-mcp-proxy
+      scope: openid profile email
+      callbackHost: localhost
+      callbackPort: 3118
+      authorizationServer: ["https://auth.codemie.lab.epam.com/realms/codemie-prod"]
+      authorizationUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login
+      tokenUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/token
+
+  - name: interview
+    transport: http
+    url: https://codemie.lab.epam.com/mcp/mcp-proxy/interview
+    auth: oauth
+    description: EPAM Hiring Interview Tool
+    oauth:
+      clientId: codemie-mcp-proxy
+      scope: openid profile email
+      callbackHost: localhost
+      callbackPort: 3118
+      authorizationServer: ["https://auth.codemie.lab.epam.com/realms/codemie-prod"]
+      authorizationUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login
+      tokenUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/token
+
+  - name: relevance_score
+    transport: http
+    url: https://codemie.lab.epam.com/mcp/mcp-proxy/relevance_score
+    auth: oauth
+    description: >-
+      EPM-MTCH: neural candidate–position matching for staffing; relevance scores via API.
+    oauth:
+      clientId: codemie-mcp-proxy
+      scope: openid profile email
+      callbackHost: localhost
+      callbackPort: 3118
+      authorizationServer: ["https://auth.codemie.lab.epam.com/realms/codemie-prod"]
+      authorizationUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login
+      tokenUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/token
+
+  - name: similar_candidates
+    transport: http
+    url: https://codemie.lab.epam.com/mcp/mcp-proxy/similar_candidates
+    auth: oauth
+    description: >-
+      EPM-MTCH: find similar candidates for staffing via similar-candidates API.
+    oauth:
+      clientId: codemie-mcp-proxy
+      scope: openid profile email
+      callbackHost: localhost
+      callbackPort: 3118
+      authorizationServer: ["https://auth.codemie.lab.epam.com/realms/codemie-prod"]
+      authorizationUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login
+      tokenUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/token
+
+  - name: play
+    transport: http
+    url: https://codemie.lab.epam.com/mcp/mcp-proxy/play
+    auth: oauth
+    description: MCP to host and manage html applications
+    oauth:
+      clientId: codemie-mcp-proxy
+      scope: openid profile email
+      callbackHost: localhost
+      callbackPort: 3118
+      authorizationServer: ["https://auth.codemie.lab.epam.com/realms/codemie-prod"]
+      authorizationUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login
+      tokenUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/token
+
+  - name: people_profiles
+    transport: http
+    url: https://codemie.lab.epam.com/mcp/mcp-proxy/people_profiles
+    auth: oauth
+    description: >-
+      Employee profile and performance-related signals from Talk (People Programs); raw attributes
+      for MCP. OpenApiGateway; operations tagged mcp-tool.
+    oauth:
+      clientId: codemie-mcp-proxy
+      scope: openid profile email
+      callbackHost: localhost
+      callbackPort: 3118
+      authorizationServer: ["https://auth.codemie.lab.epam.com/realms/codemie-prod"]
+      authorizationUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login
+      tokenUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/token
+
+  - name: query_ta
+    transport: http
+    url: https://codemie.lab.epam.com/mcp/mcp-proxy/query_ta
+    auth: oauth
+    description: Semantic search for Applicants
+    oauth:
+      clientId: codemie-mcp-proxy
+      scope: openid profile email
+      callbackHost: localhost
+      callbackPort: 3118
+      authorizationServer: ["https://auth.codemie.lab.epam.com/realms/codemie-prod"]
+      authorizationUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login
+      tokenUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/token
+
+  - name: skillo
+    transport: http
+    url: https://codemie.lab.epam.com/mcp/mcp-proxy/skillo
+    auth: oauth
+    description: >-
+      EPAM Skills (Skillo) MCP: learning and skills-related tools. User token is exchanged for the
+      Skillo audience (same pattern as other external MCP servers).
+    oauth:
+      clientId: codemie-mcp-proxy
+      scope: openid profile email
+      callbackHost: localhost
+      callbackPort: 3118
+      authorizationServer: ["https://auth.codemie.lab.epam.com/realms/codemie-prod"]
+      authorizationUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login
+      tokenUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/token
+
+  - name: support
+    transport: http
+    url: https://codemie.lab.epam.com/mcp/mcp-proxy/support
+    auth: oauth
+    description: >-
+      EPAM Support Portal MCP Server (ServiceNow platform support.epam.com) — covering key entities
+      including incidents, changes, problems, requests, work orders, assets, alerts, CIs, SLAs,
+      users, groups etc. through structured tools.
+    oauth:
+      clientId: codemie-mcp-proxy
+      scope: openid profile email
+      callbackHost: localhost
+      callbackPort: 3118
+      authorizationServer: ["https://auth.codemie.lab.epam.com/realms/codemie-prod"]
+      authorizationUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login
+      tokenUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/token
+
+  - name: talent_hub
+    transport: http
+    url: https://codemie.lab.epam.com/mcp/mcp-proxy/talent_hub
+    auth: oauth
+    description: >-
+      Provides data-driven tools and process guidance for Talent Hub operations, helping managers
+      and employees navigate organizational units, role-based access, dashboard metrics, team
+      structure, and unit-level insights.
+    oauth:
+      clientId: codemie-mcp-proxy
+      scope: openid profile email
+      callbackHost: localhost
+      callbackPort: 3118
+      authorizationServer: ["https://auth.codemie.lab.epam.com/realms/codemie-prod"]
+      authorizationUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login
+      tokenUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/token
+
+  - name: talk_open_api
+    transport: http
+    url: https://codemie.lab.epam.com/mcp/mcp-proxy/talk_open_api
+    auth: oauth
+    description: >-
+      Experimental: Talk backend REST via Open API (OpenApiGateway, tag mcp-tool). Temporary group;
+      will merge into main Talk tools later.
+    oauth:
+      clientId: codemie-mcp-proxy
+      scope: openid profile email
+      callbackHost: localhost
+      callbackPort: 3118
+      authorizationServer: ["https://auth.codemie.lab.epam.com/realms/codemie-prod"]
+      authorizationUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login
+      tokenUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/token
+
+  - name: technology_copilot
+    transport: http
+    url: https://codemie.lab.epam.com/mcp/mcp-proxy/technology_copilot
+    auth: oauth
+    description: >-
+      Provides AI clients with structured access to Technology Copilot contexts, including business,
+      product, architecture, and engineering knowledge. Enables AI assistants to retrieve project
+      context, requirements, architecture decisions, scenarios, workspaces, sessions, and generated
+      artifacts to accelerate software development, architecture design, and collaboration across
+      SDLC tools.
+    oauth:
+      clientId: codemie-mcp-proxy
+      scope: openid profile email
+      callbackHost: localhost
+      callbackPort: 3118
+      authorizationServer: ["https://auth.codemie.lab.epam.com/realms/codemie-prod"]
+      authorizationUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login
+      tokenUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/token
+
+  - name: time
+    transport: http
+    url: https://codemie.lab.epam.com/mcp/mcp-proxy/time
+    auth: oauth
+    description: >-
+      TIME MCP is a read-only MCP server for the TIME application that provides corporate agents
+      with secure access to data. The server follows the existing TIME security model, includes
+      permission checks aligned with TIME UI access, and provides deterministic responses.
+    oauth:
+      clientId: codemie-mcp-proxy
+      scope: openid profile email
+      callbackHost: localhost
+      callbackPort: 3118
+      authorizationServer: ["https://auth.codemie.lab.epam.com/realms/codemie-prod"]
+      authorizationUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login
+      tokenUrl: https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/token
