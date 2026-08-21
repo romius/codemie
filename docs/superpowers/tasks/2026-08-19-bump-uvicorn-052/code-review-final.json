@@ -1,0 +1,46 @@
+{
+  "decision": "request-changes",
+  "rationale": "Three lenses ran; all three produced usable output. The blind lens raised six hypotheses, all six refuted against the repository (no gunicorn/UvicornWorker, no uvicorn[standard] install path, no ws_protocol_class/wsproto/--ws usage, no --proxy-headers flag, websockets locked at 16.0 which clears the >=13 floor, and the missing rationale comment is the documented convention since '# Security (TICKET)' is reserved for CVE pins). The edge-case and acceptance lenses independently converged on the same previously-unknown behaviour change, each reproducing it experimentally, and the orchestrator verified the underlying fact directly: uvicorn 0.30.6 advertises ASGI spec_version '2.4' while 0.52.4 advertises '2.3', and starlette 1.3.1 branches on exactly that value at responses.py:265. This flips every StreamingResponse in the application from the direct path to the legacy cancel-on-disconnect path. That is a real regression in the behaviour the ticket's own acceptance criterion protects, and it was not in the spec's compatibility surface, which listed four coupling points and missed this fifth one. 1 finding deferred (not emitted): the uvicorn proxy_headers _TrustedHosts always-trust semantics narrowed from 'any list containing *' to 'exactly *', but FORWARDED_ALLOW_IPS is not set anywhere in this repository including deploy-templates, so the default 127.0.0.1 applies identically on both versions; it becomes relevant only if an external platform injects the variable. 0 findings dismissed beyond the six refuted blind hypotheses. Confidence is low because CR-002 is a decision_needed finding requiring a human call on whether locally-degraded gate results suffice without a CI run.",
+  "confidence": "low",
+  "risk_flags": ["breaking-change"],
+  "business_review": [
+    {"criterion": "Ticket: uvicorn constraint updated to ^0.52", "status": "pass", "notes": "pyproject.toml:48 reads uvicorn = \"^0.52\", no trailing comment."},
+    {"criterion": "Ticket: lock/dependency metadata updated", "status": "pass", "notes": "poetry.lock uvicorn block 0.30.6 -> 0.52.4 plus content-hash; no other package block changed."},
+    {"criterion": "Ticket: backend build and tests pass", "status": "partial", "notes": "Image builds and container runs; ruff and license green. Full pytest is not green locally (47 failures), though a controlled 0.30.6 baseline reproduced an identical failure set. The branch is unpushed, so CI has never validated it."},
+    {"criterion": "Ticket: backend starts successfully with the updated uvicorn", "status": "pass", "notes": "Container reports 0.52.4; logs show 'Uvicorn running on http://0.0.0.0:8080' and 'Application startup complete'; serves requests."},
+    {"criterion": "Ticket: no regression in streaming chat/runtime behaviour", "status": "fail", "notes": "The spec_version 2.4 -> 2.3 change routes every StreamingResponse through starlette's cancel-on-disconnect path. Reproduced independently by two lenses: post-stream finalization now raises CancelledError on client disconnect where it previously ran to completion."},
+    {"criterion": "Spec 1: ^0.52 with no security-pin comment", "status": "pass", "notes": "Confirmed verbatim; matches dependencies.md, which reserves the Security comment for CVE pins."},
+    {"criterion": "Spec 2: lock resolves 0.52.x, diff confined", "status": "pass", "notes": "Three hunks, all inside the uvicorn block plus [metadata] content-hash."},
+    {"criterion": "Spec 3: poetry check --lock consistent", "status": "pass", "notes": "Exit 0; printed warnings are pre-existing pyproject style deprecations."},
+    {"criterion": "Spec 4: four coupling points resolve", "status": "partial", "notes": "All four verified live on 0.52.4 and hold. The inventory itself is incomplete: the ASGI spec_version coupling is a fifth point the spec does not list."},
+    {"criterion": "Spec 5: make verify passes", "status": "partial", "notes": "ruff and license passed; gitleaks reported 4 findings and the suite was not green. The findings sit in local files absent from CI, but only .env is gitignored — the three .env.* backups are untracked, not ignored."},
+    {"criterion": "Spec 6: container builds, stack starts, serves requests", "status": "pass", "notes": "Verified live against the running container."},
+    {"criterion": "Spec 7: API sanity suite passes", "status": "pass", "notes": "186 passed, 4 skipped, exit 0 against the running stack; the suite covers the non-streaming chat path only."}
+  ],
+  "standards_review": [
+    {"standard": "git-workflow.md commit format", "status": "pass", "notes": "Commit 'EPMCDME-14261: Raise the uvicorn constraint to ^0.52' matches EPMCDME-####: Description; branch EPMCDME-14261_bump-uvicorn matches the documented pattern."},
+    {"standard": "security/dependencies.md lock discipline", "status": "pass", "notes": "Targeted poetry update uvicorn, no wholesale regeneration; poetry check --lock run; lock not hand-edited; pyproject.toml and poetry.lock committed together; caret range used; no Security comment added, correct for a compatibility bump."},
+    {"standard": "AGENTS.md:91 dependency MR must request /sanity", "status": "na", "notes": "No MR exists yet; the plan carries the requirement."},
+    {"standard": "No internal ticket ids or internal URLs in source", "status": "pass", "notes": "The diff touches no source files; the ticket appears only in the branch name and commit subject."}
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "critical",
+      "triage": "patch",
+      "location": "pyproject.toml:48 -> every StreamingResponse endpoint; src/codemie/rest_api/main.py:895-915, src/codemie/rest_api/routers/utils.py:123-160, src/codemie/rest_api/handlers/assistant_handlers.py:651-705",
+      "problem": "uvicorn 0.30.6 advertises scope['asgi']['spec_version'] = '2.4'; 0.52.4 advertises '2.3'. starlette 1.3.1 branches on this at responses.py:265: '>= (2,4)' streams the body directly, below it spawns listen_for_disconnect(receive) in a collapsing task group and cancels the response task on http.disconnect. The bump therefore switches every streaming endpoint to the cancel-on-disconnect path. Verified directly by the orchestrator in both packages, and reproduced independently by two lenses against the repository's own disconnect pattern.",
+      "impact": "On client disconnect mid-stream the generator is now cancelled instead of draining. Work the streaming generators perform after the last chunk — persisting the assistant message, spend accounting, closing the upstream LLM stream, releasing the DB session — can be pre-empted mid-await with CancelledError. The repo's own disconnect handlers were written assuming the application controls teardown; starlette now cancels the task underneath them. The failure mode is silent data loss, not a visible error, and no existing test disconnects a client mid-stream.",
+      "recommendation": "Exercise the real streaming path against the running stack before merge: stream an assistant chat to completion, then stream one and disconnect mid-response, and check the persisted conversation and workflow execution end state. If the behaviour is unacceptable, either hold uvicorn at a version advertising spec_version 2.4 or make the legacy path safe (shield the post-stream persistence, and reconcile the two concurrent consumers of receive). Record the spec_version flip in the spec's compatibility surface and in the MR description so the /sanity reviewer knows what to look at."
+    },
+    {
+      "id": "CR-002",
+      "severity": "major",
+      "triage": "decision_needed",
+      "location": "Makefile:58 (verify: ruff license gitleaks test); branch EPMCDME-14261_bump-uvicorn",
+      "problem": "The 'backend build and tests pass' criteria rest entirely on a local environment that is known-degraded: the optional codemie_enterprise package from a private GCP registry is missing (30 of 47 failures) and local .env settings cause the rest. gitleaks blocks on 4 findings in local files. The branch has never been pushed, so no CI run has independently validated build or tests.",
+      "impact": "A genuine failure introduced by the bump would be hard to distinguish from the 47 known-environmental ones except through the exact baseline comparison that was run. Merging on local evidence alone leaves the acceptance criterion formally unmet.",
+      "recommendation": "Decide whether the 0.30.6-baseline comparison is sufficient evidence, or push the branch and let CI be the authority for this criterion. Either way, state the gate results precisely in the MR description rather than claiming make verify passed."
+    }
+  ]
+}

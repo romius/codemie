@@ -45,7 +45,7 @@ langgraph-bigtool = "0.0.3"
 networkx = "^3.3"
 python-jose = "^3.4.0"
 python-multipart = "~0.0.30"  # Security (EPMCDME-12869): pin >=0.0.30 to fix CVE
-uvicorn = "^0.30.3"
+uvicorn = "0.52.4"
 unstructured = "^0.18.18"
 deepdiff = "^8.6.2"
 nats-py = "2.10.0"
