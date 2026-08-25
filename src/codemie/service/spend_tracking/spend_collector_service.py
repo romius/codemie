@@ -17,6 +17,8 @@ from __future__ import annotations
 import hashlib
 import re
 from datetime import date, datetime, time, timedelta, timezone
+
+from dateutil.relativedelta import relativedelta
 from decimal import ROUND_HALF_UP, Decimal
 from uuid import uuid4
 
@@ -461,26 +463,29 @@ class LiteLLMSpendCollectorService:
         return daily_spend, cumulative_spend
 
     @staticmethod
-    def _parse_budget_duration_to_delta(duration: str | None) -> timedelta | None:
-        """Convert a LiteLLM budget_duration string to a timedelta.
+    def _parse_budget_duration_to_delta(duration: str | None) -> timedelta | relativedelta | None:
+        """Convert a LiteLLM budget_duration string to a timedelta or relativedelta.
 
-        Handles named durations (daily, weekly, monthly, yearly) and
-        numeric-day patterns like ``7d`` or ``30d``.
+        Calendar-period durations (``monthly``, ``yearly``) return a
+        ``relativedelta`` so that subtraction from a ``datetime`` respects the
+        actual calendar boundary rather than a fixed day count.  All other
+        durations return a plain ``timedelta``.
 
         Args:
             duration: Budget duration string, e.g. ``"30d"``, ``"monthly"``.
 
         Returns:
-            Corresponding timedelta, or None if the string is unrecognised.
+            Corresponding delta, or None if the string is unrecognised.
         """
         if not duration:
             return None
         duration = duration.strip().lower()
-        _named: dict[str, timedelta] = {
+        _named: dict[str, timedelta | relativedelta] = {
             "daily": timedelta(days=1),
             "weekly": timedelta(weeks=1),
-            "monthly": timedelta(days=30),
-            "yearly": timedelta(days=365),
+            "monthly": relativedelta(months=1),
+            "30d": relativedelta(months=1),
+            "yearly": relativedelta(years=1),
         }
         if duration in _named:
             return _named[duration]

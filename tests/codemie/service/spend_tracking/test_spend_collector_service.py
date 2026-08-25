@@ -263,6 +263,47 @@ class TestComputeDelta:
 
 
 # ---------------------------------------------------------------------------
+# TestDidBudgetReset — calendar-aware reset detection
+# ---------------------------------------------------------------------------
+
+
+class TestDidBudgetReset:
+    """Tests for _did_budget_reset: calendar-aware reset detection."""
+
+    def _prev(self, spend_date: datetime) -> ProjectSpendTracking:
+        return _prev_row("h", Decimal("5.00"), spend_date=spend_date)
+
+    def _budget(self, budget_duration: str, budget_reset_at: str) -> object:
+        return _make_budget("b1", "cat", budget_duration=budget_duration, budget_reset_at=budget_reset_at)
+
+    def test_monthly_reset_detected_for_31_day_month(self):
+        """Collector running on Jan 1 (31-day month) must detect the reset.
+
+        January has 31 days. next_reset = Feb 1. The 30-day approximation places
+        last_reset on Jan 2, which is after the snapshot (Jan 1 00:01) → False negative.
+        The calendar-aware fix places last_reset on Jan 1 → True.
+        """
+        prev = self._prev(datetime(2025, 12, 31, 23, 59, tzinfo=timezone.utc))
+        budget = self._budget("monthly", "2026-02-01T00:00:00+00:00")
+        snapshot = datetime(2026, 1, 1, 0, 1, tzinfo=timezone.utc)
+
+        assert LiteLLMSpendCollectorService._did_budget_reset(prev, budget, snapshot) is True
+
+    def test_monthly_reset_detected_for_28_day_february(self):
+        """Collector running after Feb 1 (28-day Feb) must detect the reset.
+
+        February has 28 days. next_reset = Mar 1. The 30-day approximation places
+        last_reset on Jan 30, which is before prev_spend_date (Jan 31) → False negative.
+        The calendar-aware fix places last_reset on Feb 1 → True.
+        """
+        prev = self._prev(datetime(2026, 1, 31, 0, 0, tzinfo=timezone.utc))
+        budget = self._budget("monthly", "2026-03-01T00:00:00+00:00")
+        snapshot = datetime(2026, 2, 2, 0, 0, tzinfo=timezone.utc)
+
+        assert LiteLLMSpendCollectorService._did_budget_reset(prev, budget, snapshot) is True
+
+
+# ---------------------------------------------------------------------------
 # TestHashKey — static method
 # ---------------------------------------------------------------------------
 
