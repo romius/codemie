@@ -28,6 +28,7 @@ from sqlmodel import select
 
 from codemie.configs import logger
 from codemie.core.exceptions import ExtendedHTTPException, ValidationException
+from codemie.enterprise.litellm.budget_provider_adapter import PROJECT_KEY_ALIAS_PREFIX
 from codemie.repository.budget_repository import budget_repository
 from codemie.repository.project_budget_repository import (
     project_budget_assignment_repository,
@@ -65,6 +66,12 @@ _DURATION_RE = re.compile(r"^\d+[smhd]$")
 _CENT = Decimal("0.01")
 PCT_SUM_TOLERANCE = 0.5
 DEFAULT_SOFT_LIMIT_PCT = 80.0
+
+_LEGACY_CARRY_PRIORITY: list[BudgetCategory] = [
+    BudgetCategory.PLATFORM,
+    BudgetCategory.CLI,
+    BudgetCategory.PREMIUM_MODELS,
+]
 
 
 @dataclass
@@ -653,6 +660,43 @@ class ProjectBudgetService:
         )
         return eff_soft, eff_max, eff_duration, amounts_changed
 
+    @staticmethod
+    async def _legacy_carry_alias(
+        session: AsyncSession,
+        project_name: str,
+        budget_category: str,
+    ) -> str | None:
+        """Return the legacy key alias when this category is the highest-priority carry
+        target for the project, otherwise ``None``.
+
+        Scans all active budgets for the project to find one with a legacy
+        ``provider_budget_ref`` (no ``PROJECT_KEY_ALIAS_PREFIX``).  If found, walks
+        ``_LEGACY_CARRY_PRIORITY`` against the active categories and returns the alias
+        only for the first (highest-priority) match — so spend is carried exactly once
+        regardless of which budget triggered the update.
+        """
+        assignments = await project_budget_assignment_repository.get_active_for_project(session, project_name)
+        if not assignments:
+            return None
+
+        active_categories = {a.budget_category for a in assignments}
+
+        carry_target: BudgetCategory | None = None
+        for candidate in _LEGACY_CARRY_PRIORITY:
+            if candidate.value in active_categories:
+                carry_target = candidate
+                break
+
+        if carry_target is None or carry_target.value != budget_category:
+            return None
+
+        budgets = await budget_repository.get_by_ids(session, [a.budget_id for a in assignments])
+        for b in budgets.values():
+            ref = (b.provider_metadata or {}).get("provider_budget_ref")
+            if ref and not ref.startswith(PROJECT_KEY_ALIAS_PREFIX):
+                return ref
+        return None
+
     async def _sync_updated_project_budget(
         self,
         *,
@@ -678,23 +722,30 @@ class ProjectBudgetService:
             budget_reset_at=budget_reset_at,
             sync_status=provider_meta.get("sync_status", SyncStatus.OK),
         )
+        project_name = assignment.project_name if assignment else ""
+        carry_alias = await self._legacy_carry_alias(
+            session=session,
+            project_name=project_name,
+            budget_category=budget.budget_category,
+        )
         try:
             logger.debug(
                 f"budget_event=provider_project_budget_sync_started component=project_budget_service "
                 f"provider={provider.provider_name!r} operation=update "
-                f"project_name={assignment.project_name if assignment else None!r} budget_id={budget_id!r} "
+                f"project_name={project_name!r} budget_id={budget_id!r} "
                 f"budget_category={budget.budget_category!r} provider_budget_ref={budget_state.provider_budget_ref!r} "
                 f"max_budget={eff_max!r} soft_budget={eff_soft!r} budget_duration={eff_duration!r} "
                 f"model_count={len(models or [])}"
             )
             new_provider_state = await provider.update_project_budget(
                 budget_state=budget_state,
-                project_name=assignment.project_name if assignment else "",
+                project_name=project_name,
                 budget_category=BudgetCategory(budget.budget_category),
                 budget_id=budget_id,
                 max_budget=Decimal(str(eff_max)),
                 budget_duration=eff_duration,
                 models=models,
+                legacy_key_alias=carry_alias,
             )
             budget = await budget_repository.update(
                 session,
@@ -714,7 +765,7 @@ class ProjectBudgetService:
             logger.debug(
                 f"budget_event=provider_project_budget_sync_completed component=project_budget_service "
                 f"provider={new_provider_state.provider!r} operation=update "
-                f"project_name={assignment.project_name if assignment else None!r} budget_id={budget_id!r} "
+                f"project_name={project_name!r} budget_id={budget_id!r} "
                 f"budget_category={budget.budget_category!r} "
                 f"provider_budget_ref={new_provider_state.provider_budget_ref!r} "
                 f"sync_status={new_provider_state.sync_status!r} "
@@ -724,7 +775,7 @@ class ProjectBudgetService:
             logger.warning(
                 f"budget_event=provider_project_budget_sync_failed component=project_budget_service "
                 f"provider={getattr(provider, 'provider_name', 'unknown')!r} operation=update "
-                f"project_name={assignment.project_name if assignment else None!r} budget_id={budget_id!r} "
+                f"project_name={project_name!r} budget_id={budget_id!r} "
                 f"budget_category={budget.budget_category!r} error={exc}"
             )
         return budget, assignment, provider

@@ -70,10 +70,10 @@ class TestTransferSettingsRequest:
 class TestSelectCandidates:
     def test_litellm_prefix_matches_budget_provider_adapter(self):
         # Arrange
-        from codemie.enterprise.litellm.budget_provider_adapter import _PROJECT_KEY_ALIAS_PREFIX
+        from codemie.enterprise.litellm.budget_provider_adapter import PROJECT_KEY_ALIAS_PREFIX
 
         # Assert
-        assert SettingsTransferService.LITELLM_PROJECT_KEY_ALIAS_PREFIX == _PROJECT_KEY_ALIAS_PREFIX
+        assert SettingsTransferService.LITELLM_PROJECT_KEY_ALIAS_PREFIX == PROJECT_KEY_ALIAS_PREFIX
 
     @patch("codemie.service.settings.settings_transfer_service.Settings.get_all_by_fields")
     def test_drops_subsystem_managed_rows(self, mock_get_all):

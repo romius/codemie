@@ -383,3 +383,148 @@ async def test_reset_project_budget_persists_provider_budget_id_for_each_member(
     provider.reset_project_budget_spend.assert_awaited_once()
     update_call = mock_update_metadata.await_args.kwargs
     assert update_call["provider_metadata"]["raw"]["provider_budget_id"] == "member-budget-1"
+
+
+# ── _legacy_carry_alias ─────────────────────────────────────────────────────
+
+
+class FakeAssignment(SimpleNamespace):
+    pass
+
+
+class FakeBudget(SimpleNamespace):
+    pass
+
+
+def _make_assignment(budget_category: str, budget_id: str | None = None) -> FakeAssignment:
+    return FakeAssignment(
+        project_name="test-proj",
+        budget_category=budget_category,
+        budget_id=budget_id or f"bud-{budget_category}",
+    )
+
+
+def _make_budget(budget_id: str, provider_budget_ref: str | None) -> FakeBudget:
+    meta = {"provider_budget_ref": provider_budget_ref} if provider_budget_ref else {}
+    return FakeBudget(budget_id=budget_id, provider_metadata=meta)
+
+
+def _budgets_by_id(*budgets: FakeBudget) -> dict:
+    return {b.budget_id: b for b in budgets}
+
+
+@pytest.mark.asyncio
+async def test_legacy_carry_alias_no_assignments_returns_none():
+    """No active assignments → no carry."""
+    svc = ProjectBudgetService.__new__(ProjectBudgetService)
+    session = AsyncMock()
+    with patch(
+        "codemie.service.budget.project_budget_service.project_budget_assignment_repository.get_active_for_project",
+        new=AsyncMock(return_value=[]),
+    ):
+        result = await svc._legacy_carry_alias(session=session, project_name="proj", budget_category="platform")
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_legacy_carry_alias_all_canonical_returns_none():
+    """All project budgets have canonical refs → no legacy key → no carry."""
+    svc = ProjectBudgetService.__new__(ProjectBudgetService)
+    session = AsyncMock()
+    assignment = _make_assignment("platform", "bud-platform")
+    budget = _make_budget("bud-platform", "codemie:project:proj:category:platform")
+    with (
+        patch(
+            "codemie.service.budget.project_budget_service.project_budget_assignment_repository.get_active_for_project",
+            new=AsyncMock(return_value=[assignment]),
+        ),
+        patch(
+            "codemie.service.budget.project_budget_service.budget_repository.get_by_ids",
+            new=AsyncMock(return_value=_budgets_by_id(budget)),
+        ),
+    ):
+        result = await svc._legacy_carry_alias(session=session, project_name="proj", budget_category="platform")
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_legacy_carry_alias_single_category_matches():
+    """Legacy ref, only CLI active → carry goes to CLI."""
+    svc = ProjectBudgetService.__new__(ProjectBudgetService)
+    session = AsyncMock()
+    assignment = _make_assignment("cli", "bud-cli")
+    budget = _make_budget("bud-cli", "proj-legacy-alias")
+    with (
+        patch(
+            "codemie.service.budget.project_budget_service.project_budget_assignment_repository.get_active_for_project",
+            new=AsyncMock(return_value=[assignment]),
+        ),
+        patch(
+            "codemie.service.budget.project_budget_service.budget_repository.get_by_ids",
+            new=AsyncMock(return_value=_budgets_by_id(budget)),
+        ),
+    ):
+        result = await svc._legacy_carry_alias(session=session, project_name="proj", budget_category="cli")
+    assert result == "proj-legacy-alias"
+
+
+@pytest.mark.asyncio
+async def test_legacy_carry_alias_platform_wins_over_cli():
+    """Platform and CLI both active; legacy ref is on CLI budget → carry goes to platform."""
+    svc = ProjectBudgetService.__new__(ProjectBudgetService)
+    session = AsyncMock()
+    assignments = [_make_assignment("platform", "bud-platform"), _make_assignment("cli", "bud-cli")]
+    budgets = _budgets_by_id(
+        _make_budget("bud-platform", "codemie:project:proj:category:platform"),
+        _make_budget("bud-cli", "proj-old"),
+    )
+    with (
+        patch(
+            "codemie.service.budget.project_budget_service.project_budget_assignment_repository.get_active_for_project",
+            new=AsyncMock(return_value=assignments),
+        ),
+        patch(
+            "codemie.service.budget.project_budget_service.budget_repository.get_by_ids",
+            new=AsyncMock(return_value=budgets),
+        ),
+    ):
+        platform_result = await svc._legacy_carry_alias(
+            session=session, project_name="proj", budget_category="platform"
+        )
+        cli_result = await svc._legacy_carry_alias(session=session, project_name="proj", budget_category="cli")
+    assert platform_result == "proj-old"
+    assert cli_result is None
+
+
+@pytest.mark.asyncio
+async def test_legacy_carry_alias_no_active_categories():
+    """No active assignments → no carry."""
+    svc = ProjectBudgetService.__new__(ProjectBudgetService)
+    session = AsyncMock()
+    with patch(
+        "codemie.service.budget.project_budget_service.project_budget_assignment_repository.get_active_for_project",
+        new=AsyncMock(return_value=[]),
+    ):
+        result = await svc._legacy_carry_alias(session=session, project_name="proj", budget_category="platform")
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_legacy_carry_alias_premium_fallback():
+    """Only premium_models active with legacy ref → carry goes to premium_models."""
+    svc = ProjectBudgetService.__new__(ProjectBudgetService)
+    session = AsyncMock()
+    assignment = _make_assignment("premium_models", "bud-pm")
+    budget = _make_budget("bud-pm", "proj-old")
+    with (
+        patch(
+            "codemie.service.budget.project_budget_service.project_budget_assignment_repository.get_active_for_project",
+            new=AsyncMock(return_value=[assignment]),
+        ),
+        patch(
+            "codemie.service.budget.project_budget_service.budget_repository.get_by_ids",
+            new=AsyncMock(return_value=_budgets_by_id(budget)),
+        ),
+    ):
+        result = await svc._legacy_carry_alias(session=session, project_name="proj", budget_category="premium_models")
+    assert result == "proj-old"

@@ -53,8 +53,8 @@ if TYPE_CHECKING:
     from codemie.service.budget.budget_models import Budget, ProjectMemberBudgetAssignment
 
 _PROVIDER_NAME = "litellm"
-_PROJECT_SCOPED_CUSTOMER_PREFIX = "codemie:project:"
-_PROJECT_KEY_ALIAS_PREFIX = "codemie:project:"
+PROJECT_KEY_ALIAS_PREFIX = "codemie:project:"
+_PROJECT_SCOPED_CUSTOMER_PREFIX = PROJECT_KEY_ALIAS_PREFIX
 
 
 def _metadata_value(metadata: dict[str, Any], key: str) -> Any:
@@ -95,7 +95,7 @@ def _sanitized_project_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
 
 
 def _project_key_alias(project_name: str, budget_category: BudgetCategory) -> str:
-    return f"{_PROJECT_KEY_ALIAS_PREFIX}{project_name}:category:{budget_category.value}"
+    return f"{PROJECT_KEY_ALIAS_PREFIX}{project_name}:category:{budget_category.value}"
 
 
 def _normalize_personal_budget_identifier(user_id: str, category: BudgetCategory) -> str:
@@ -133,7 +133,7 @@ def _effective_project_member_budget_id(allocation: "ProjectMemberBudgetAssignme
 
 def _is_project_virtual_key_target(target: BudgetResetReconciliationTarget) -> bool:
     provider_ref = target.provider_budget_ref or ""
-    if provider_ref.startswith(_PROJECT_KEY_ALIAS_PREFIX):
+    if provider_ref.startswith(PROJECT_KEY_ALIAS_PREFIX):
         return True
 
     raw_metadata = target.metadata.get("raw") if isinstance(target.metadata, dict) else None
@@ -407,10 +407,13 @@ class LiteLLMBudgetEnforcementProvider:
         budget_duration: str,
         budget_reset_at: str | None = None,
         models: list[str] | None,
+        legacy_key_alias: str | None = None,
     ) -> BudgetProviderState:
         """Recreate the project key with the canonical project/category alias."""
         key_alias = _project_key_alias(project_name, budget_category)
         existing_key = await asyncio.to_thread(service._get_project_key_by_alias, key_alias)
+        if existing_key is None and legacy_key_alias and legacy_key_alias != key_alias:
+            existing_key = await asyncio.to_thread(service._get_project_key_by_alias, legacy_key_alias)
         carry_spend: float = float(existing_key.get("spend") or 0.0) if existing_key else 0.0
         logger.debug(
             f"budget_event=provider_project_key_recreate_started component=litellm_budget_provider "
@@ -952,9 +955,8 @@ class LiteLLMBudgetEnforcementProvider:
         max_budget: Decimal,
         budget_duration: str,
         models: list[str] | None,
-        metadata: dict[str, Any] | None = None,
+        legacy_key_alias: str | None = None,
     ) -> BudgetProviderState:
-        _ = metadata
         logger.debug(
             f"budget_event=provider_project_budget_sync_started component=litellm_budget_provider "
             f"provider={_PROVIDER_NAME!r} operation=update project_name={project_name!r} "
@@ -982,6 +984,7 @@ class LiteLLMBudgetEnforcementProvider:
             budget_duration=budget_duration,
             budget_reset_at=budget_state.budget_reset_at,
             models=models,
+            legacy_key_alias=legacy_key_alias,
         )
 
         old_provider_budget_ref = provider_budget_ref

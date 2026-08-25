@@ -26,7 +26,11 @@ from codemie.enterprise.litellm.budget_provider_adapter import (
     _normalize_personal_budget_identifier,
 )
 from codemie.service.budget.budget_enums import BudgetCategory, SyncStatus
-from codemie.service.budget.provider import BudgetResetReconciliationTarget, MemberBudgetSpendSnapshot
+from codemie.service.budget.provider import (
+    BudgetProviderState,
+    BudgetResetReconciliationTarget,
+    MemberBudgetSpendSnapshot,
+)
 
 
 @pytest.mark.asyncio
@@ -612,3 +616,213 @@ async def test_recreate_skips_carry_when_existing_key_spend_is_zero():
         )
 
     mock_carry.assert_not_called()
+
+
+# ── legacy_key_alias fallback ──────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_recreate_falls_back_to_legacy_alias_when_canonical_key_missing():
+    """Legacy project: canonical lookup returns None, legacy alias has spend → carry-forward happens."""
+    legacy_alias = "mdda-aiad"
+    legacy_key = {"key_alias": legacy_alias, "spend": 15.75}
+    new_key_state = {
+        "key_alias": "codemie:project:mdda-aiad:category:cli",
+        "api_key": "sk-new-key",
+        "budget_reset_at": "2026-09-01T00:00:00Z",
+    }
+
+    mock_service = MagicMock()
+    mock_service._get_project_key_by_alias = MagicMock(
+        side_effect=lambda alias: None if alias.startswith("codemie:project:") else legacy_key
+    )
+    mock_service._generate_project_key = MagicMock(return_value=new_key_state)
+    adapter = LiteLLMBudgetEnforcementProvider(service=mock_service)
+
+    carry_called_with: list = []
+
+    async def _mock_carry_forward(**kwargs):
+        carry_called_with.append(kwargs)
+
+    with (
+        patch(
+            "codemie.enterprise.litellm.budget_provider_adapter.asyncio.to_thread",
+            side_effect=lambda fn, *a, **kw: fn(*a, **kw),
+        ),
+        patch.object(adapter, "_delete_project_provider_key_alias", new=AsyncMock()),
+        patch.object(adapter, "_delete_project_api_key", new=AsyncMock()),
+        patch.object(adapter, "_persist_project_api_key", new=AsyncMock()),
+        patch.object(adapter, "_carry_spend_forward", side_effect=_mock_carry_forward),
+    ):
+        state = await adapter._recreate_project_budget_key_alias(
+            service=mock_service,
+            project_name="mdda-aiad",
+            budget_category=BudgetCategory.CLI,
+            budget_id="bud-legacy",
+            max_budget=Decimal("100.0"),
+            budget_duration="30d",
+            models=None,
+            legacy_key_alias=legacy_alias,
+        )
+
+    assert state.sync_status == SyncStatus.OK
+    assert len(carry_called_with) == 1
+    assert carry_called_with[0]["carry_spend"] == 15.75
+
+
+@pytest.mark.asyncio
+async def test_recreate_skips_carry_when_both_canonical_and_legacy_lookups_miss():
+    """When neither canonical nor legacy key exists, carry-forward is not called."""
+    new_key_state = {
+        "key_alias": "codemie:project:proj-x:category:cli",
+        "api_key": "sk-new-key",
+        "budget_reset_at": "2026-09-01T00:00:00Z",
+    }
+
+    mock_service = _make_recreate_service(existing_key=None, new_key_state=new_key_state)
+    adapter = LiteLLMBudgetEnforcementProvider(service=mock_service)
+
+    with (
+        patch(
+            "codemie.enterprise.litellm.budget_provider_adapter.asyncio.to_thread",
+            side_effect=lambda fn, *a, **kw: fn(*a, **kw),
+        ),
+        patch.object(adapter, "_delete_project_provider_key_alias", new=AsyncMock()),
+        patch.object(adapter, "_delete_project_api_key", new=AsyncMock()),
+        patch.object(adapter, "_persist_project_api_key", new=AsyncMock()),
+        patch.object(adapter, "_carry_spend_forward", new=AsyncMock()) as mock_carry,
+    ):
+        await adapter._recreate_project_budget_key_alias(
+            service=mock_service,
+            project_name="proj-x",
+            budget_category=BudgetCategory.CLI,
+            budget_id="bud-x",
+            max_budget=Decimal("50.0"),
+            budget_duration="30d",
+            models=None,
+            legacy_key_alias="proj-x-old-alias",
+        )
+
+    mock_carry.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_recreate_uses_canonical_spend_and_skips_legacy_lookup_when_canonical_found():
+    """When canonical key already exists, legacy alias is never queried."""
+    canonical_key = {"key_alias": "codemie:project:proj-y:category:cli", "spend": 8.0}
+    new_key_state = {
+        "key_alias": "codemie:project:proj-y:category:cli",
+        "api_key": "sk-new-key",
+        "budget_reset_at": "2026-09-01T00:00:00Z",
+    }
+
+    mock_service = _make_recreate_service(existing_key=canonical_key, new_key_state=new_key_state)
+    adapter = LiteLLMBudgetEnforcementProvider(service=mock_service)
+
+    carry_called_with: list = []
+
+    async def _mock_carry_forward(**kwargs):
+        carry_called_with.append(kwargs)
+
+    with (
+        patch(
+            "codemie.enterprise.litellm.budget_provider_adapter.asyncio.to_thread",
+            side_effect=lambda fn, *a, **kw: fn(*a, **kw),
+        ),
+        patch.object(adapter, "_delete_project_provider_key_alias", new=AsyncMock()),
+        patch.object(adapter, "_delete_project_api_key", new=AsyncMock()),
+        patch.object(adapter, "_persist_project_api_key", new=AsyncMock()),
+        patch.object(adapter, "_carry_spend_forward", side_effect=_mock_carry_forward),
+    ):
+        await adapter._recreate_project_budget_key_alias(
+            service=mock_service,
+            project_name="proj-y",
+            budget_category=BudgetCategory.CLI,
+            budget_id="bud-y",
+            max_budget=Decimal("50.0"),
+            budget_duration="30d",
+            models=None,
+            legacy_key_alias="proj-y-old",
+        )
+
+    # canonical lookup succeeded → _get_project_key_by_alias called once, not twice
+    mock_service._get_project_key_by_alias.assert_called_once()
+    assert len(carry_called_with) == 1
+    assert carry_called_with[0]["carry_spend"] == 8.0
+
+
+@pytest.mark.asyncio
+async def test_update_project_budget_forwards_legacy_key_alias_from_metadata():
+    """update_project_budget must forward metadata['legacy_key_alias'] to _recreate_project_budget_key_alias."""
+    legacy_ref = "mdda-aiad"
+    mock_service = MagicMock()
+    adapter = LiteLLMBudgetEnforcementProvider(service=mock_service)
+
+    canonical_state = BudgetProviderState(
+        provider="litellm",
+        provider_budget_ref="codemie:project:mdda-aiad:category:cli",
+        budget_reset_at="2026-09-01T00:00:00Z",
+        sync_status=SyncStatus.OK,
+    )
+
+    with (
+        patch.object(
+            adapter, "_recreate_project_budget_key_alias", new=AsyncMock(return_value=canonical_state)
+        ) as mock_recreate,
+        patch.object(adapter, "_delete_project_api_key", new=AsyncMock()),
+    ):
+        await adapter.update_project_budget(
+            budget_state=BudgetProviderState(
+                provider="litellm",
+                provider_budget_ref=legacy_ref,
+                sync_status=SyncStatus.OK,
+            ),
+            project_name="mdda-aiad",
+            budget_category=BudgetCategory.CLI,
+            budget_id="bud-legacy",
+            max_budget=Decimal("100.0"),
+            budget_duration="30d",
+            models=None,
+            legacy_key_alias=legacy_ref,
+        )
+
+    _, kwargs = mock_recreate.call_args
+    assert kwargs["legacy_key_alias"] == legacy_ref
+
+
+@pytest.mark.asyncio
+async def test_update_project_budget_no_legacy_key_alias_when_metadata_absent():
+    """When metadata has no legacy_key_alias, None is forwarded so no carry happens."""
+    mock_service = MagicMock()
+    adapter = LiteLLMBudgetEnforcementProvider(service=mock_service)
+
+    canonical_state = BudgetProviderState(
+        provider="litellm",
+        provider_budget_ref="codemie:project:mdda-aiad:category:cli",
+        budget_reset_at="2026-09-01T00:00:00Z",
+        sync_status=SyncStatus.OK,
+    )
+
+    with (
+        patch.object(
+            adapter, "_recreate_project_budget_key_alias", new=AsyncMock(return_value=canonical_state)
+        ) as mock_recreate,
+        patch.object(adapter, "_delete_project_api_key", new=AsyncMock()),
+    ):
+        await adapter.update_project_budget(
+            budget_state=BudgetProviderState(
+                provider="litellm",
+                provider_budget_ref="mdda-aiad",
+                sync_status=SyncStatus.OK,
+            ),
+            project_name="mdda-aiad",
+            budget_category=BudgetCategory.CLI,
+            budget_id="bud-legacy",
+            max_budget=Decimal("100.0"),
+            budget_duration="30d",
+            models=None,
+            legacy_key_alias=None,
+        )
+
+    _, kwargs = mock_recreate.call_args
+    assert kwargs["legacy_key_alias"] is None
