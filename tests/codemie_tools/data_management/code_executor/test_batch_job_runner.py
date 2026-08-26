@@ -152,6 +152,30 @@ class TestBatchJobRunnerHappyPath(unittest.TestCase):
         assert del_kwargs["body"].grace_period_seconds == 0
         assert del_kwargs["body"].propagation_policy == "Foreground"
 
+    def test_manifest_omits_runtime_class_name_when_none(self):
+        config = _make_config(runtime_class_name=None)
+        batch = MagicMock(name="batch")
+        core = MagicMock(name="core")
+        batch.read_namespaced_job_status.return_value = _terminal_status(succeeded=1)
+        core.list_namespaced_pod.return_value = MagicMock(items=[_pod(phase="Running", exit_code=0, name="the-pod")])
+        core.read_namespaced_pod_log.return_value = ""
+
+        with patch("codemie_tools.data_management.code_executor.batch_job_runner.KubernetesClientManager") as mgr_cls:
+            mgr = mgr_cls.return_value
+            mgr.get_batch_client.return_value = batch
+            mgr.get_client.return_value = core
+            runner = BatchJobRunner(config)
+            _patch_runner_internals(runner, pod_name="the-pod")
+            with (
+                patch.object(runner, "_upload_payload"),
+                patch.object(runner, "_download_exports", return_value={}),
+            ):
+                runner.run("print('ok')")
+
+        manifest = batch.create_namespaced_job.call_args.kwargs["body"]
+        pod_spec = manifest["spec"]["template"]["spec"]
+        assert "runtimeClassName" not in pod_spec
+
     def test_run_creates_job_with_readonly_root_and_workdir_and_tmp_volumes(self):
         config = _make_config()
         batch = MagicMock(name="batch")

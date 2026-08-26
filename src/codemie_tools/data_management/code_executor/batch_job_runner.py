@@ -235,7 +235,8 @@ class BatchJobRunner:
                     },
                     "spec": {
                         "restartPolicy": "Never",
-                        "runtimeClassName": cfg.runtime_class_name,
+                        # Omitted when None — uses cluster default runtime; disables sandbox isolation. Security risk: not recommended for production use.
+                        **({"runtimeClassName": cfg.runtime_class_name} if cfg.runtime_class_name else {}),
                         "automountServiceAccountToken": False,
                         "enableServiceLinks": False,
                         "hostNetwork": False,

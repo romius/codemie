@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "task": "Make the Kubernetes runtimeClassName optional in the code executor so that setting it to 'none' or empty omits the field from the Job manifest, allowing the cluster default to be used.",
+  "generated": "2026-08-21T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 2, "label": "S" },
+    "requirements_clarity": { "score": 1, "label": "XS" },
+    "technical_risk":       { "score": 2, "label": "S" },
+    "file_change_estimate": { "score": 2, "label": "S" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 10,
+  "size": "S",
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Two components touched: CodeExecutorConfig (config/model layer) with a new field and validator, and BatchJobRunner._build_manifest (Agent-Tool layer) with conditional runtimeClassName inclusion. Change is additive and self-contained."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "Two distinct layers changed: the config/model layer (CodeExecutorConfig pydantic model) and the Agent-Tool layer (batch job manifest construction). No API, DB, or external service layers involved."
+    }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

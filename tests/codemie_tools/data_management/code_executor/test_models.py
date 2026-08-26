@@ -481,6 +481,40 @@ class TestSandboxOnlyRuntimeValidation(unittest.TestCase):
             CodeExecutorConfig.from_env()
 
 
+class TestRuntimeClassNameValidator(unittest.TestCase):
+    """Test suite for runtime_class_name field validator."""
+
+    def test_runtime_class_name_none_string_normalised_to_none(self):
+        config = CodeExecutorConfig(runtime_class_name="none")
+        assert config.runtime_class_name is None
+
+    def test_runtime_class_name_empty_string_normalised_to_none(self):
+        config = CodeExecutorConfig(runtime_class_name="")
+        assert config.runtime_class_name is None
+
+    def test_runtime_class_name_none_value_normalised_to_none(self):
+        config = CodeExecutorConfig(runtime_class_name=None)
+        assert config.runtime_class_name is None
+
+    def test_runtime_class_name_default_preserved(self):
+        config = CodeExecutorConfig()
+        assert config.runtime_class_name == "gvisor"
+
+    def test_runtime_class_name_custom_value_preserved(self):
+        config = CodeExecutorConfig(runtime_class_name="kata-containers")
+        assert config.runtime_class_name == "kata-containers"
+
+    def test_from_env_runtime_class_name_none_string(self):
+        with patch.dict(os.environ, {"CODE_EXECUTOR_RUNTIME_CLASS_NAME": "none"}, clear=False):
+            config = CodeExecutorConfig.from_env()
+        assert config.runtime_class_name is None
+
+    def test_from_env_runtime_class_name_empty_string(self):
+        with patch.dict(os.environ, {"CODE_EXECUTOR_RUNTIME_CLASS_NAME": ""}, clear=False):
+            config = CodeExecutorConfig.from_env()
+        assert config.runtime_class_name is None
+
+
 class TestSandboxMode(unittest.TestCase):
     """Test suite for SandboxMode enum."""
 

@@ -58,9 +58,12 @@ class CodeExecutorConfig(CodeMieToolConfig):
         description="Kubernetes namespace for executor pods",
     )
 
-    runtime_class_name: str = Field(
+    runtime_class_name: str | None = Field(
         default="gvisor",
-        description="Kubernetes runtimeClassName for executor pods",
+        description="Kubernetes runtimeClassName for executor pods. "
+        "Set to 'none' or empty to omit runtimeClassName from the Job manifest and use the cluster default. "
+        "Security risk: omitting runtimeClassName disables sandbox isolation (e.g. gVisor); "
+        "use only in environments where the cluster default runtime provides equivalent isolation guarantees.",
     )
 
     docker_image: str = Field(
@@ -259,6 +262,15 @@ class CodeExecutorConfig(CodeMieToolConfig):
                 raise ValueError(f"Invalid sandbox_mode: {v}. Must be 'sandbox-shared' or 'sandbox-jobs'")
 
         raise ValueError(f"Invalid sandbox_mode type: {type(v)}")
+
+    @field_validator("runtime_class_name", mode="before")
+    @classmethod
+    def validate_runtime_class_name(cls, v) -> str | None:
+        if v is None:
+            return None
+        if isinstance(v, str) and (v.strip().lower() == "none" or v.strip() == ""):
+            return None
+        return v
 
     @field_validator("security_threshold", mode="before")
     @classmethod
