@@ -90,6 +90,8 @@ def _wrap_enterprise_idp(enterprise_provider_class, provider_name: str):
             from codemie_enterprise.idp.utils import AuthenticationError
             from codemie_enterprise.idp.user_type import InvalidUserTypeError
 
+            from codemie.rest_api.security.user_type_validator import VALID_USER_TYPES
+
             try:
                 # Extract headers as plain dict for enterprise provider
                 headers = dict(request.headers)
@@ -114,11 +116,10 @@ def _wrap_enterprise_idp(enterprise_provider_class, provider_name: str):
                 )
             except InvalidUserTypeError as e:
                 logger.error(f"{provider_name} user type validation failed: {e}", exc_info=True)
+                valid_types = ", ".join(f"'{t}'" for t in sorted(VALID_USER_TYPES))
                 raise ExtendedHTTPException(
                     code=status.HTTP_401_UNAUTHORIZED,
-                    message=(
-                        f"Invalid user_type attribute from IDP. Expected 'regular' or 'external', got: {repr(e.value)}"
-                    ),
+                    message=(f"Invalid user_type attribute from IDP. Expected {valid_types}, got: {repr(e.value)}"),
                     details=e.detail,
                     help=e.help_text,
                 )

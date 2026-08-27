@@ -33,6 +33,7 @@ from codemie.core.exceptions import ExtendedHTTPException
 from codemie.repository.user_repository import user_repository
 from codemie.repository.email_token_repository import email_token_repository
 from codemie.rest_api.models.user_management import UserDB, CodeMieUserDetail, ProjectInfo
+from codemie.rest_api.security.user_type_validator import is_personal_project_excluded
 from codemie.service.activity.activity_models import (
     ActivityDomain,
     ActivityEntityType,
@@ -184,6 +185,7 @@ class RegistrationService:
                 # Extract values before commit to avoid expired attribute access
                 user_id = user.id
                 user_email = user.email
+                user_type = user.user_type
 
                 if config.EMAIL_VERIFICATION_ENABLED:
                     # Create verification token (not committed yet)
@@ -208,7 +210,8 @@ class RegistrationService:
                     # Story 9: Create personal project (AFTER commit, ISOLATED transaction)
                     # FR-7.1: Called after commit to avoid FK constraint errors
                     # Uses separate session to prevent rollback affecting registration
-                    await personal_project_service.ensure_personal_project_async(user_id, user_email)
+                    if not is_personal_project_excluded(user_type):
+                        await personal_project_service.ensure_personal_project_async(user_id, user_email)
 
                     return {
                         "type": "message",
@@ -244,7 +247,8 @@ class RegistrationService:
                 # Story 9: Create personal project (AFTER commit, ISOLATED transaction)
                 # FR-7.1: Called after commit to avoid FK constraint errors
                 # Uses separate session to prevent rollback affecting registration
-                await personal_project_service.ensure_personal_project_async(user_id, user_email)
+                if not is_personal_project_excluded(user_type):
+                    await personal_project_service.ensure_personal_project_async(user_id, user_email)
 
                 # Import here to avoid circular dependency
                 from codemie.rest_api.security.jwt_local import generate_access_token

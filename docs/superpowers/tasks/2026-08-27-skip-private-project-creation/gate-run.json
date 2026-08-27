@@ -1,0 +1,105 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-14413",
+  "head": "fe8b32d8eb6c04f8c491ba3166ef6032f2f48276",
+  "runner": "poetry",
+  "started_at": "2026-08-27T13:32:59+02:00",
+  "completed_at": "2026-08-27T13:41:30+02:00",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1640,
+      "command": "make ruff",
+      "exit_code": 0,
+      "notes": "Auto-fix is inline in this target (format + check --fix + check). It reformatted 3 files and applied 1 safe fix, all inside files already touched by this branch's diff (src/codemie/enterprise/idp/dependencies.py, src/codemie/rest_api/security/user_type_validator.py, src/codemie/service/user/authentication_service.py, tests/codemie/rest_api/security/test_user_type_validator.py) \u2014 pure line-wrap/operand-order fixes, no behavior change. Final `ruff check` (no --fix) exited 0."
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 5762,
+      "command": "make build",
+      "exit_code": 0
+    },
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 859,
+      "command": "make license-check",
+      "exit_code": 0,
+      "notes": "Checked 2054 files, 0 missing license headers."
+    },
+    {
+      "id": "secrets-ci",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 22573,
+      "command": "make gitleaks",
+      "exit_code": 1,
+      "notes": "8 leaks reported, all confined to files that are gitignored and untracked by git (.codex/config.toml, run_claude.sh, opencode.json, local/downloaded-logs-20260825-162017.json) \u2014 verified via `git check-ignore -v` and `git ls-files --error-unmatch`, none are tracked. `gitleaks dir` scans the full working-tree filesystem (not git history/index), so it picks up these local AI-tool session artifacts that would not exist in a fresh CI checkout and are not part of this branch's diff. Reported FAIL per the guide's literal Fail criterion ('a secret-like value is detected'), but this does not reflect a secret introduced by the branch."
+    },
+    {
+      "id": "secrets-precommit",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 422,
+      "command": "bash scripts/git-hooks/validate_secrets.sh",
+      "exit_code": 0,
+      "notes": "Exited 0 without doing meaningful work: '0 commits scanned' / 'scanned ~0 bytes (0) in 54.3ms' / 'no leaks found' \u2014 there is nothing staged (`git diff --cached` is empty), so `gitleaks protect --staged` had no diff to check. To exercise this gate meaningfully, stage the branch's changes before running it (or it runs naturally at `git commit` time)."
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 215851,
+      "command": "make test",
+      "exit_code": 2,
+      "notes": "2 failed, 14740 passed, 163 skipped (209.71s). Both failures are in tests/codemie_tools/data_management/code_executor/test_filesystem_policy.py (test_guard_allows_matplotlib_png_generation, test_guard_allows_openpyxl_to_save_workbook) \u2014 a file untouched by this branch's diff (confirmed via `git diff origin/main...HEAD -- tests/codemie_tools/data_management/code_executor/`, empty). Root cause: the guarded subprocess's CompletedProcess.returncode is -2 (terminated by SIGINT via the process's audit hook) in this sandboxed execution environment, reproducible in isolation (`pytest tests/codemie_tools/data_management/code_executor/test_filesystem_policy.py -q` -> same 2 failures, 54 passed) \u2014 looks like sandbox/subprocess-signal behavior, not a logic defect, and pre-existing/unrelated to the branch. Separately, the previously-known flaky test tests/codemie/service/user/test_authentication_service.py::TestLoadUserForAuth::test_load_user_for_auth_found (env-dependent is_admin mock-state issue) did NOT fail in this full-suite run \u2014 it is order-dependent and failed only when re-run in isolation, confirming it is unrelated to this branch."
+    },
+    {
+      "id": "coverage",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 0,
+      "command": "make coverage",
+      "exit_code": null,
+      "notes": "Not run: coverage was not explicitly requested for this task."
+    },
+    {
+      "id": "static-analysis",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 47,
+      "command": "SONAR_SKIP_TESTS=1 make sonar-local",
+      "exit_code": 1,
+      "notes": "Self-skip signal from the tool: \"[sonar-local] sonar-scanner was not found. Install the official SonarScanner CLI or set SONAR_SCANNER_PATH.\" Additionally the configured host https://sonar.core.kuberocketci.io is unreachable from this sandbox (`curl` timed out after 8s) even though SONAR_TOKEN is set. To enable locally: install the SonarScanner CLI (or set SONAR_SCANNER_PATH) and run from a network with access to the internal SonarQube host (e.g. EPAM VPN)."
+    },
+    {
+      "id": "full-verification",
+      "source": "guide",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "make verify",
+      "exit_code": null,
+      "notes": "Not re-run: `verify: ruff license gitleaks test` is a composite of the ruff/license/gitleaks/test gates already run individually above (note: its `license` sub-target additionally runs --fix before --check, unlike the standalone `license-check` gate used above, but license-check already passed with 0 missing headers so --fix would be a no-op). Re-running it would just re-execute the same recipes with no new signal; see the individual lint/license-check/secrets-ci/unit results instead."
+    },
+    {
+      "id": "test-harness",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 0,
+      "command": "make test-harness",
+      "exit_code": null,
+      "notes": "Not run: guide's own Skip if applies ('you are not opening a merge request') \u2014 this is a mechanical gate check, not the MR submission step. Also, prerequisites are not met locally: docker compose stack is not up (`docker compose ps` shows no running services), so even if invoked it could not reach a live environment."
+    }
+  ],
+  "failures": {
+    "secrets-ci": "RuleID:      generic-api-key\nEntropy:     4.293661\nFile:        /workspace/run_claude.sh\nLine:        6\nFingerprint: /workspace/run_claude.sh:generic-api-key:6\n\nFinding:     \"CONTEXT7_API_KEY\": \"\u001b[1;3;mctx7sk-75503c44-331a-4aea-966c-05bd33f8435b\u001b[0m\"\nSecret:      \u001b[1;3;mctx7sk-75503c44-331a-4aea-966c-05bd33f8435b\u001b[0m\nRuleID:      generic-api-key\nEntropy:     4.016284\nFile:        /workspace/opencode.json\nLine:        303\nFingerprint: /workspace/opencode.json:generic-api-key:303\n\nFinding:     ...or='invalid_target' auth_config_id=\u001b[1;3;mbac17988-79ae-47f7-8129-c0b2ee3a0de4\u001b[0m server_name=EPAM Pr...\nSecret:      \u001b[1;3;mbac17988-79ae-47f7-8129-c0b2ee3a0de4\u001b[0m\nRuleID:      generic-api-key\nEntropy:     3.773684\nFile:        /workspace/local/downloaded-logs-20260825-162017.json\nLine:        7284\nFingerprint: /workspace/local/downloaded-logs-20260825-162017.json:generic-api-key:7284\n\nFinding:     ... error page served: auth_config_id=\u001b[1;3;mbac17988-79ae-47f7-8129-c0b2ee3a0de4\u001b[0m target_origin=https...\nSecret:      \u001b[1;3;mbac17988-79ae-47f7-8129-c0b2ee3a0de4\u001b[0m\nRuleID:      generic-api-key\nEntropy:     3.773684\nFile:        /workspace/local/downloaded-logs-20260825-162017.json\nLine:        7313\nFingerprint: /workspace/local/downloaded-logs-20260825-162017.json:generic-api-key:7313\n\nFinding:     auth_config_id\":\"bac17988-79ae-47f7-8129-c0b2ee3a0de4\"\nSecret:      bac17988-79ae-47f7-8129-c0b2ee3a0de4\nRuleID:      generic-api-key\nEntropy:     3.773684\nTags:        [decoded:base64 decode-depth:1]\nFile:        /workspace/local/downloaded-logs-20260825-162017.json\nLine:        7347\nFingerprint: /workspace/local/downloaded-logs-20260825-162017.json:generic-api-key:7347\n\nFinding:     ...stics: result=error auth_config_id=\u001b[1;3;mbac17988-79ae-47f7-8129-c0b2ee3a0de4\u001b[0m opener_present=True...\nSecret:      \u001b[1;3;mbac17988-79ae-47f7-8129-c0b2ee3a0de4\u001b[0m\nRuleID:      generic-api-key\nEntropy:     3.773684\nFile:        /workspace/local/downloaded-logs-20260825-162017.json\nLine:        7855\nFingerprint: /workspace/local/downloaded-logs-20260825-162017.json:generic-api-key:7855\n\n\u001b[90m11:34AM\u001b[0m \u001b[32mINF\u001b[0m \u001b[1mscanned ~47600215 bytes (47.60 MB) in 22s\u001b[0m\n\u001b[90m11:34AM\u001b[0m \u001b[33mWRN\u001b[0m \u001b[1mleaks found: 8\u001b[0m\nmake: *** [Makefile:55: gitleaks] Error 1\n",
+    "unit": "    validate_litellm_api_key(request)\n\ntests/codemie/service/settings/test_settings_request_validator.py::test_validate_datasource_type_for_scheduler_rejects_unsupported[knowledge_base_file]\n  /home/taras_spashchenko/EPAM/cm/codemie/tests/codemie/service/settings/test_settings_request_validator.py:51: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.\n    validate_datasource_type_for_scheduler(datasource)\n\ntests/codemie/service/settings/test_settings_request_validator.py::test_validate_timezone_value_invalid[UTC+2]\ntests/codemie/service/settings/test_settings_request_validator.py::test_validate_timezone_value_invalid[Bad/Zone]\ntests/codemie/service/settings/test_settings_request_validator.py::test_validate_timezone_value_invalid[not_a_timezone]\ntests/codemie/service/settings/test_settings_request_validator.py::test_validate_timezone_value_invalid[]\n  /home/taras_spashchenko/EPAM/cm/codemie/src/codemie/service/settings/settings_request_validator.py:540: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.\n    validate_timezone_string(timezone_cred.value)\n\ntests/codemie/service/settings/test_settings_transfer_service.py::TestValidateProjects::test_rejects_same_source_and_target\n  /home/taras_spashchenko/EPAM/cm/codemie/tests/codemie/service/settings/test_settings_transfer_service.py:146: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.\n    SettingsTransferService._validate_projects(\"same\", \"same\")\n\ntests/codemie/service/settings/test_settings_transfer_service.py::TestValidateAliasesPresent::test_rejects_row_with_empty_alias\n  /home/taras_spashchenko/EPAM/cm/codemie/tests/codemie/service/settings/test_settings_transfer_service.py:190: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.\n    SettingsTransferService._validate_aliases_present([row])\n\ntests/codemie/service/settings/test_settings_transfer_service.py::TestTransfer::test_null_alias_trigger_row_is_rejected_before_response_construction\n  /home/taras_spashchenko/EPAM/cm/codemie/src/codemie/service/settings/settings_transfer_service.py:283: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.\n    cls._validate_aliases_present(candidates)\n\ntests/codemie/service/test_mcp_config_service_auth_crud.py::test_update_rejects_auth_config_id_change_when_credentials_exist\n  /home/taras_spashchenko/EPAM/cm/codemie/src/codemie/service/mcp_config_service.py:404: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.\n    cls._apply_config_field_update(\n\ntests/codemie/service/test_mcp_config_service_auth_validation.py: 11 warnings\n  /home/taras_spashchenko/EPAM/cm/codemie/src/codemie/service/mcp_config_service.py:281: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.\n    _validate_auth_config_for_save(request.config)\n\ntests/codemie/service/test_mcp_config_service_auth_validation.py: 11 warnings\n  /home/taras_spashchenko/EPAM/cm/codemie/src/codemie/service/mcp_config_service.py:473: StarletteDeprecationWarning: 'HTTP_422_UNPROCESSABLE_ENTITY' is deprecated. Use 'HTTP_422_UNPROCESSABLE_CONTENT' instead.\n    _validate_auth_config_for_save(mcp_config.config, config_id=config_id)\n\ntests/codemie_tools/qa/zephyr_squad/test_api_wrapper.py::test_request_successfull\ntests/codemie_tools/qa/zephyr_squad/test_api_wrapper.py::test_request_failure\ntests/codemie_tools/qa/zephyr_squad/test_api_wrapper.py::test_request_with_custom_headers_and_content_type\ntests/codemie_tools/qa/zephyr_squad/test_api_wrapper.py::test_request_without_explicit_content_type\n  /home/taras_spashchenko/EPAM/cm/codemie/.venv/lib/python3.12/site-packages/jwt/api_jwt.py:147: InsecureKeyLengthWarning: The HMAC key is 15 bytes long, which is below the minimum recommended length of 32 bytes for SHA256. See RFC 7518 Section 3.2.\n    return self._jws.encode(\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n=========================== short test summary info ============================\nFAILED tests/codemie_tools/data_management/code_executor/test_filesystem_policy.py::test_guard_allows_matplotlib_png_generation\nFAILED tests/codemie_tools/data_management/code_executor/test_filesystem_policy.py::test_guard_allows_openpyxl_to_save_workbook\n==== 2 failed, 14740 passed, 163 skipped, 189 warnings in 209.71s (0:03:29) ====\nmake: *** [Makefile:31: test] Error 1\n"
+  }
+}

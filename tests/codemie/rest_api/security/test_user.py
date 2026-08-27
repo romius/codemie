@@ -111,6 +111,11 @@ class TestIsExternalUser:
         user = User(id="test", username="test")
         assert user.is_external_user is False
 
+    def test_is_external_user_when_user_type_service_account(self):
+        """Test that is_external_user returns False for service_account user type"""
+        user = User(id="test", username="test", user_type="service_account")
+        assert user.is_external_user is False
+
 
 class TestUserProperties:
     """Test cases for various User properties"""

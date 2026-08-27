@@ -861,7 +861,9 @@ class TestPersonalProjectServiceEdgeCases:
         mock_ensure.return_value = True
 
         # Act
-        result = await PersonalProjectService.reconcile_personal_project_on_email_change(user_id, old_email, new_email)
+        result = await PersonalProjectService.reconcile_personal_project_on_email_change(
+            user_id, old_email, new_email, "regular"
+        )
 
         # Assert
         assert result is True
@@ -894,7 +896,9 @@ class TestPersonalProjectServiceEdgeCases:
         mock_ensure.return_value = True
 
         # Act
-        result = await PersonalProjectService.reconcile_personal_project_on_email_change(user_id, old_email, new_email)
+        result = await PersonalProjectService.reconcile_personal_project_on_email_change(
+            user_id, old_email, new_email, "regular"
+        )
 
         # Assert
         assert result is True
@@ -926,7 +930,9 @@ class TestPersonalProjectServiceEdgeCases:
         mock_ensure.return_value = True
 
         # Act
-        result = await PersonalProjectService.reconcile_personal_project_on_email_change(user_id, old_email, new_email)
+        result = await PersonalProjectService.reconcile_personal_project_on_email_change(
+            user_id, old_email, new_email, "regular"
+        )
 
         # Assert
         assert result is True
@@ -958,7 +964,9 @@ class TestPersonalProjectServiceEdgeCases:
         mock_ensure.return_value = True
 
         # Act
-        result = await PersonalProjectService.reconcile_personal_project_on_email_change(user_id, old_email, new_email)
+        result = await PersonalProjectService.reconcile_personal_project_on_email_change(
+            user_id, old_email, new_email, "regular"
+        )
 
         # Assert
         assert result is True
@@ -985,7 +993,9 @@ class TestPersonalProjectServiceEdgeCases:
         mock_get_async_session.return_value = cm
 
         # Act
-        result = await PersonalProjectService.reconcile_personal_project_on_email_change(user_id, old_email, new_email)
+        result = await PersonalProjectService.reconcile_personal_project_on_email_change(
+            user_id, old_email, new_email, "regular"
+        )
 
         # Assert
         assert result is False  # Non-blocking failure
@@ -1023,7 +1033,9 @@ class TestPersonalProjectServiceEdgeCases:
         mock_ensure.return_value = False
 
         # Act
-        result = await PersonalProjectService.reconcile_personal_project_on_email_change(user_id, old_email, new_email)
+        result = await PersonalProjectService.reconcile_personal_project_on_email_change(
+            user_id, old_email, new_email, "regular"
+        )
 
         # Assert
         assert result is False  # Propagates failure from ensure_personal_project_async
@@ -1031,3 +1043,40 @@ class TestPersonalProjectServiceEdgeCases:
         assert mock_old_app.deleted_at is not None
         mock_session.add.assert_called_once_with(mock_old_app)
         mock_session.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("user_type", ["external", "service_account"])
+    @patch("codemie.clients.postgres.get_async_session")
+    @patch("codemie.service.project.personal_project_service.PersonalProjectService.ensure_personal_project_async")
+    @patch("codemie.service.project.personal_project_service.user_project_repository")
+    @patch("codemie.service.project.personal_project_service.application_repository")
+    async def test_reconcile_email_change_skips_excluded_user_type(
+        self, mock_app_repo, mock_user_proj_repo, mock_ensure, mock_get_async_session, user_type
+    ):
+        """Reconciliation skips both old-project soft-delete and new-project creation for excluded user_types"""
+        # Arrange
+        user_id = "user-reconcile-excluded"
+        old_email = "old@example.com"
+        new_email = "new@example.com"
+
+        mock_session = AsyncMock()
+        mock_get_async_session.return_value = _make_async_session_cm(mock_session)
+
+        mock_old_app = Application(name=old_email, project_type="personal", created_by=user_id)
+        mock_app_repo.aget_by_name = AsyncMock(return_value=mock_old_app)
+        mock_user_proj_repo.aremove_project = AsyncMock()
+        mock_ensure.return_value = True
+
+        # Act
+        result = await PersonalProjectService.reconcile_personal_project_on_email_change(
+            user_id, old_email, new_email, user_type
+        )
+
+        # Assert
+        assert result is False
+        # Old app NOT soft-deleted
+        assert mock_old_app.deleted_at is None
+        mock_session.add.assert_not_called()
+        mock_user_proj_repo.aremove_project.assert_not_called()
+        # New project creation NOT attempted
+        mock_ensure.assert_not_called()

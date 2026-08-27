@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "task": "Add a third allowed user_type value, \"service_account\", so it is accepted from the Keycloak JWT claim and persisted on the CodeMie user record alongside the existing \"regular\" and \"external\" values.",
+  "generated": "2026-08-26",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 18,
+  "size": "M",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "The allowed-value set is independently duplicated in two components — codemie's rest_api.security user_type validator and codemie-enterprise's idp.user_type validator — that must be changed in lockstep across a deliberate zero-coupling architectural boundary between the two repositories, rather than a single shared component." },
+    { "dimension": "file_change_estimate", "reason": "Both validator modules plus their test suites (base validator tests, enterprise Keycloak IDP tests, enterprise Keycloak-admin migration tests) and a persistence-model comment need updating; no new files are required, but the touched files spread across five-plus directories in two separate repositories rather than one localized area." }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from M to L: touches a core shared validation utility (the VALID_USER_TYPES allowed-value set), which is duplicated rather than shared, across two repositories that must be kept in sync.",
+    "Technical Risk bumped from S to M: user_type is derived from the authentication/IDP claim pipeline and feeds an authorization-adjacent classification (User.is_external_user), matching the 'affects authentication or authorization' red flag."
+  ],
+  "split_recommendation": null
+}

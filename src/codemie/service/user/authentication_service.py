@@ -387,9 +387,11 @@ class AuthenticationService:
             security.User with relationships populated
         """
         from codemie.clients.postgres import get_async_session
+        from codemie.rest_api.security.user_type_validator import is_personal_project_excluded
         from codemie.service.project.personal_project_service import personal_project_service
 
-        await personal_project_service.ensure_personal_project_async(security_user_ins.id, security_user_ins.email)
+        if not is_personal_project_excluded(security_user_ins.user_type):
+            await personal_project_service.ensure_personal_project_async(security_user_ins.id, security_user_ins.email)
 
         async with get_async_session() as session:
             projects = await user_project_repository.aget_by_user_id(session, security_user_ins.id)
@@ -577,7 +579,7 @@ class AuthenticationService:
             from codemie.service.project.personal_project_service import personal_project_service
 
             await personal_project_service.reconcile_personal_project_on_email_change(
-                security_user_ins.id, pre_sync_email, security_user_ins.email
+                security_user_ins.id, pre_sync_email, security_user_ins.email, security_user_ins.user_type
             )
 
         result = await AuthenticationService._finalize_authentication(security_user_ins, "persistent")
@@ -678,6 +680,7 @@ class AuthenticationService:
         """
         from codemie.clients.postgres import get_async_session
         from codemie.rest_api.security.jwt_local import generate_access_token
+        from codemie.rest_api.security.user_type_validator import is_personal_project_excluded
         from codemie.service.project.personal_project_service import personal_project_service
 
         async with get_async_session() as session:
@@ -712,6 +715,7 @@ class AuthenticationService:
             )
             user_id = user.id
             user_email = user.email
+            user_type = user.user_type
 
             await activity_event_repository.async_insert(
                 ActivityEventCreate(
@@ -729,7 +733,8 @@ class AuthenticationService:
         # Story 9: Ensure personal project exists (local login flow, ISOLATED transaction)
         # FR-7.1: Personal project auto-created on authentication
         # Uses separate session to prevent rollback affecting authentication
-        await personal_project_service.ensure_personal_project_async(user_id, user_email)
+        if not is_personal_project_excluded(user_type):
+            await personal_project_service.ensure_personal_project_async(user_id, user_email)
 
         access_token = generate_access_token(user_id, user_email, "local")
 

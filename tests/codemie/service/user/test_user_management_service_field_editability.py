@@ -326,6 +326,77 @@ def test_user_type_update_local_mode_success(mock_get_session, mock_repo, local_
     assert "user_type" in mock_repo.update.call_args[1]
 
 
+@patch("codemie.service.user.user_management_service.config.IDP_PROVIDER", "local")
+@patch("codemie.service.user.user_management_service.user_repository")
+@patch("codemie.clients.postgres.get_session")
+def test_user_type_update_local_mode_accepts_service_account(mock_get_session, mock_repo, local_user):
+    """AC-9: user_type update accepts 'service_account' in local mode by super admin
+
+    Regression test: _validate_user_type must reuse VALID_USER_TYPES from
+    user_type_validator.py instead of an independently hardcoded allowlist,
+    so admins can set 'service_account' via the local-mode admin API.
+    """
+    # Arrange
+    mock_session = MagicMock()
+    mock_get_session.return_value.__enter__.return_value = mock_session
+
+    # Create super admin actor
+    super_admin = UserDB(
+        id="super-admin-1",
+        username="superadmin",
+        email="superadmin@example.com",
+        name="Super Admin",
+        user_type="regular",
+        password_hash="hashed",
+        auth_source="local",
+        is_active=True,
+        is_admin=True,
+        email_verified=True,
+        project_limit=None,
+        date=datetime.now(UTC),
+        update_date=datetime.now(UTC),
+    )
+
+    # First call: fetch actor (super admin), second: fetch target user if needed
+    mock_repo.get_by_id.side_effect = [super_admin, local_user]
+    updated_user = UserDB(**local_user.model_dump())
+    updated_user.user_type = "service_account"
+    mock_repo.update.return_value = updated_user
+
+    # Mock get_user_with_relationships
+    mock_detail = CodeMieUserDetail(
+        id=updated_user.id,
+        username=updated_user.username,
+        email=updated_user.email,
+        name=updated_user.name,
+        picture=None,
+        user_type="service_account",
+        is_active=updated_user.is_active,
+        is_admin=updated_user.is_admin,
+        is_maintainer=updated_user.is_maintainer,
+        auth_source=updated_user.auth_source,
+        email_verified=updated_user.email_verified,
+        last_login_at=updated_user.last_login_at,
+        projects=[],
+        project_limit=updated_user.project_limit,
+        knowledge_bases=[],
+        date=updated_user.date,
+        update_date=updated_user.update_date,
+        deleted_at=updated_user.deleted_at,
+    )
+
+    with patch.object(UserManagementService, "get_user_with_relationships", return_value=mock_detail):
+        # Act
+        result = UserManagementService.update_user_fields(
+            user_id="user-local-1", actor_user_id="super-admin-1", user_type="service_account"
+        )
+
+    # Assert
+    assert result.user_type == "service_account"
+    update_call = mock_repo.update.call_args[1]
+    assert update_call["user_type"] == "service_account"
+
+
 # ===========================================
 # AC-10: user_type validation
 # ===========================================

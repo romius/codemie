@@ -170,6 +170,7 @@ class UserProfileService:
 
             # Capture old email BEFORE update for personal project reconciliation
             old_email = db_user.email
+            user_type = db_user.user_type
 
             # Update user (direct repository call to avoid circular dependency)
             updated_user = user_repository.update(session, user_id, **updates)
@@ -198,7 +199,9 @@ class UserProfileService:
             if email_changed and new_email:
                 from codemie.service.project.personal_project_service import personal_project_service
 
-                await personal_project_service.reconcile_personal_project_on_email_change(user_id, old_email, new_email)
+                await personal_project_service.reconcile_personal_project_on_email_change(
+                    user_id, old_email, new_email, user_type
+                )
 
             logger.info(f"profile_updated: target_user_id={user_id}, domain=user_management")
             return updated_user

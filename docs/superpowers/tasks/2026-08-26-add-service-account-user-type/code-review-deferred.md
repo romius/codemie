@@ -1,0 +1,3 @@
+# Deferred from code review — 2026-08-26-add-service-account-user-type (2026-08-26)
+
+- **Self-asserted `user_type` claim has no corroborating verification** — `src/codemie/rest_api/security/user_type_validator.py` / `src/codemie_enterprise/idp/user_type.py` — `validate_user_type` accepts the IDP-supplied `user_type` claim at face value (case-insensitive, trimmed) with no cross-check against grant type, client authentication, or interactive-session evidence. Pre-existing: the same self-asserted trust model already applies to `'external'` today; this ticket's scope is limited to accepting and persisting the new value from the Keycloak JWT claim, not re-architecting IDP claim verification.

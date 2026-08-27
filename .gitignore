@@ -67,3 +67,5 @@ bmad/*
 .ai-run/runs
 /.codegraph/
 docs/superpowers/tasks/**/*.diff
+docs/superpowers/tasks/**/.state.json
+docs/superpowers/tasks/**/gate-plan.json

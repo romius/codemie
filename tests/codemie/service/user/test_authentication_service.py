@@ -494,6 +494,50 @@ class TestCreateUserFromIdp:
             created_user = call_args[1]
             assert created_user.is_admin is True
 
+    @pytest.mark.asyncio
+    async def test_create_user_from_idp_service_account(self):
+        """Persists user_type='service_account' on first-login user creation"""
+        # Arrange
+        session = AsyncMock()
+        user_id = str(uuid4())
+
+        idp_user = security_user.User(
+            id=user_id,
+            username="svc-account",
+            name="Service Account",
+            email="svc-account@example.com",
+            user_type="service_account",
+            roles=[],
+            project_names=[],
+            admin_project_names=[],
+            knowledge_bases=[],
+            is_admin=False,
+        )
+
+        with (
+            patch("codemie.service.user.authentication_service.user_repository") as mock_user_repo,
+            patch("codemie.service.user.authentication_service.user_project_repository"),
+            patch("codemie.service.user.authentication_service.user_kb_repository"),
+            patch(
+                "codemie.service.user.authentication_service.AuthenticationService._ensure_projects_exist",
+                new_callable=AsyncMock,
+            ),
+            patch("codemie.service.user.authentication_service.config") as mock_config,
+        ):
+            mock_config.IDP_PROVIDER = "keycloak"
+            mock_config.ADMIN_USER_ID = "other-id"
+            mock_config.ADMIN_ROLE_NAME = "SuperAdmin"
+
+            mock_user_repo.acreate = AsyncMock(side_effect=lambda sess, user: user)
+
+            # Act
+            await AuthenticationService.create_user_from_idp(session, idp_user)
+
+            # Assert
+            call_args = mock_user_repo.acreate.call_args[0]
+            created_user = call_args[1]
+            assert created_user.user_type == "service_account"
+
 
 class TestSyncIdpUserProfile:
     """Tests for sync_idp_user_profile() method"""
@@ -872,7 +916,91 @@ class TestAuthenticatePersistentUser:
             assert result == expected_user
             # Verify reconciliation called
             mock_personal.reconcile_personal_project_on_email_change.assert_called_once_with(
-                user_id, old_email, new_email
+                user_id, old_email, new_email, "regular"
+            )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("user_type", ["external", "service_account"])
+    async def test_authenticate_persistent_user_email_changed_reconciles_with_excluded_user_type(self, user_type):
+        """Threads the DB user's excluded user_type into the reconcile call on email change"""
+        # Arrange
+        user_id = str(uuid4())
+        auth_token = "token-123"
+        old_email = "old@example.com"
+        new_email = "new@example.com"
+
+        db_user = UserDB(
+            id=user_id,
+            email=old_email,
+            username="testuser",
+            name="Test User",
+            user_type=user_type,
+            is_active=True,
+            deleted_at=None,
+        )
+
+        # IDP user has new email
+        idp_user = security_user.User(
+            id=user_id,
+            username="testuser",
+            name="Test User",
+            email=new_email,
+            user_type="human",
+            roles=[],
+            project_names=[],
+            admin_project_names=[],
+            knowledge_bases=[],
+            is_admin=False,
+        )
+
+        mock_session = AsyncMock()
+
+        with (
+            patch("codemie.clients.postgres.get_async_session") as mock_get_session,
+            patch("codemie.service.user.authentication_service.user_repository") as mock_user_repo,
+            patch(
+                "codemie.service.user.authentication_service.AuthenticationService._sync_existing_user",
+                new_callable=AsyncMock,
+            ) as mock_sync,
+            patch(
+                "codemie.service.user.authentication_service.AuthenticationService._finalize_authentication",
+                new_callable=AsyncMock,
+            ) as mock_finalize,
+            patch("codemie.service.project.personal_project_service.personal_project_service") as mock_personal,
+            patch("codemie.service.user.authentication_service.config") as mock_config,
+        ):
+            mock_config.IDP_PROVIDER = "keycloak"
+            mock_get_session.return_value = _make_async_session_cm(mock_session)
+            mock_user_repo.aget_by_id = AsyncMock(return_value=db_user)
+            mock_sync.return_value = old_email  # Return pre-sync email
+
+            # Update db_user email to simulate sync
+            db_user.email = new_email
+
+            expected_user = security_user.User(
+                id=user_id,
+                username="testuser",
+                name="Test User",
+                email=new_email,
+                user_type="human",
+                roles=[],
+                project_names=[],
+                admin_project_names=[],
+                knowledge_bases=[],
+                is_admin=False,
+                auth_token=auth_token,
+            )
+            mock_finalize.return_value = expected_user
+            mock_personal.reconcile_personal_project_on_email_change = AsyncMock()
+
+            # Act
+            result = await AuthenticationService.authenticate_persistent_user(user_id, idp_user, auth_token)
+
+            # Assert
+            assert result == expected_user
+            # Verify the DB user's excluded user_type (not the IDP user's "human") was threaded through
+            mock_personal.reconcile_personal_project_on_email_change.assert_called_once_with(
+                user_id, old_email, new_email, user_type
             )
 
     @pytest.mark.asyncio
@@ -1299,6 +1427,79 @@ class TestAuthenticateDevHeader:
             assert f"user_id={user_id}" in mock_logger.info.call_args[0][0]
 
 
+class TestFinalizeAuthenticationPersonalProjectGuard:
+    """Tests that _finalize_authentication() skips personal-project creation for excluded user_types"""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("user_type", ["external", "service_account"])
+    async def test_skips_ensure_personal_project_for_excluded_user_type(self, user_type):
+        """ensure_personal_project_async is not called for external/service_account users"""
+        user_id = str(uuid4())
+        security_user_ins = security_user.User(
+            id=user_id,
+            username="testuser",
+            name="Test User",
+            email="test@example.com",
+            user_type=user_type,
+            roles=[],
+            project_names=[],
+            admin_project_names=[],
+            knowledge_bases=[],
+            is_admin=False,
+        )
+
+        mock_session = AsyncMock()
+
+        with (
+            patch("codemie.clients.postgres.get_async_session") as mock_get_session,
+            patch("codemie.service.user.authentication_service.user_project_repository") as mock_proj_repo,
+            patch("codemie.service.user.authentication_service.user_kb_repository") as mock_kb_repo,
+            patch("codemie.service.project.personal_project_service.personal_project_service") as mock_personal,
+        ):
+            mock_get_session.return_value = _make_async_session_cm(mock_session)
+            mock_proj_repo.aget_by_user_id = AsyncMock(return_value=[])
+            mock_kb_repo.aget_by_user_id = AsyncMock(return_value=[])
+            mock_personal.ensure_personal_project_async = AsyncMock()
+
+            await AuthenticationService._finalize_authentication(security_user_ins, "persistent")
+
+            mock_personal.ensure_personal_project_async.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_calls_ensure_personal_project_for_regular_user_type(self):
+        """ensure_personal_project_async is still called for regular users"""
+        user_id = str(uuid4())
+        security_user_ins = security_user.User(
+            id=user_id,
+            username="testuser",
+            name="Test User",
+            email="test@example.com",
+            user_type="regular",
+            roles=[],
+            project_names=[],
+            admin_project_names=[],
+            knowledge_bases=[],
+            is_admin=False,
+        )
+
+        mock_session = AsyncMock()
+
+        with (
+            patch("codemie.clients.postgres.get_async_session") as mock_get_session,
+            patch("codemie.service.user.authentication_service.user_project_repository") as mock_proj_repo,
+            patch("codemie.service.user.authentication_service.user_kb_repository") as mock_kb_repo,
+            patch("codemie.service.project.personal_project_service.personal_project_service") as mock_personal,
+        ):
+            mock_get_session.return_value = _make_async_session_cm(mock_session)
+            mock_proj_repo.aget_by_user_id = AsyncMock(return_value=[])
+            mock_kb_repo.aget_by_user_id = AsyncMock(return_value=[])
+            mock_personal.ensure_personal_project_async = AsyncMock()
+
+            await AuthenticationService._finalize_authentication(security_user_ins, "persistent")
+
+            mock_personal.ensure_personal_project_async.assert_called_once_with(user_id, "test@example.com")
+
+
 class TestAuthenticatePersistentUserRaceCondition:
     """Tests for race condition handling in authenticate_persistent_user()"""
 
@@ -1458,6 +1659,51 @@ class TestAuthenticateAndLogin:
             mock_proj_repo.aget_by_user_id.assert_called_once_with(mock_session, user_id)
             mock_personal.ensure_personal_project_async.assert_called_once_with(user_id, email)
             mock_gen_token.assert_called_once_with(user_id, email, "local")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("user_type", ["external", "service_account"])
+    async def test_skips_ensure_personal_project_for_excluded_user_type(self, user_type):
+        """ensure_personal_project_async is not called for external/service_account users"""
+        email = "test@example.com"
+        password = "ValidPassword123"
+        user_id = str(uuid4())
+
+        mock_user = UserDB(
+            id=user_id,
+            username="testuser",
+            email=email,
+            name="Test User",
+            user_type=user_type,
+            is_active=True,
+            is_admin=False,
+            auth_source="local",
+            email_verified=True,
+            password_hash="$argon2id$v=19$m=65536,t=3,p=4$hash",
+            last_login_at=None,
+            project_limit=10,
+        )
+
+        mock_session = AsyncMock()
+
+        with (
+            patch("codemie.clients.postgres.get_async_session") as mock_get_session,
+            patch(
+                "codemie.service.user.authentication_service.AuthenticationService.authenticate_local",
+                new_callable=AsyncMock,
+            ) as mock_auth,
+            patch("codemie.service.user.authentication_service.user_project_repository") as mock_proj_repo,
+            patch("codemie.service.project.personal_project_service.personal_project_service") as mock_personal,
+            patch("codemie.rest_api.security.jwt_local.generate_access_token") as mock_gen_token,
+        ):
+            mock_get_session.return_value = _make_async_session_cm(mock_session)
+            mock_auth.return_value = mock_user
+            mock_proj_repo.aget_by_user_id = AsyncMock(return_value=[])
+            mock_personal.ensure_personal_project_async = AsyncMock()
+            mock_gen_token.return_value = "jwt-token-123"
+
+            await AuthenticationService.authenticate_and_login(email, password)
+
+            mock_personal.ensure_personal_project_async.assert_not_called()
 
 
 class TestLoginActivityEvent:

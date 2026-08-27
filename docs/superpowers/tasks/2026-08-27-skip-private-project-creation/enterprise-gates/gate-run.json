@@ -1,0 +1,79 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-14413",
+  "head": "82e2d3ceff29dc149438936d00569a9b181c2316",
+  "runner": "poetry",
+  "started_at": "2026-08-27T11:47:12Z",
+  "completed_at": "2026-08-27T11:58:00Z",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1690,
+      "command": "source .venv/bin/activate && make ruff",
+      "exit_code": 0,
+      "notes": "make ruff (format + check --fix + check) auto-fixed 2 files that are part of this branch's own diff: src/codemie_enterprise/migration/coordinator.py (joined an adjacent f-string concatenation) and tests/idp/test_user_type.py (flipped a Yoda equality assert). Final `ruff check` exited 0 ('All checks passed!'), which is a PASS under this guide gate's own criterion. Working tree now carries these 2 uncommitted diffs (not committed by this run). Hook/guide mismatch: scripts/git-hooks/pre_commit.sh chains the same ruff format/--fix/check sequence but treats ANY file modified by the auto-fix as a hard FAIL requiring the developer to restage and recommit -- stricter than this guide gate. Under the hook's real policy, this commit's code would not have passed as committed. Caller should decide whether to commit the auto-fix diff."
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1150,
+      "command": "source .venv/bin/activate && make build",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 26995,
+      "command": "source .venv/bin/activate && make test",
+      "exit_code": 0,
+      "notes": "1514 passed, 0 failed. Includes tests/migration/test_coordinator.py (test_skips_personal_project_for_excluded_user_type[external|service_account], test_creates_personal_project_for_regular_user_type) and tests/idp/test_user_type.py -- the tests added/changed by this branch's commit 82e2d3c -- all green."
+    },
+    {
+      "id": "coverage",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 40410,
+      "command": "source .venv/bin/activate && make coverage",
+      "exit_code": 0,
+      "notes": "Self-skip check performed: stdout contains 'CoverageWarning: No data was collected (no-data-collected)' from the OUTER `coverage run` wrapper, but this is a pre-existing Makefile quirk (double-wrapping coverage.py around pytest-cov's own --cov flag) unrelated to this branch -- the actual pytest-cov measurement did collect data: htmlcov/index.html reports 91% overall coverage. Not a self-skip."
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 12000,
+      "command": "source .venv/bin/activate && make gitleaks",
+      "exit_code": 2,
+      "notes": "gitleaks (docker zricethezav/gitleaks:v8.30.0, dir mode) reports 21 'jwt' rule findings, confined entirely to /path/.idea/httpRequests/*.json, /path/.idea/httpRequests/http-requests-log.http, and /path/.codex/config.toml. Verified before recording: `git ls-files --error-unmatch` fails for every offending path (all untracked), and `git check-ignore -v` confirms each is gitignored (.gitignore:11 '.idea' and .gitignore:136 '.codex/config.toml'). These are local JetBrains HTTP-client scratch history and a local AI-tool config file containing a context7 API key -- never committed, never present in a clean CI checkout, and unrelated to this branch's commit 82e2d3c (which only touches user_type.py, coordinator.py, test_coordinator.py). This is an environmental/local-workstation false-positive, not a real secret leak in the repo, and not introduced by the branch. `make verify` fails at this same step for the identical reason."
+    },
+    {
+      "id": "sonar",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 30800,
+      "command": "source .venv/bin/activate && make sonar-local",
+      "exit_code": 2,
+      "notes": "SONAR_TOKEN is set in this environment, so scripts/sonar/run-local-sonar.js takes the real-scan path (not the SONAR_TOKEN-unset skip path) but fails with '[sonar-local] sonar-scanner was not found. Install the official SonarScanner CLI or set SONAR_SCANNER_PATH.' Per this guide gate's own Fail criteria, a missing sonar-scanner binary is an explicit FAIL, not a skip. Environmental: the SonarScanner CLI is not installed in this sandbox. To run for real locally: install the SonarScanner CLI (or set SONAR_SCANNER_PATH) and ensure network reachability to https://sonar.core.kuberocketci.io. The branch's code was not analyzed by Sonar in this run; per .ai-run/guides/devops/README.md the MR pipeline's Sonar step is the only thing that actually runs this check before merge -- this local FAIL is a check still owed to CI."
+    },
+    {
+      "id": "verify",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 31800,
+      "command": "source .venv/bin/activate && make verify",
+      "exit_code": 2,
+      "notes": "Composite target `verify: ruff test gitleaks`; make stops at the first failing prerequisite. ruff and test (already verified individually as the lint/unit gates above) passed silently; the run fails at the gitleaks step for the identical environmental reason recorded in the secrets gate's notes. No new signal beyond gates lint/unit/secrets."
+    }
+  ],
+  "failures": {
+    "secrets": "Secret: [REDACTED - jwt-shaped token from local .idea/httpRequests scratch file, see notes]\nRuleID:      jwt\nEntropy:     5.653229\nFile:        /path/.idea/httpRequests/2026-05-06T211219.200.json\nLine:        5\nFingerprint: /path/.idea/httpRequests/2026-05-06T211219.200.json:jwt:5\n\nFinding: [REDACTED - jwt-shaped token from local .idea/httpRequests scratch file, see notes]\nSecret: [REDACTED - jwt-shaped token from local .idea/httpRequests scratch file, see notes]\nRuleID:      jwt\nEntropy:     5.725038\nFile:        /path/.idea/httpRequests/2026-08-26T174403.200.json\nLine:        2\nFingerprint: /path/.idea/httpRequests/2026-08-26T174403.200.json:jwt:2\n\nFinding: [REDACTED - jwt-shaped token from local .idea/httpRequests scratch file, see notes]\nSecret: [REDACTED - jwt-shaped token from local .idea/httpRequests scratch file, see notes]\nRuleID:      jwt\nEntropy:     5.620197\nFile:        /path/.idea/httpRequests/2026-08-26T174403.200.json\nLine:        5\nFingerprint: /path/.idea/httpRequests/2026-08-26T174403.200.json:jwt:5\n\nFinding: [REDACTED - jwt-shaped token from local .idea/httpRequests scratch file, see notes]\nSecret: [REDACTED - jwt-shaped token from local .idea/httpRequests scratch file, see notes]\nRuleID:      jwt\nEntropy:     5.762901\nFile:        /path/.idea/httpRequests/2026-05-02T114216.200.json\nLine:        2\nFingerprint: /path/.idea/httpRequests/2026-05-02T114216.200.json:jwt:2\n\nFinding: [REDACTED - jwt-shaped token from local .idea/httpRequests scratch file, see notes]\nSecret: [REDACTED - jwt-shaped token from local .idea/httpRequests scratch file, see notes]\nRuleID:      jwt\nEntropy:     5.688373\nFile:        /path/.idea/httpRequests/2026-05-02T114216.200.json\nLine:        5\nFingerprint: /path/.idea/httpRequests/2026-05-02T114216.200.json:jwt:5\n\nFinding: [REDACTED - jwt-shaped token from local .idea/httpRequests scratch file, see notes]\nSecret: [REDACTED - jwt-shaped token from local .idea/httpRequests scratch file, see notes]\nRuleID:      jwt\nEntropy:     5.809566\nFile:        /path/.idea/httpRequests/2026-05-02T114216.200.json\nLine:        7\nFingerprint: /path/.idea/httpRequests/2026-05-02T114216.200.json:jwt:7\n\n\u001b[90m11:56AM\u001b[0m \u001b[32mINF\u001b[0m \u001b[1mscanned ~23603626 bytes (23.60 MB) in 9.25s\u001b[0m\n\u001b[90m11:56AM\u001b[0m \u001b[33mWRN\u001b[0m \u001b[1mleaks found: 21\u001b[0m\nmake: *** [Makefile:29: gitleaks] Error 1\n",
+    "sonar": "...........................................................              [ 51%]\ntests/mcp_auth/test_discovery/test_trust_policy.py ..................... [ 53%]\n..............                                                           [ 54%]\ntests/mcp_auth/test_http_error_handler.py .............................. [ 56%]\n.....................................                                    [ 58%]\ntests/mcp_auth/test_models.py .......................................... [ 61%]\n.......................                                                  [ 62%]\ntests/mcp_auth/test_oauth2_flow.py ..................................... [ 65%]\n..............                                                           [ 66%]\ntests/mcp_auth/test_redis_cache.py ..........................            [ 67%]\ntests/mcp_auth/test_redis_crypto.py ..                                   [ 68%]\ntests/mcp_auth/test_redis_pkce_store.py .........                        [ 68%]\ntests/mcp_auth/test_redis_saml_relay_state_store.py .......              [ 69%]\ntests/mcp_auth/test_resolver.py ........................................ [ 71%]\n.......                                                                  [ 72%]\ntests/mcp_auth/test_saml_flow.py ....................                    [ 73%]\ntests/mcp_auth/test_service.py .........                                 [ 74%]\ntests/mcp_auth/test_status_evaluator.py .......                          [ 74%]\ntests/mcp_auth/test_tms.py .........................                     [ 76%]\ntests/mcp_auth/test_tms_config.py ..........                             [ 76%]\ntests/mcp_auth/test_tms_constants.py ......                              [ 77%]\ntests/mcp_auth/test_tms_crypto.py .....                                  [ 77%]\ntests/mcp_auth/test_tms_locks.py ....                                    [ 77%]\ntests/mcp_auth/test_tms_migrations.py ....                               [ 78%]\ntests/mcp_auth/test_tms_postgres.py .................................... [ 80%]\n..................................................                       [ 83%]\ntests/mcp_auth/test_tms_refresh.py ..................................... [ 86%]\n.....                                                                    [ 86%]\ntests/mcp_auth/test_tms_refresh_diagnostics.py ......................    [ 88%]\ntests/mcp_auth/test_tms_repository.py ....................               [ 89%]\ntests/mcp_auth/test_validation.py .......                                [ 89%]\ntests/mcp_auth/test_zero_coupling.py .                                   [ 89%]\ntests/migration/test_coordinator.py .................................    [ 92%]\ntests/migration/test_keycloak_admin_client.py ...........                [ 92%]\ntests/migration/test_keycloak_admin_user.py .......................      [ 94%]\ntests/phoenix/test_config.py .......                                     [ 94%]\ntests/phoenix/test_models.py ......                                      [ 95%]\ntests/phoenix/test_observe.py ........                                   [ 95%]\ntests/phoenix/test_service.py ................                           [ 96%]\ntests/phoenix/test_span_processor.py ...........................         [ 98%]\ntests/plugin/test_service.py .............                               [ 99%]\ntests/plugin/test_toolkit.py ........                                    [100%]\n\n================================ tests coverage ================================\n_______________ coverage: platform linux, python 3.12.12-final-0 _______________\n\nCoverage XML written to file coverage.xml\n============================ 1514 passed in 30.62s =============================\n[sonar-local] sonar-scanner was not found. Install the official SonarScanner CLI or set SONAR_SCANNER_PATH.\nmake: *** [Makefile:32: sonar-local] Error 1\n",
+    "verify": "Secret: [REDACTED - jwt-shaped token from local .idea/httpRequests scratch file, see notes]\nRuleID:      jwt\nEntropy:     5.809566\nFile:        /path/.idea/httpRequests/2026-05-02T114216.200.json\nLine:        7\nFingerprint: /path/.idea/httpRequests/2026-05-02T114216.200.json:jwt:7\n\nFinding: [REDACTED - jwt-shaped token from local .idea/httpRequests scratch file, see notes]\nSecret: [REDACTED - jwt-shaped token from local .idea/httpRequests scratch file, see notes]\nRuleID:      jwt\nEntropy:     5.788761\nFile:        /path/.idea/httpRequests/2026-05-06T211321.200.json\nLine:        2\nFingerprint: /path/.idea/httpRequests/2026-05-06T211321.200.json:jwt:2\n\nFinding: [REDACTED - jwt-shaped token from local .idea/httpRequests scratch file, see notes]\nSecret: [REDACTED - jwt-shaped token from local .idea/httpRequests scratch file, see notes]\nRuleID:      jwt\nEntropy:     5.695617\nFile:        /path/.idea/httpRequests/2026-05-06T211321.200.json\nLine:        4\nFingerprint: /path/.idea/httpRequests/2026-05-06T211321.200.json:jwt:4\n\nFinding: [REDACTED - jwt-shaped token from local .idea/httpRequests scratch file, see notes]\nSecret: [REDACTED - jwt-shaped token from local .idea/httpRequests scratch file, see notes]\nRuleID:      jwt\nEntropy:     5.791869\nFile:        /path/.idea/httpRequests/2026-05-06T211321.200.json\nLine:        6\nFingerprint: /path/.idea/httpRequests/2026-05-06T211321.200.json:jwt:6\n\nFinding: [REDACTED - jwt-shaped token from local .idea/httpRequests scratch file, see notes]\nSecret: [REDACTED - jwt-shaped token from local .idea/httpRequests scratch file, see notes]\nRuleID:      jwt\nEntropy:     5.734256\nFile:        /path/.idea/httpRequests/http-requests-log.http\nLine:        26\nFingerprint: /path/.idea/httpRequests/http-requests-log.http:jwt:26\n\nFinding: [REDACTED - jwt-shaped token from local .idea/httpRequests scratch file, see notes]\nSecret: [REDACTED - jwt-shaped token from local .idea/httpRequests scratch file, see notes]\nRuleID:      jwt\nEntropy:     5.731690\nFile:        /path/.idea/httpRequests/http-requests-log.http\nLine:        66\nFingerprint: /path/.idea/httpRequests/http-requests-log.http:jwt:66\n\n\u001b[90m11:57AM\u001b[0m \u001b[32mINF\u001b[0m \u001b[1mscanned ~23603626 bytes (23.60 MB) in 10.1s\u001b[0m\n\u001b[90m11:57AM\u001b[0m \u001b[33mWRN\u001b[0m \u001b[1mleaks found: 21\u001b[0m\nmake: *** [Makefile:29: gitleaks] Error 1\n"
+  }
+}

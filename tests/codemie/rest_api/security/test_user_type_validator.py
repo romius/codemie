@@ -27,7 +27,11 @@ import pytest
 from unittest.mock import patch
 
 from codemie.core.exceptions import ExtendedHTTPException
-from codemie.rest_api.security.user_type_validator import validate_user_type, VALID_USER_TYPES
+from codemie.rest_api.security.user_type_validator import (
+    VALID_USER_TYPES,
+    is_personal_project_excluded,
+    validate_user_type,
+)
 
 
 class TestValidateUserType:
@@ -72,6 +76,21 @@ class TestValidateUserType:
         result = validate_user_type('  external  ')
         assert result == 'external'
 
+    def test_validate_service_account_lowercase(self) -> None:
+        """AC: IDP user with user_type='service_account' is stored as 'service_account'"""
+        result = validate_user_type('service_account')
+        assert result == 'service_account'
+
+    def test_validate_service_account_uppercase(self) -> None:
+        """AC: IDP user with user_type='SERVICE_ACCOUNT' is normalized and stored as 'service_account'"""
+        result = validate_user_type('SERVICE_ACCOUNT')
+        assert result == 'service_account'
+
+    def test_validate_service_account_with_whitespace(self) -> None:
+        """User type 'service_account' with leading/trailing whitespace is normalized"""
+        result = validate_user_type('  Service_Account  ')
+        assert result == 'service_account'
+
     # ============================================================================
     # Missing Attribute Tests
     # ============================================================================
@@ -93,7 +112,7 @@ class TestValidateUserType:
         exc = exc_info.value
         assert exc.code == 401
         assert "Invalid user_type attribute from IDP" in exc.message
-        assert "Expected 'regular' or 'external', got: unknown" in exc.message
+        assert "Expected 'external', 'regular', or 'service_account', got: unknown" in exc.message
 
     def test_validate_invalid_guest_rejects(self) -> None:
         """AC: IDP user with invalid value 'guest' is rejected with 401"""
@@ -102,7 +121,7 @@ class TestValidateUserType:
 
         exc = exc_info.value
         assert exc.code == 401
-        assert "Expected 'regular' or 'external', got: guest" in exc.message
+        assert "Expected 'external', 'regular', or 'service_account', got: guest" in exc.message
 
     def test_validate_empty_string_rejects(self) -> None:
         """Empty string user_type is rejected with 401"""
@@ -119,7 +138,7 @@ class TestValidateUserType:
 
         exc = exc_info.value
         assert exc.code == 401
-        assert "Expected 'regular' or 'external', got: 123" in exc.message
+        assert "Expected 'external', 'regular', or 'service_account', got: 123" in exc.message
 
     def test_validate_array_rejects(self) -> None:
         """AC: IDP user with array user_type is rejected with 401"""
@@ -128,7 +147,7 @@ class TestValidateUserType:
 
         exc = exc_info.value
         assert exc.code == 401
-        assert "Expected 'regular' or 'external'" in exc.message
+        assert "Expected 'external', 'regular', or 'service_account'" in exc.message
 
     def test_validate_dict_rejects(self) -> None:
         """AC: IDP user with dict user_type is rejected with 401"""
@@ -137,7 +156,7 @@ class TestValidateUserType:
 
         exc = exc_info.value
         assert exc.code == 401
-        assert "Expected 'regular' or 'external'" in exc.message
+        assert "Expected 'external', 'regular', or 'service_account'" in exc.message
 
     def test_validate_boolean_rejects(self) -> None:
         """AC: IDP user with boolean user_type is rejected with 401"""
@@ -146,7 +165,7 @@ class TestValidateUserType:
 
         exc = exc_info.value
         assert exc.code == 401
-        assert "Expected 'regular' or 'external'" in exc.message
+        assert "Expected 'external', 'regular', or 'service_account'" in exc.message
 
     # ============================================================================
     # Error Message Tests
@@ -203,9 +222,8 @@ class TestValidateUserType:
     # ============================================================================
 
     def test_valid_user_types_constant(self) -> None:
-        """Verify VALID_USER_TYPES contains exactly 'regular' and 'external'"""
-        assert {'regular', 'external'} == VALID_USER_TYPES
-        assert len(VALID_USER_TYPES) == 2
+        """Verify VALID_USER_TYPES contains exactly 'regular', 'external', and 'service_account'"""
+        assert {"regular", "external", "service_account"} == VALID_USER_TYPES
 
     # ============================================================================
     # Edge Cases
@@ -226,3 +244,24 @@ class TestValidateUserType:
 
         exc = exc_info.value
         assert exc.code == 401
+
+
+# ============================================================================
+# is_personal_project_excluded Tests
+# ============================================================================
+
+
+class TestIsPersonalProjectExcluded:
+    """Test suite for is_personal_project_excluded function"""
+
+    @pytest.mark.parametrize(
+        "user_type,expected",
+        [
+            ("external", True),
+            ("service_account", True),
+            ("regular", False),
+            ("unknown", False),
+        ],
+    )
+    def test_is_personal_project_excluded(self, user_type: str, expected: bool) -> None:
+        assert is_personal_project_excluded(user_type) is expected

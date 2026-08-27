@@ -293,6 +293,68 @@ class TestRegistrationService:
         mock_personal_project_service.ensure_personal_project_async.assert_called_once_with(user_id, email)
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("user_type", ["external", "service_account"])
+    @patch("codemie.service.user.registration_service.personal_project_service")
+    @patch("codemie.service.email_service.email_service")
+    @patch("codemie.service.user.registration_service.email_token_repository")
+    @patch("codemie.service.user.registration_service.user_repository")
+    @patch("codemie.service.password_service.password_service")
+    @patch("codemie.clients.postgres.get_session")
+    @patch("codemie.service.user.registration_service.config")
+    async def test_register_user_with_flow_email_verification_skips_excluded_user_type(
+        self,
+        mock_config,
+        mock_get_session,
+        mock_password_service,
+        mock_user_repo,
+        mock_token_repo,
+        mock_email_service,
+        mock_personal_project_service,
+        user_type,
+    ):
+        """ensure_personal_project_async is not called on the email-verification path for excluded user_types"""
+        mock_config.PASSWORD_MIN_LENGTH = 8
+        mock_config.EMAIL_VERIFICATION_ENABLED = True
+        mock_config.USER_PROJECT_LIMIT = 10
+
+        mock_session = MagicMock()
+        mock_get_session.return_value.__enter__.return_value = mock_session
+
+        email = "newuser@example.com"
+        username = "newuser"
+        password = "password123"
+        user_id = str(uuid4())
+
+        mock_user_repo.exists_by_email.return_value = False
+        mock_user_repo.exists_by_username.return_value = False
+        mock_password_service.hash_password.return_value = "hashed"
+
+        registered_user = UserDB(
+            id=user_id,
+            email=email,
+            username=username,
+            name=username,
+            password_hash="hashed",
+            auth_source="local",
+            email_verified=False,
+            is_active=True,
+            is_admin=False,
+            project_limit=10,
+            user_type=user_type,
+        )
+        mock_user_repo.create.return_value = registered_user
+
+        raw_token = "verification-token"
+        mock_token_repo.create_token.return_value = (raw_token, MagicMock())
+        mock_email_service.send_verification_email = AsyncMock()
+        mock_personal_project_service.ensure_personal_project_async = AsyncMock()
+
+        result = await RegistrationService.register_user_with_flow(email, username, password)
+
+        assert result["type"] == "message"
+        mock_personal_project_service.ensure_personal_project_async.assert_not_called()
+
+    @pytest.mark.asyncio
     @patch("codemie.service.user.registration_service.personal_project_service")
     @patch("codemie.service.email_service.email_service")
     @patch("codemie.service.user.registration_service.email_token_repository")
@@ -422,6 +484,76 @@ class TestRegistrationService:
         assert result["user"].email == email
         mock_session.commit.assert_called_once()
         mock_personal_project_service.ensure_personal_project_async.assert_called_once_with(user_id, email)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("user_type", ["external", "service_account"])
+    @patch("codemie.clients.postgres.get_async_session")
+    @patch("codemie.repository.user_project_repository.user_project_repository")
+    @patch("codemie.rest_api.security.jwt_local.generate_access_token")
+    @patch("codemie.service.user.registration_service.personal_project_service")
+    @patch("codemie.service.user.registration_service.user_repository")
+    @patch("codemie.service.password_service.password_service")
+    @patch("codemie.clients.postgres.get_session")
+    @patch("codemie.service.user.registration_service.config")
+    async def test_register_user_with_flow_instant_login_skips_excluded_user_type(
+        self,
+        mock_config,
+        mock_get_session,
+        mock_password_service,
+        mock_user_repo,
+        mock_personal_project_service,
+        mock_generate_token,
+        mock_user_project_repo,
+        mock_get_async_session,
+        user_type,
+    ):
+        """ensure_personal_project_async is not called on the instant-login path for excluded user_types"""
+        mock_config.PASSWORD_MIN_LENGTH = 8
+        mock_config.EMAIL_VERIFICATION_ENABLED = False
+        mock_config.USER_PROJECT_LIMIT = 10
+
+        mock_session = MagicMock()
+        mock_get_session.return_value.__enter__.return_value = mock_session
+
+        email = "instant@example.com"
+        username = "instant"
+        password = "password123"
+        user_id = str(uuid4())
+
+        mock_user_repo.exists_by_email.return_value = False
+        mock_user_repo.exists_by_username.return_value = False
+        mock_password_service.hash_password.return_value = "hashed"
+
+        registered_user = UserDB(
+            id=user_id,
+            email=email,
+            username=username,
+            name=username,
+            password_hash="hashed",
+            auth_source="local",
+            email_verified=True,
+            is_active=True,
+            is_admin=False,
+            project_limit=10,
+            user_type=user_type,
+        )
+        mock_user_repo.create.return_value = registered_user
+
+        mock_generate_token.return_value = "jwt-token-123"
+        mock_personal_project_service.ensure_personal_project_async = AsyncMock()
+
+        mock_async_session = AsyncMock()
+        cm = AsyncMock()
+        cm.__aenter__.return_value = mock_async_session
+        cm.__aexit__.return_value = False
+        mock_get_async_session.return_value = cm
+
+        mock_user_project_repo.aget_by_user_id = AsyncMock(return_value=[])
+
+        result = await RegistrationService.register_user_with_flow(email, username, password)
+
+        assert result["type"] == "token"
+        mock_personal_project_service.ensure_personal_project_async.assert_not_called()
 
     @pytest.mark.asyncio
     @patch("codemie.rest_api.security.jwt_local.generate_access_token")

@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "task": "Skip personal/private project creation for users with user_type 'external' or 'service_account' across all creation call sites in the codemie and codemie-enterprise repos.",
+  "generated": "2026-08-27T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 6, "label": "XXL" },
+    "requirements_clarity": { "score": 4, "label": "L" },
+    "technical_risk":       { "score": 5, "label": "XL" },
+    "file_change_estimate": { "score": 5, "label": "XL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 6, "label": "XXL" }
+  },
+  "total": 27,
+  "size": "XL",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "split-required",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "6 call sites across PersonalProjectService, AuthenticationService (x2), RegistrationService (x2), and the enterprise KeycloakMigrationCoordinator, connected only through the duplicated MigrationDeps protocol — a genuine cross-system boundary between two independently-versioned repos, not a single-service change." },
+    { "dimension": "requirements_clarity", "reason": "The core skip rule is clear, but two decisions are open: whether to extend ensure_personal_project_async's signature or duplicate the user_type check at each call site, and whether already-provisioned personal projects for existing external/service_account users need a cleanup/backfill path — explicitly called out as a spec question, not derivable from code." },
+    { "dimension": "technical_risk", "reason": "No existing gating pattern exists anywhere in the creation path today. The closest analog, is_external_user, deliberately excludes service_account and must not change, leaving the new authz-style check without covering precedent (bump). Acceptance criteria enumerate two specific user_type variants with zero existing test coverage for either in either repo (second, additive bump)." },
+    { "dimension": "file_change_estimate", "reason": "Base repo: personal_project_service.py, authentication_service.py, registration_service.py, the enterprise-adapter coordinator.py, plus 3-4 existing test files needing user_type parametrization. Enterprise repo: migration/coordinator.py and its test file. ~10-11 modified files across 3+ directories in two codebases." },
+    { "dimension": "affected_layers", "reason": "Service layer (PersonalProjectService, AuthenticationService, RegistrationService), the cross-repo integration layer (MigrationDeps protocol / CodemieMigrationDeps / KeycloakMigrationCoordinator), and the security/auth-context layer (user_type on User/UserDB) — spanning two independently-versioned codebases with no shared code, only a duplicated contract." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped: closest existing pattern (User.is_external_user) does not cover the security-sensitive aspect of the new work — it excludes service_account by design and cannot be reused, so the new authz-style check has no covering precedent.",
+    "Technical Risk bumped: acceptance criteria enumerate specific user_type variants (external, service_account) and no existing test in either repo parametrizes personal-project creation by user_type.",
+    "Component Scope and Affected Layers scored at ceiling (XXL): change spans two independently-versioned repos (codemie, codemie-enterprise) crossing the MigrationDeps protocol boundary — cross-system, not cross-layer.",
+    "Component Scope reinforced: change affects multiple workflows (IDP/dev-header login, local login, email-verification registration, instant-login registration, email-change reconciliation, Keycloak bulk migration)."
+  ],
+  "split_recommendation": "Split by dependency/phase: (1) Decide and implement the single check point in the base repo — either extend ensure_personal_project_async's signature or introduce one reusable predicate — and land it with tests for the two base-repo call sites in AuthenticationService; (2) apply the same check to the remaining base-repo call sites (RegistrationService x2, PersonalProjectService.reconcile_personal_project_on_email_change) with tests; (3) mirror the check in the enterprise repo's KeycloakMigrationCoordinator._process_batch Phase 3, preserving the existing zero-coupling duplicated-constant convention, with its own tests; (4) resolve as a follow-up/spec item: whether existing external/service_account users' already-provisioned personal projects need cleanup or backfill."
+}

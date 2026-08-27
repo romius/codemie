@@ -15,8 +15,8 @@
 """User type validation for IDP attributes (Story 4: EPMCDME-10160)
 
 Implements strict, fail-closed validation of user_type attribute from Identity Providers.
-Only 'regular' and 'external' values are accepted (case-insensitive), missing defaults
-to 'regular', and invalid values reject authentication with 401.
+Only 'regular', 'external', and 'service_account' values are accepted (case-insensitive),
+missing defaults to 'regular', and invalid values reject authentication with 401.
 """
 
 from typing import Any, Optional
@@ -26,7 +26,19 @@ from codemie.configs.logger import logger
 from codemie.core.exceptions import ExtendedHTTPException
 
 
-VALID_USER_TYPES = {'regular', 'external'}
+VALID_USER_TYPES = {'regular', 'external', 'service_account'}
+
+PERSONAL_PROJECT_EXCLUDED_USER_TYPES = {"external", "service_account"}
+
+
+def is_personal_project_excluded(user_type: str) -> bool:
+    return user_type in PERSONAL_PROJECT_EXCLUDED_USER_TYPES
+
+
+def _describe_valid_user_types() -> str:
+    """Human-readable, sorted list of valid user_type values for error messages."""
+    types = sorted(VALID_USER_TYPES)
+    return ", ".join(f"'{t}'" for t in types[:-1]) + f", or '{types[-1]}'"
 
 
 def validate_user_type(value: Any, idp_context: Optional[dict] = None) -> str:
@@ -34,7 +46,7 @@ def validate_user_type(value: Any, idp_context: Optional[dict] = None) -> str:
 
     Business Rules (FR-6.2, AC-7):
     - Missing attribute: Default to 'regular'
-    - Valid values ('regular', 'external'): Accept and normalize to lowercase
+    - Valid values ('regular', 'external', 'service_account'): Accept and normalize to lowercase
     - Invalid values: Reject authentication with 401
 
     Args:
@@ -42,7 +54,7 @@ def validate_user_type(value: Any, idp_context: Optional[dict] = None) -> str:
         idp_context: Optional context for logging (provider, source, subject_id_hash)
 
     Returns:
-        str: Normalized user_type ('regular' or 'external')
+        str: Normalized user_type ('regular', 'external', or 'service_account')
 
     Raises:
         ExtendedHTTPException: 401 if value is invalid
@@ -76,7 +88,9 @@ def validate_user_type(value: Any, idp_context: Optional[dict] = None) -> str:
         # Story-mandated error message format
         raise ExtendedHTTPException(
             code=status.HTTP_401_UNAUTHORIZED,
-            message=f"Invalid user_type attribute from IDP. Expected 'regular' or 'external', got: {repr(value)}",
+            message=(
+                f"Invalid user_type attribute from IDP. Expected {_describe_valid_user_types()}, got: {repr(value)}"
+            ),
             details=f"The user_type attribute must be a string, received {type(value).__name__}.",
             help="Contact your administrator to correct the IDP configuration.",
         )
@@ -92,13 +106,13 @@ def validate_user_type(value: Any, idp_context: Optional[dict] = None) -> str:
     # Log with IDP context (no PII) - Story requirement: "relevant IDP claim details"
     logger.error(
         f"Invalid user_type attribute value from IDP: provider={provider}, source={source}, "
-        f"subject_hash={subject_hash}, expected='regular' or 'external', got={repr(value)}"
+        f"subject_hash={subject_hash}, expected={_describe_valid_user_types()}, got={repr(value)}"
     )
     # Story-mandated error message format
     raise ExtendedHTTPException(
         code=status.HTTP_401_UNAUTHORIZED,
-        message=f"Invalid user_type attribute from IDP. Expected 'regular' or 'external', got: {value}",
+        message=f"Invalid user_type attribute from IDP. Expected {_describe_valid_user_types()}, got: {value}",
         details=f"The user_type attribute value '{value}' is not recognized. "
-        "Only 'regular' and 'external' are supported.",
+        f"Only {_describe_valid_user_types()} are supported.",
         help="Contact your administrator to correct the IDP configuration.",
     )

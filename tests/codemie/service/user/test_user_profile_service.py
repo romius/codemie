@@ -453,7 +453,75 @@ class TestUpdateProfile:
         mock_session.commit.assert_called_once()
         mock_send_email.assert_called_once_with(new_email, verification_token)
         mock_personal_project_service.reconcile_personal_project_on_email_change.assert_called_once_with(
-            user_id, old_email, new_email
+            user_id, old_email, new_email, "regular"
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("user_type", ["external", "service_account"])
+    @patch("codemie.service.project.personal_project_service.personal_project_service")
+    @patch("codemie.service.user.user_profile_service.UserProfileService._send_verification_email_safe")
+    @patch("codemie.service.user.user_profile_service.config")
+    @patch("codemie.service.user.user_profile_service.email_token_repository")
+    @patch("codemie.service.user.user_profile_service.user_repository")
+    @patch("codemie.clients.postgres.get_session")
+    async def test_update_profile_email_change_reconciles_with_excluded_user_type(
+        self,
+        mock_get_session,
+        mock_user_repo,
+        mock_email_token_repo,
+        mock_config,
+        mock_send_email,
+        mock_personal_project_service,
+        user_type,
+    ):
+        """Threads the DB user's excluded user_type into the reconcile call on email change"""
+        # Arrange
+        mock_config.EMAIL_VERIFICATION_ENABLED = True
+        user_id = str(uuid4())
+        old_email = "old@example.com"
+        new_email = "new@example.com"
+        verification_token = "token-123"
+
+        db_user = UserDB(
+            id=user_id,
+            email=old_email,
+            name="User Name",
+            username="user",
+            auth_source="local",
+            email_verified=True,
+            is_active=True,
+            is_admin=False,
+            user_type=user_type,
+        )
+
+        updated_user = UserDB(
+            id=user_id,
+            email=new_email,
+            name="User Name",
+            username="user",
+            auth_source="local",
+            email_verified=False,
+            is_active=True,
+            is_admin=False,
+            user_type=user_type,
+        )
+
+        mock_session = MagicMock()
+        mock_get_session.return_value.__enter__.return_value = mock_session
+
+        mock_user_repo.get_by_id.return_value = db_user
+        mock_user_repo.get_by_email.return_value = None
+        mock_user_repo.update.return_value = updated_user
+        mock_email_token_repo.create_token.return_value = (verification_token, MagicMock())
+        mock_personal_project_service.reconcile_personal_project_on_email_change = AsyncMock()
+
+        # Act
+        result = await UserProfileService.update_profile(user_id, email=new_email)
+
+        # Assert
+        assert result.email == new_email
+        mock_personal_project_service.reconcile_personal_project_on_email_change.assert_called_once_with(
+            user_id, old_email, new_email, user_type
         )
 
     @pytest.mark.asyncio

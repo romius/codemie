@@ -35,6 +35,7 @@ from codemie.core.exceptions import ExtendedHTTPException
 from codemie.enterprise.mcp_auth.dependencies import enqueue_mcp_auth_cleanup
 from codemie.repository.user_repository import user_repository
 from codemie.rest_api.security.permissions import is_admin_or_maintainer
+from codemie.rest_api.security.user_type_validator import VALID_USER_TYPES
 from codemie.service.user.authentication_service import invalidate_user_from_cache
 from codemie.rest_api.models.user_management import (
     AdminUserListItem,
@@ -1013,7 +1014,7 @@ class UserManagementService:
         normalized = user_type.lower().strip()
 
         # Validate allowed values
-        if normalized not in ["regular", "external"]:
+        if normalized not in VALID_USER_TYPES:
             raise ExtendedHTTPException(
                 code=400,
                 message="Invalid user_type",

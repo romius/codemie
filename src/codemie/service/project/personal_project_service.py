@@ -28,6 +28,7 @@ from codemie.configs.logger import logger
 from codemie.core.models import Application
 from codemie.repository.user_project_repository import user_project_repository
 from codemie.repository.application_repository import application_repository
+from codemie.rest_api.security.user_type_validator import is_personal_project_excluded
 from codemie.service.activity.activity_models import (
     ActivityDomain,
     ActivityEntityType,
@@ -107,7 +108,9 @@ class PersonalProjectService:
             return False
 
     @staticmethod
-    async def reconcile_personal_project_on_email_change(user_id: str, old_email: str, new_email: str) -> bool:
+    async def reconcile_personal_project_on_email_change(
+        user_id: str, old_email: str, new_email: str, user_type: str
+    ) -> bool:
         """Reconcile personal project when user email changes (non-blocking).
 
         Soft-deletes old personal project (named after old email) and ensures
@@ -119,6 +122,9 @@ class PersonalProjectService:
         from datetime import UTC, datetime
 
         try:
+            if is_personal_project_excluded(user_type):
+                return False
+
             async with get_async_session() as session:
                 old_app = await application_repository.aget_by_name(session, old_email)
                 if (

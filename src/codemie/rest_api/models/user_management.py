@@ -46,7 +46,7 @@ class UserDB(BaseModelWithSQLSupport, table=True):
     name: Optional[str] = SQLField(default=None)
     password_hash: Optional[str] = SQLField(default=None)  # NULL for IDP users
     picture: Optional[str] = SQLField(default=None)
-    user_type: str = SQLField(default="regular")  # 'regular' | 'external'
+    user_type: str = SQLField(default="regular")  # 'regular' | 'external' | 'service_account'
     is_active: bool = SQLField(default=True, index=True)
     is_admin: bool = SQLField(default=False, index=True)
     is_maintainer: bool = SQLField(default=False)
