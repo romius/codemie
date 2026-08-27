@@ -12,17 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
-from typing import Any, List, Dict, Optional, Callable, Iterator
+from typing import Any, List, Dict, Optional, Iterator
 
 from langchain_community.document_loaders import ConfluenceLoader
 from langchain_core.documents import Document
-from tenacity import (
-    before_sleep_log,
-    retry,
-    stop_after_attempt,
-    wait_exponential,
-)
 
 from codemie.datasource.loader.base_datasource_loader import BaseDatasourceLoader
 from codemie.configs import logger
@@ -45,14 +38,15 @@ class ConfluenceDatasourceLoader(ConfluenceLoader, BaseDatasourceLoader):
         self,
         cql: str,
         include_archived_spaces: Optional[bool] = None,
+        next_url: str = "",
         **kwargs: Any,
     ) -> tuple[List[dict], str]:
         """Overriden to fix the bug.
         See https://github.com/langchain-ai/langchain/commit/0d20c314dd0508ea956482fbdd6ce7854b85fc01
         (!) IMPORTANT. Remove once underlying langchain_community is updated
         """
-        if kwargs.get("next_url"):
-            response = self.confluence.get(kwargs["next_url"])
+        if next_url:
+            response = self.confluence.get(next_url)
         else:
             url = "rest/api/content/search"
 
@@ -65,44 +59,12 @@ class ConfluenceDatasourceLoader(ConfluenceLoader, BaseDatasourceLoader):
 
         return response.get("results", []), response.get("_links", {}).get("next", "")
 
-    def paginate_request(self, retrieval_method: Callable, **kwargs: Any) -> List:
-        """Overriden to fix the bug.
-        See https://github.com/langchain-ai/langchain/commit/0d20c314dd0508ea956482fbdd6ce7854b85fc01
-        (!) IMPORTANT. Remove once underlying langchain_community is updated
-        """
-        max_pages = kwargs.pop("max_pages")
-        docs: List[dict] = []
-        kwargs["next_url"] = ""
-
-        while len(docs) < max_pages:
-            get_pages = retry(
-                reraise=True,
-                stop=stop_after_attempt(
-                    self.number_of_retries  # type: ignore[arg-type]
-                ),
-                wait=wait_exponential(
-                    multiplier=1,
-                    min=self.min_retry_seconds,  # type: ignore[arg-type]
-                    max=self.max_retry_seconds,  # type: ignore[arg-type]
-                ),
-                before_sleep=before_sleep_log(logger, logging.WARNING),
-            )(retrieval_method)
-
-            if self.cql:
-                batch, next_url = get_pages(**kwargs)
-                if not next_url:
-                    docs.extend(batch)
-                    break
-                kwargs["next_url"] = next_url
-            else:
-                batch = get_pages(**kwargs, start=len(docs))
-                if not batch:
-                    break
-            docs.extend(batch)
-        return docs[:max_pages]
-
     def lazy_load(self) -> Iterator[Document]:
-        """Load all pages in chunks of 1000 to avoid accumulating all pages in memory."""
+        """Stream the CQL result set, following the `_links.next` URL Confluence returns.
+
+        Yields:
+            Document: one per page produced by `process_pages`.
+        """
         expand = ",".join(
             [
                 self.content_format.value,
@@ -110,26 +72,22 @@ class ConfluenceDatasourceLoader(ConfluenceLoader, BaseDatasourceLoader):
                 *(["metadata.labels"] if self.include_labels else []),
             ]
         )
-        start = 0
-        chunk_size = self.max_pages
+        next_url = ""
+        loaded = 0
 
         while True:
-            logger.info(f"Confluence loader: fetching chunk start={start}, chunk_size={chunk_size}")
-            pages = self.paginate_request(
-                self._search_content_by_cql,
+            pages, next_url = self._search_content_by_cql(
                 cql=self.cql,
-                limit=self.limit,
-                max_pages=chunk_size,
                 include_archived_spaces=self.include_archived_content,
+                next_url=next_url,
+                limit=self.limit,
                 expand=expand,
-                start=start,
             )
 
             if not pages:
-                logger.info(f"Confluence loader: no pages at start={start}, stopping")
+                logger.info(f"Confluence loader: empty response, total pages loaded={loaded}")
                 break
 
-            logger.info(f"Confluence loader: fetched {len(pages)} pages at start={start}, yielding documents")
             yield from self.process_pages(
                 pages,
                 include_restricted_content=self.include_restricted_content,
@@ -141,8 +99,8 @@ class ConfluenceDatasourceLoader(ConfluenceLoader, BaseDatasourceLoader):
                 keep_markdown_format=self.keep_markdown_format,
                 keep_newlines=self.keep_newlines,
             )
+            loaded += len(pages)
 
-            start += len(pages)
-            if len(pages) < chunk_size:
-                logger.info(f"Confluence loader: last chunk ({len(pages)} < {chunk_size}), total pages loaded={start}")
+            if not next_url:
+                logger.info(f"Confluence loader: no next link, total pages loaded={loaded}")
                 break
