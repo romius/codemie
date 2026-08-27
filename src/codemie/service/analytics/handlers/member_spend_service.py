@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -97,6 +97,25 @@ def _build_row(
         row[name] = _spend_value(spend_by_category.get(name))
         row[f"{name}_limit"] = _limit_value(allocation_by_category.get(name))
     return row
+
+
+def _drop_rows_before_cutoff(
+    spend_map: dict[tuple[str, str], Any],
+    cutoff_for: Callable[[tuple[str, str]], datetime | None],
+) -> dict[tuple[str, str], Any]:
+    """Drop rows at or before the cutoff ``cutoff_for`` returns for their key; keep the rest.
+
+    Cutoffs come from ``get_project_reset_cutoffs``; see
+    ``LiteLLMSpendCollectorService.is_reset_transition`` for why a reset is recorded at all.
+    """
+    kept: dict[tuple[str, str], Any] = {}
+    for key, row in spend_map.items():
+        cutoff = cutoff_for(key)
+        spend_date = row.spend_date if row.spend_date.tzinfo else row.spend_date.replace(tzinfo=timezone.utc)
+        if cutoff is not None and spend_date <= cutoff:
+            continue
+        kept[key] = row
+    return kept
 
 
 def _build_spend_rows(
@@ -189,6 +208,11 @@ class MemberSpendService:
         personal_projects = {a.name for a in applications if a.project_type == Application.ProjectType.PERSONAL.value}
 
         project_names = [m.project_name for m in memberships if m.project_name not in personal_projects]
+        cutoffs_by_project = {
+            name: await project_spend_tracking_repository.get_project_reset_cutoffs(session, name)
+            for name in project_names
+        }
+        spend_map = _drop_rows_before_cutoff(spend_map, lambda key: cutoffs_by_project.get(key[0], {}).get(key[1]))
         allocation_map = {(a.project_name, a.budget_category): a for a in allocations}
         return columns, _build_spend_rows(project_names, "project_name", spend_map, allocation_map)
 
@@ -210,6 +234,8 @@ class MemberSpendService:
             return columns, []
 
         spend_map = await project_spend_tracking_repository.get_latest_member_rows_for_project(session, project_name)
+        cutoffs = await project_spend_tracking_repository.get_project_reset_cutoffs(session, project_name)
+        spend_map = _drop_rows_before_cutoff(spend_map, lambda key: cutoffs.get(key[1]))
         allocations = await project_member_budget_assignment_repository.get_active_by_project(session, project_name)
 
         user_ids = [m.user_id for m in members]

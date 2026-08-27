@@ -1058,3 +1058,53 @@ class TestSchedulerJobRegistration:
 
 def test_spend_tracking_lock_id_value():
     assert SPEND_TRACKING_LOCK_ID == 987654322
+
+
+class TestIsResetTransition:
+    """The predicate that separates 'nothing changed' from 'the counter dropped'."""
+
+    @staticmethod
+    def _prev(period_spend: str):
+        return SimpleNamespace(
+            budget_period_spend=Decimal(period_spend),
+            spend_date=datetime(2026, 7, 31, tzinfo=timezone.utc),
+            project_name="epm-aisa",
+            budget_id="epm-aisa-platform-008b4886",
+        )
+
+    def test_drop_to_zero_is_a_reset_transition(self):
+        got = LiteLLMSpendCollectorService.is_reset_transition(
+            self._prev("3221.459246160"), None, Decimal("0"), datetime(2026, 8, 26, tzinfo=timezone.utc)
+        )
+        assert got is True
+
+    def test_partial_drop_is_a_reset_transition(self):
+        got = LiteLLMSpendCollectorService.is_reset_transition(
+            self._prev("3221.459246160"), None, Decimal("38.132188600"), datetime(2026, 8, 26, tzinfo=timezone.utc)
+        )
+        assert got is True
+
+    def test_unchanged_spend_is_not_a_transition(self):
+        got = LiteLLMSpendCollectorService.is_reset_transition(
+            self._prev("3221.46"), None, Decimal("3221.46"), datetime(2026, 8, 26, tzinfo=timezone.utc)
+        )
+        assert got is False
+
+    def test_increase_is_not_a_transition(self):
+        got = LiteLLMSpendCollectorService.is_reset_transition(
+            self._prev("3221.46"), None, Decimal("3300.00"), datetime(2026, 8, 26, tzinfo=timezone.utc)
+        )
+        assert got is False
+
+    def test_no_previous_row_is_not_a_transition(self):
+        got = LiteLLMSpendCollectorService.is_reset_transition(
+            None, None, Decimal("0"), datetime(2026, 8, 26, tzinfo=timezone.utc)
+        )
+        assert got is False
+
+    def test_previous_zero_is_not_a_transition(self):
+        """Zero to zero is 'still nothing', not a reset worth recording."""
+        got = LiteLLMSpendCollectorService.is_reset_transition(
+            self._prev("0"), None, Decimal("0"), datetime(2026, 8, 26, tzinfo=timezone.utc)
+        )
+        assert got is False

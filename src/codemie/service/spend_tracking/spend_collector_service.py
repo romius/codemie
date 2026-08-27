@@ -200,7 +200,9 @@ class LiteLLMSpendCollectorService:
                 effective_cumulative = self._quantize_spend(
                     snapshot.cumulative_spend if snapshot.cumulative_spend is not None else cumulative_spend
                 )
-                if daily_spend == Decimal("0"):
+                if daily_spend == Decimal("0") and not self.is_reset_transition(
+                    prev_row, budget, self._quantize_spend(snapshot.spend), target_snapshot_at
+                ):
                     logger.debug(
                         f"Project '{snapshot.project_name}' budget_id={snapshot.budget_id!r} "
                         f"has zero delta; skipping snapshot"
@@ -493,6 +495,29 @@ class LiteLLMSpendCollectorService:
         if m:
             return timedelta(days=int(m.group(1)))
         return None
+
+    @staticmethod
+    def is_reset_transition(
+        prev_row: ProjectSpendTracking | None,
+        budget: Budget | None,
+        fresh_spend: Decimal,
+        snapshot_at: datetime,
+    ) -> bool:
+        """Return True when the provider counter dropped from a non-zero value.
+
+        Separates the two cases that both compute a zero delta: spend that has not moved,
+        which is correctly skipped, and a counter that reset, which must be recorded or the
+        previous value stays newest and reads as current spend.
+        """
+        if prev_row is None:
+            return False
+        prev_period = LiteLLMSpendCollectorService._quantize_spend(prev_row.budget_period_spend)
+        if prev_period <= Decimal("0"):
+            return False
+        return (
+            LiteLLMSpendCollectorService._did_budget_reset(prev_row, budget, snapshot_at)
+            or LiteLLMSpendCollectorService._quantize_spend(fresh_spend) < prev_period
+        )
 
     @staticmethod
     def _did_budget_reset(

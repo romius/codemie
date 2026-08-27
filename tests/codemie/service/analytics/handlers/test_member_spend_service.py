@@ -285,6 +285,11 @@ class TestGetUserProjectSpend:
                 new=AsyncMock(return_value={}),
             ),
             patch(
+                "codemie.repository.project_spend_tracking_repository.ProjectSpendTrackingRepository."
+                "get_project_reset_cutoffs",
+                new=AsyncMock(return_value={}),
+            ),
+            patch(
                 "codemie.repository.project_budget_repository.project_member_budget_assignment_repository."
                 "get_active_by_user",
                 new=AsyncMock(return_value=[]),
@@ -324,6 +329,11 @@ class TestGetUserProjectSpend:
                 "codemie.repository.project_spend_tracking_repository.ProjectSpendTrackingRepository."
                 "get_latest_member_rows_for_user",
                 new=AsyncMock(return_value=spend),
+            ),
+            patch(
+                "codemie.repository.project_spend_tracking_repository.ProjectSpendTrackingRepository."
+                "get_project_reset_cutoffs",
+                new=AsyncMock(return_value={}),
             ),
             patch(
                 "codemie.repository.project_budget_repository.project_member_budget_assignment_repository."
@@ -378,6 +388,11 @@ class TestGetProjectMemberSpend:
             patch(
                 "codemie.repository.project_spend_tracking_repository.ProjectSpendTrackingRepository."
                 "get_latest_member_rows_for_project",
+                new=AsyncMock(return_value={}),
+            ),
+            patch(
+                "codemie.repository.project_spend_tracking_repository.ProjectSpendTrackingRepository."
+                "get_project_reset_cutoffs",
                 new=AsyncMock(return_value={}),
             ),
             patch(
@@ -616,6 +631,13 @@ class TestPersonalProjectExclusion:
         )
         stack.enter_context(
             patch(
+                "codemie.repository.project_spend_tracking_repository.ProjectSpendTrackingRepository."
+                "get_project_reset_cutoffs",
+                new=AsyncMock(return_value={}),
+            )
+        )
+        stack.enter_context(
+            patch(
                 "codemie.repository.project_budget_repository.project_member_budget_assignment_repository."
                 "get_active_by_user",
                 new=AsyncMock(return_value=[]),
@@ -681,3 +703,92 @@ class TestPersonalProjectExclusion:
             _, rows = await service.get_user_project_spend(MagicMock(), "u-1")
 
         assert [r["project_name"] for r in rows] == ["ghost"]
+
+
+class TestDropRowsBeforeCutoff:
+    """Rows on or before the category's last pre-reset observation are ignored."""
+
+    @staticmethod
+    def _rows():
+        return {
+            ("u-stale", "platform"): _member_row(
+                "epm-aisa", "platform", "u-stale", "68.39", datetime(2026, 7, 14, tzinfo=timezone.utc)
+            ),
+            ("u-live", "platform"): _member_row(
+                "epm-aisa", "platform", "u-live", "94.66", datetime(2026, 8, 24, tzinfo=timezone.utc)
+            ),
+            ("u-stale", "cli"): _member_row(
+                "epm-aisa", "cli", "u-stale", "5.00", datetime(2026, 7, 14, tzinfo=timezone.utc)
+            ),
+        }
+
+    def test_drops_rows_on_or_before_the_cutoff(self):
+        from codemie.service.analytics.handlers.member_spend_service import _drop_rows_before_cutoff
+
+        cutoffs = {"platform": datetime(2026, 7, 31, 23, tzinfo=timezone.utc)}
+        kept = _drop_rows_before_cutoff(self._rows(), lambda key: cutoffs.get(key[1]))
+        assert set(kept) == {("u-live", "platform"), ("u-stale", "cli")}
+
+    def test_row_exactly_at_the_cutoff_is_dropped(self):
+        from codemie.service.analytics.handlers.member_spend_service import _drop_rows_before_cutoff
+
+        at = datetime(2026, 7, 31, 23, tzinfo=timezone.utc)
+        rows = {("u-1", "platform"): _member_row("epm-aisa", "platform", "u-1", "1.00", at)}
+        assert _drop_rows_before_cutoff(rows, lambda key: {"platform": at}.get(key[1])) == {}
+
+    def test_category_without_a_cutoff_keeps_everything(self):
+        from codemie.service.analytics.handlers.member_spend_service import _drop_rows_before_cutoff
+
+        kept = _drop_rows_before_cutoff(self._rows(), lambda key: None)
+        assert set(kept) == set(self._rows())
+
+    def test_naive_spend_date_is_treated_as_utc(self):
+        from codemie.service.analytics.handlers.member_spend_service import _drop_rows_before_cutoff
+
+        rows = {("u-1", "platform"): _member_row("epm-aisa", "platform", "u-1", "1.00", datetime(2026, 7, 14))}
+        cutoffs = {"platform": datetime(2026, 7, 31, 23, tzinfo=timezone.utc)}
+        assert _drop_rows_before_cutoff(rows, lambda key: cutoffs.get(key[1])) == {}
+
+
+class TestProjectResetCutoffInReadPath:
+    """A stale pre-reset row must render as 0 on the project member table."""
+
+    @pytest.mark.asyncio
+    async def test_project_member_spend_zeroes_a_pre_reset_row(self):
+        service = MemberSpendService()
+        session = MagicMock()
+        members = [SimpleNamespace(user_id="u-1", project_name="epm-aisa")]
+        stale = _member_row("epm-aisa", "platform", "u-1", "68.39", datetime(2026, 7, 14, tzinfo=timezone.utc))
+        allocations = [
+            SimpleNamespace(
+                project_name="epm-aisa", budget_category="platform", user_id="u-1", allocated_max_budget=100.0
+            )
+        ]
+        cutoffs = {"platform": datetime(2026, 7, 31, 23, tzinfo=timezone.utc)}
+
+        with (
+            patch.object(service, "_ensure_fresh", new=AsyncMock()),
+            patch(
+                "codemie.repository.user_project_repository.user_project_repository.aget_by_project_name",
+                new=AsyncMock(return_value=members),
+            ),
+            patch(
+                "codemie.repository.project_spend_tracking_repository.ProjectSpendTrackingRepository."
+                "get_latest_member_rows_for_project",
+                new=AsyncMock(return_value={("u-1", "platform"): stale}),
+            ),
+            patch(
+                "codemie.repository.project_spend_tracking_repository.ProjectSpendTrackingRepository."
+                "get_project_reset_cutoffs",
+                new=AsyncMock(return_value=cutoffs),
+            ),
+            patch(
+                "codemie.repository.project_budget_repository.project_member_budget_assignment_repository."
+                "get_active_by_project",
+                new=AsyncMock(return_value=allocations),
+            ),
+        ):
+            _, rows = await service.get_project_member_spend(session, "epm-aisa")
+
+        assert rows[0]["platform"] == 0
+        assert rows[0]["platform_limit"] == 100.0

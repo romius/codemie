@@ -239,14 +239,7 @@ def _is_reset_transition(prev_row: Any, budget: Any, fresh_spend: Decimal, now: 
     """Return True when fresh_spend represents a reset from a previously non-zero period."""
     from codemie.service.spend_tracking.spend_collector_service import LiteLLMSpendCollectorService
 
-    if prev_row is None:
-        return False
-    had_prior = LiteLLMSpendCollectorService._quantize_spend(prev_row.budget_period_spend) > Decimal("0")
-    if not had_prior:
-        return False
-    return LiteLLMSpendCollectorService._did_budget_reset(
-        prev_row, budget, now
-    ) or fresh_spend < LiteLLMSpendCollectorService._quantize_spend(prev_row.budget_period_spend)
+    return LiteLLMSpendCollectorService.is_reset_transition(prev_row, budget, fresh_spend, now)
 
 
 def _collect_spend_rows(

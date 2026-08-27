@@ -14,7 +14,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 from sqlalchemy import func, text, update
 from sqlalchemy.dialects.postgresql import insert
@@ -23,6 +24,7 @@ from sqlmodel import select
 
 from codemie.configs import config, logger
 from codemie.service.spend_tracking.spend_models import ProjectSpendTracking
+from codemie.service.spend_tracking.spend_utils import quantize_spend
 
 
 _EXCLUDED_SUBJECT_TYPES_DEFAULT: frozenset[str] = frozenset({"project_budget"})
@@ -982,6 +984,41 @@ class ProjectSpendTrackingRepository:
 
         result = await session.execute(stmt)
         return list(result.scalars().all())
+
+    async def get_project_reset_cutoffs(
+        self,
+        session: AsyncSession,
+        project_name: str,
+    ) -> dict[str, datetime]:
+        """Return, per budget_category, the spend_date of the last pre-reset project_budget row.
+
+        Scans only the last 90 days. Categories whose budget_period_spend never decreased
+        inside that window are absent from the result.
+        """
+        # 90 days holds at least two monthly budget periods, so the most recent reset stays in range.
+        window_start = datetime.now(timezone.utc) - timedelta(days=90)
+        stmt = (
+            select(
+                ProjectSpendTracking.budget_category,
+                ProjectSpendTracking.budget_period_spend,
+                ProjectSpendTracking.spend_date,
+            )
+            .where(ProjectSpendTracking.project_name == project_name)
+            .where(ProjectSpendTracking.spend_subject_type == "project_budget")
+            .where(ProjectSpendTracking.spend_date >= window_start)
+            .order_by(ProjectSpendTracking.budget_category, ProjectSpendTracking.spend_date)
+        )
+        result = await session.execute(stmt)
+
+        cutoffs: dict[str, datetime] = {}
+        previous: dict[str, tuple[Decimal, datetime]] = {}
+        for row in result.all():
+            category = row.budget_category
+            current = quantize_spend(row.budget_period_spend)
+            if category in previous and current < previous[category][0]:
+                cutoffs[category] = previous[category][1]
+            previous[category] = (current, row.spend_date)
+        return cutoffs
 
 
 project_spend_tracking_repository = ProjectSpendTrackingRepository()

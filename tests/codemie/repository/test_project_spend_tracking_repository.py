@@ -621,3 +621,85 @@ async def test_get_latest_member_rows_for_project_filters_subject_type_in_both_q
     assert (
         "max(project_spend_tracking.created_at)" in sql.lower()
     ), f"Expected MAX(created_at) tiebreaker so concurrent refreshes resolve deterministically, got SQL:\n{sql}"
+
+
+class TestGetProjectResetCutoffs:
+    """The last pre-reset project_budget observation per category."""
+
+    @staticmethod
+    def _row(category: str, period_spend: str, spend_date: datetime):
+        return SimpleNamespace(
+            budget_category=category,
+            budget_period_spend=Decimal(period_spend),
+            spend_date=spend_date,
+        )
+
+    @staticmethod
+    def _session(rows):
+        result = MagicMock()
+        result.all.return_value = rows
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=result)
+        return session
+
+    @pytest.mark.asyncio
+    async def test_cutoff_is_the_row_before_the_last_drop(self):
+        repo = ProjectSpendTrackingRepository()
+        rows = [
+            self._row("platform", "3115.26", datetime(2026, 7, 29, 23, tzinfo=timezone.utc)),
+            self._row("platform", "3221.46", datetime(2026, 7, 31, 23, tzinfo=timezone.utc)),
+            self._row("platform", "38.13", datetime(2026, 8, 2, 23, tzinfo=timezone.utc)),
+            self._row("platform", "161.86", datetime(2026, 8, 3, 23, tzinfo=timezone.utc)),
+        ]
+        got = await repo.get_project_reset_cutoffs(self._session(rows), "epm-aisa")
+        assert got == {"platform": datetime(2026, 7, 31, 23, tzinfo=timezone.utc)}
+
+    @pytest.mark.asyncio
+    async def test_uses_the_most_recent_drop_when_there_are_several(self):
+        repo = ProjectSpendTrackingRepository()
+        rows = [
+            self._row("platform", "3419.71", datetime(2026, 6, 30, 23, tzinfo=timezone.utc)),
+            self._row("platform", "135.57", datetime(2026, 7, 1, 23, tzinfo=timezone.utc)),
+            self._row("platform", "3221.46", datetime(2026, 7, 31, 23, tzinfo=timezone.utc)),
+            self._row("platform", "38.13", datetime(2026, 8, 2, 23, tzinfo=timezone.utc)),
+        ]
+        got = await repo.get_project_reset_cutoffs(self._session(rows), "epm-aisa")
+        assert got == {"platform": datetime(2026, 7, 31, 23, tzinfo=timezone.utc)}
+
+    @pytest.mark.asyncio
+    async def test_categories_are_independent(self):
+        repo = ProjectSpendTrackingRepository()
+        rows = [
+            self._row("platform", "3221.46", datetime(2026, 7, 31, 23, tzinfo=timezone.utc)),
+            self._row("platform", "38.13", datetime(2026, 8, 2, 23, tzinfo=timezone.utc)),
+            self._row("cli", "10.00", datetime(2026, 7, 31, 23, tzinfo=timezone.utc)),
+            self._row("cli", "12.00", datetime(2026, 8, 2, 23, tzinfo=timezone.utc)),
+        ]
+        got = await repo.get_project_reset_cutoffs(self._session(rows), "epm-aisa")
+        assert got == {"platform": datetime(2026, 7, 31, 23, tzinfo=timezone.utc)}
+
+    @pytest.mark.asyncio
+    async def test_no_drop_means_no_cutoff(self):
+        repo = ProjectSpendTrackingRepository()
+        rows = [
+            self._row("platform", "100.00", datetime(2026, 8, 1, 23, tzinfo=timezone.utc)),
+            self._row("platform", "150.00", datetime(2026, 8, 2, 23, tzinfo=timezone.utc)),
+        ]
+        got = await repo.get_project_reset_cutoffs(self._session(rows), "epm-aisa")
+        assert got == {}
+
+    @pytest.mark.asyncio
+    async def test_no_rows_means_no_cutoff(self):
+        repo = ProjectSpendTrackingRepository()
+        got = await repo.get_project_reset_cutoffs(self._session([]), "epm-aisa")
+        assert got == {}
+
+    @pytest.mark.asyncio
+    async def test_query_filters_to_project_budget_rows_of_the_project(self):
+        repo = ProjectSpendTrackingRepository()
+        session = self._session([])
+        await repo.get_project_reset_cutoffs(session, "epm-aisa")
+        sql = _compile_sql(session.execute.await_args.args[0])
+        assert "project_budget" in sql
+        assert "epm-aisa" in sql
+        assert "ORDER BY" in sql.upper()
