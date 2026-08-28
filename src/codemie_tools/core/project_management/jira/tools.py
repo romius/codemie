@@ -117,20 +117,63 @@ class GenericJiraIssueTool(CodeMieTool, FileToolMixin):
 
     def __init__(self, config: JiraConfig):
         super().__init__(config=config)
-        if self.config.cloud:
+        # Cloud integrations (OAuth 3LO or cloud PAT) use the Jira REST v3 JQL search endpoint and
+        # the v3 tool description. The Jira client is built lazily (see _ensure_client) so that
+        # constructing the tool during assembly does NOT resolve a per-user OAuth token — otherwise
+        # an unconnected user would trip the connect gate at build time before the aggregate gate can
+        # decide, and only for Jira (GitLab/Confluence already build their clients lazily).
+        if self.config.auth_type == "oauth" or self.config.cloud:
             self.issue_search_pattern = r"/rest/api/3/search/jql"
             self.description = get_jira_tool_description(api_version=3)
 
-        self.jira = Jira(
+    def _create_client(self) -> Jira:
+        # OAuth-backed (Atlassian 3LO) settings authenticate with a per-user Bearer token against
+        # https://api.atlassian.com/ex/jira/{cloudId}; PAT settings keep the existing basic auth.
+        if self.config.auth_type == "oauth":
+            access_token, base_url = self._resolve_oauth()
+            jira = Jira(url=base_url, token=access_token, cloud=True)
+            validate_jira_creds(jira)
+            return jira
+
+        jira = Jira(
             url=self.config.url,
             username=self.config.username if self.config.username else None,
             token=self.config.token if not self.config.cloud else None,
             password=self.config.token if self.config.cloud else None,
             cloud=self.config.cloud,
         )
-        validate_jira_creds(self.jira)
+        validate_jira_creds(jira)
+        return jira
+
+    def _ensure_client(self) -> Jira:
+        """Build the Jira client on first use so per-user OAuth token resolution (and its connect
+        gate) happens lazily at execution time, not at tool construction."""
+        if self.jira is None:
+            self.jira = self._create_client()
+        return self.jira
+
+    def _resolve_oauth(self) -> tuple[str, str]:
+        """Return (access_token, api_base_url) for an OAuth-backed Jira integration.
+
+        Consults the Jira OAuth token manager so a rotated/refreshed token is picked up, and builds
+        the Atlassian Cloud base URL from the acting user's cloud_id.
+        """
+        from langchain_core.tools import ToolException
+
+        if not self.config.integration_id:
+            raise ToolException("Jira OAuth configuration is incomplete: 'integration_id' is required.")
+        from codemie.service.jira_oauth.constants import jira_api_base_url
+        from codemie.service.jira_oauth.token_manager import JiraOAuthTokenManager
+
+        manager = JiraOAuthTokenManager()
+        access_token = manager.get_valid_access_token(self.config.integration_id, self.config.acting_user_id)
+        cloud_id = self.config.cloud_id or manager.get_cloud_id(self.config.integration_id, self.config.acting_user_id)
+        if not cloud_id:
+            raise ToolException("Jira OAuth: no Atlassian site (cloud_id) is available for this account.")
+        return access_token, jira_api_base_url(cloud_id)
 
     def execute(self, method: str, relative_url: str, params: Optional[str] = "", *args):
+        self._ensure_client()
         if self._is_attachment_operation(relative_url):
             all_files = self._resolve_files()
             if all_files:
@@ -180,6 +223,7 @@ class GenericJiraIssueTool(CodeMieTool, FileToolMixin):
         return response.text, response
 
     def _healthcheck(self):
+        self._ensure_client()
         response = self.jira.request(
             method="GET",
             path=JIRA_TEST_URL,

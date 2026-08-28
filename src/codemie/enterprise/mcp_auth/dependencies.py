@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import sys as _sys
 import re
+import threading as _threading
 from collections.abc import Callable
 from contextlib import suppress
 from importlib import import_module  # noqa: F401  (kept for test patches)
@@ -452,6 +453,55 @@ def _normalize_tms_environment(environment: str) -> str:
     }.get(normalized_environment, normalized_environment)
 
 
+_standalone_tms_build_lock = _threading.Lock()
+
+
+def _close_standalone_redis_client() -> None:
+    """Release a Redis client created for a standalone vault before MCP auth replaces it."""
+    standalone_client = _self._redis_client
+    if standalone_client is None:
+        return
+    try:
+        standalone_client.close()
+    except Exception as exc:
+        logger.warning(f"Failed to close standalone token vault Redis client: {exc}")
+    _self._redis_client = None
+
+
+def get_token_management_system() -> Any:
+    """Return the process-wide Token Management System.
+
+    Single entry point to the token vault for every caller — MCP auth and tool OAuth alike.
+    Prefers the instance built during MCP auth initialization; when MCP auth itself is disabled
+    but another feature (tool OAuth) needs the vault, a standalone instance is built once and
+    cached on module state so both paths still share one encryption, refresh-lock, and audit
+    configuration.
+    """
+    if _self._tms is not None:
+        return _self._tms
+
+    if not HAS_MCP_AUTH:
+        raise RuntimeError("Enterprise package codemie-enterprise is unavailable; the token vault cannot be used.")
+
+    with _standalone_tms_build_lock:
+        if _self._tms is not None:
+            return _self._tms
+        from codemie_enterprise.mcp_auth import ContextVarTMSAuditContextProvider
+
+        if _self._tms_audit_context_provider is None:
+            _self._tms_audit_context_provider = ContextVarTMSAuditContextProvider()
+        if _self._redis_client is None:
+            _self._redis_client = create_redis_client()
+        _self._tms = _build_token_management_system(_self._redis_client, _self._tms_audit_context_provider)
+        logger.info("Initialized standalone Token Management System (MCP auth not initialized)")
+    return _self._tms
+
+
+def tms_audit_context(source: str, correlation_id: str | None = None):
+    """Public alias of the TMS audit context for non-MCP callers."""
+    return _tms_audit_context(source, correlation_id)
+
+
 def _build_token_management_system(redis_client: Any, audit_context_provider: Any) -> Any:
     from codemie.clients.postgres import PostgresClient
     from codemie.configs import config
@@ -656,6 +706,7 @@ def initialize_mcp_auth() -> None:
 
     _self._bridge_loop = bridge_loop
     _self._bridge_queue = bridge_queue
+    _close_standalone_redis_client()
     _self._redis_client = redis_client
     _self._mcp_auth_service = mcp_auth_service
     _self._mcp_auth_trust_policy_service = trust_policy_service
@@ -671,9 +722,11 @@ def initialize_mcp_auth() -> None:
 
     from codemie.service.security.token_exchange_service import TokenExchangeService
     from codemie.service.security.oidc_token_exchange_service import OIDCTokenExchangeService
+    from codemie.service.oauth.token_port import ToolOAuthTokenPort
 
     TokenExchangeService.set_tms(token_management_system, audit_context_provider)
     OIDCTokenExchangeService.set_tms(token_management_system, audit_context_provider)
+    ToolOAuthTokenPort.set_tms(token_management_system, audit_context_provider)
 
     _self._initialized = True
 
@@ -733,9 +786,11 @@ async def shutdown_mcp_auth() -> None:
 
         from codemie.service.security.token_exchange_service import TokenExchangeService
         from codemie.service.security.oidc_token_exchange_service import OIDCTokenExchangeService
+        from codemie.service.oauth.token_port import ToolOAuthTokenPort
 
         TokenExchangeService.clear_tms()
         OIDCTokenExchangeService.clear_tms()
+        ToolOAuthTokenPort.clear_tms()
 
         _self._registered_resolver_types.clear()
 

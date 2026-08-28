@@ -43,7 +43,15 @@ from codemie.enterprise.mcp_auth.router import get_mcp_auth_router, get_cimd_rou
 from codemie.enterprise.mcp_auth.dependencies import initialize_mcp_auth, shutdown_mcp_auth
 from codemie.configs.logger import set_logging_info, logger
 from codemie.core.constants import APP_DESCRIPTION
-from codemie.core.exceptions import ExtendedHTTPException, MCPAuthenticationRequiredException, ValidationException
+from codemie.core.exceptions import (
+    ConfluenceAuthRequiredException,
+    ExtendedHTTPException,
+    GitLabAuthRequiredException,
+    JiraAuthRequiredException,
+    MCPAuthenticationRequiredException,
+    OAuthConnectRequiredException,
+    ValidationException,
+)
 from codemie.service.security.token_providers.base_provider import BrokerAuthRequiredException
 from codemie.rest_api.routers import budget_router, project_budget_router
 from codemie.rest_api.routers import (
@@ -96,6 +104,14 @@ from codemie.rest_api.routers import (
 )
 from codemie.rest_api.routers import sharepoint_oauth
 from codemie.rest_api.routers import google_oauth
+from codemie.rest_api.routers import gitlab_oauth
+from codemie.rest_api.routers import jira_oauth
+from codemie.rest_api.routers import confluence_oauth
+from codemie.service.oauth_security import (
+    assert_oauth_state_signing_secret_configured,
+    assert_token_vault_available,
+    warn_insecure_oauth_storage_for_enabled_providers,
+)
 
 # User management routers (EPMCDME-10160)
 from codemie.rest_api.routers import local_auth_router
@@ -729,6 +745,9 @@ async def lifespan(app: FastAPI):
     # Initialize optional features
     _initialize_optional_features()
     _check_sharepoint_pkce_redis()
+    assert_oauth_state_signing_secret_configured()
+    assert_token_vault_available()
+    warn_insecure_oauth_storage_for_enabled_providers()
 
     # Start background tasks
     tasks = []
@@ -878,6 +897,9 @@ app.include_router(project_budget_router.router)
 app.include_router(project_budget_router.group_router)
 app.include_router(sharepoint_oauth.router)
 app.include_router(google_oauth.router)
+app.include_router(gitlab_oauth.router)
+app.include_router(jira_oauth.router)
+app.include_router(confluence_oauth.router)
 app.include_router(user_preferences_router.router)
 
 # User management routers (EPMCDME-10160)
@@ -1037,6 +1059,42 @@ async def broker_auth_required_handler(request: Request, exc: BrokerAuthRequired
 @app.exception_handler(MCPAuthenticationRequiredException)
 async def mcp_auth_required_handler(request: Request, exc: MCPAuthenticationRequiredException) -> JSONResponse:
     logger.warning(f"MCP authentication required: {exc.payload}")
+    return JSONResponse(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        content=exc.payload,
+    )
+
+
+@app.exception_handler(GitLabAuthRequiredException)
+async def gitlab_auth_required_handler(request: Request, exc: GitLabAuthRequiredException) -> JSONResponse:
+    logger.warning(f"GitLab authentication required: {exc.payload}")
+    return JSONResponse(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        content=exc.payload,
+    )
+
+
+@app.exception_handler(JiraAuthRequiredException)
+async def jira_auth_required_handler(request: Request, exc: JiraAuthRequiredException) -> JSONResponse:
+    logger.warning(f"Jira authentication required: {exc.payload}")
+    return JSONResponse(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        content=exc.payload,
+    )
+
+
+@app.exception_handler(ConfluenceAuthRequiredException)
+async def confluence_auth_required_handler(request: Request, exc: ConfluenceAuthRequiredException) -> JSONResponse:
+    logger.warning(f"Confluence authentication required: {exc.payload}")
+    return JSONResponse(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        content=exc.payload,
+    )
+
+
+@app.exception_handler(OAuthConnectRequiredException)
+async def oauth_connect_required_handler(request: Request, exc: OAuthConnectRequiredException) -> JSONResponse:
+    logger.warning(f"OAuth connect required (aggregate): {exc.payload}")
     return JSONResponse(
         status_code=status.HTTP_401_UNAUTHORIZED,
         content=exc.payload,

@@ -52,6 +52,17 @@ class ConfluenceConfig(CodeMieToolConfig, FileConfigMixin):
         description="Is this a Confluence Cloud instance? Toggle on if using Atlassian Cloud",
     )
 
+    # OAuth 2.0 (Atlassian 3LO) — populated when this config is loaded from a CONFLUENCE_OAUTH
+    # Settings row. The tool consults the Confluence OAuth token manager per request.
+    auth_type: str = Field(default="pat", description="'pat' (default) or 'oauth' for Atlassian 3LO")
+    integration_id: str = Field(default="", description="Setting row id — used to resolve OAuth tokens")
+    acting_user_id: str = Field(
+        default="", description="Codemie user id whose per-user OAuth token to use", exclude=True
+    )
+    cloud_id: str = Field(
+        default="", description="Atlassian cloud id for https://api.atlassian.com/ex/confluence/{cloud_id}"
+    )
+
     @model_validator(mode='before')
     def validate_config(cls, values: Dict[str, Any]) -> Dict[str, Any]:
         if "is_cloud" in values:

@@ -101,6 +101,37 @@ class GitlabTool(CodeMieTool):
         else:
             return requests.request(method=method, url=url, headers=headers, data=method_arguments)
 
+    def _validate_config(self) -> None:
+        """Require `token` for PAT auth, but waive it for OAuth-backed configs.
+
+        OAuth configs (`auth_type == "oauth"`) get their access token from the token
+        manager at request time, so an empty `token` field is expected there; all other
+        required-at-runtime fields (e.g. `url`) are still enforced.
+        """
+        if self.config.auth_type == "oauth":
+            missing = [field for field in self._get_missing_required_fields() if field != "token"]
+            if missing:
+                raise ValueError(f"Tool config is not set. Please provide {', '.join(missing)} before using the tool.")
+            return
+        super()._validate_config()
+
+    def _resolve_access_token(self) -> str:
+        """Return a freshly minted access token.
+
+        For OAuth-backed settings this consults the token manager on every call so
+        rotated refresh tokens (in-process or from another worker) are picked up
+        transparently. PAT-backed settings just return the stored token.
+        """
+        if self.config.auth_type == "oauth":
+            if not self.config.integration_id:
+                raise ToolException("GitLab OAuth configuration is incomplete: 'integration_id' is required.")
+            from codemie.service.gitlab_oauth.token_manager import GitLabOAuthTokenManager
+
+            return GitLabOAuthTokenManager().get_valid_access_token(
+                self.config.integration_id, self.config.acting_user_id
+            )
+        return self.config.token
+
     def execute(self, query: Union[str, dict[str, Any]], *args) -> str:
         """
         Execute GitLab API request with optional custom headers.
@@ -121,13 +152,29 @@ class GitlabTool(CodeMieTool):
         except json.JSONDecodeError as e:
             raise ValueError(f"Query must be a JSON string: {e}")
 
+        # Some smaller models double-wrap the payload as {"query": {"method": ..., "url": ...}}
+        # despite the schema showing a flat shape. Unwrap once so the request still succeeds
+        # instead of failing deep inside `requests` with an opaque AttributeError.
+        if isinstance(query, dict) and 'method' not in query and isinstance(query.get('query'), dict):
+            query = query['query']
+
         try:
             method = query.get('method')
+            if not method:
+                raise ToolException(
+                    "GitLab tool: 'method' is required. Provide a payload of the shape "
+                    "{\"method\": \"GET|POST|PUT|DELETE|PATCH\", \"url\": \"/api/v4/...\", \"method_arguments\": {}}."
+                )
+            if not query.get('url'):
+                raise ToolException(
+                    "GitLab tool: 'url' is required. Example: {\"method\": \"GET\", \"url\": \"/api/v4/user\", \"method_arguments\": {}}."
+                )
             url = f"{self.config.url}/{query.get('url')}"
             method_arguments = query.get("method_arguments", {})
 
             custom_headers = query.get('custom_headers')
-            headers = _build_headers(GITLAB_DEFAULT_HEADERS, self.config.token, custom_headers)
+            access_token = self._resolve_access_token()
+            headers = _build_headers(GITLAB_DEFAULT_HEADERS, access_token, custom_headers)
             response = self._make_request(method, url, headers, method_arguments)
 
             response_string = f"HTTP: {method} {url} -> {response.status_code} {response.reason} {response.text}"

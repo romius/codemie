@@ -39,6 +39,9 @@ def tool(jira_config: JiraConfig) -> GenericJiraIssueTool:
         mock_cls.return_value = mock_jira
         with patch("codemie_tools.core.project_management.jira.tools.validate_jira_creds"):
             t = GenericJiraIssueTool(config=jira_config)
+            # The Jira client is built lazily; realise it here (while Jira is mocked) so the
+            # attachment/download helpers under test have a client to call.
+            t._ensure_client()
     return t
 
 

@@ -165,7 +165,9 @@ def update_project_setting(request: SettingRequest, setting_id: str, user: User 
 
         if not Ability(user).can(Action.WRITE, setting_ability):
             raise_access_denied("write")
-        SettingsService.update_settings(credential_id=setting_id, request=request, settings_type=SettingType.PROJECT)
+        SettingsService.update_settings(
+            credential_id=setting_id, request=request, settings_type=SettingType.PROJECT, user_id=user.id
+        )
     except ExtendedHTTPException:
         raise
     except Exception as e:
@@ -199,7 +201,9 @@ def delete_project_setting(setting_id: str, user: User = Depends(authenticate)):
 
     try:
         BedrockOrchestratorService.delete_all_entities(setting_id)
-        Settings.delete_setting(setting_id)
+        # Route through the service (not Settings.delete_setting directly) so per-user OAuth token
+        # rows are revoked/cleaned up for project OAuth integrations too, matching the user path.
+        SettingsService.delete_setting(credential_id=setting_id, user_id=user.id)
     except KeyError as e:
         raise ExtendedHTTPException(
             code=status.HTTP_404_NOT_FOUND,

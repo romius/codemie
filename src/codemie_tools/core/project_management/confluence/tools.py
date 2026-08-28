@@ -91,6 +91,14 @@ class GenericConfluenceTool(CodeMieTool, FileToolMixin):
     page_action_prefix: str = "/rest/api/content"
 
     def _create_client(self) -> Confluence:
+        # OAuth-backed (Atlassian 3LO) settings authenticate with a per-user Bearer token against
+        # https://api.atlassian.com/ex/confluence/{cloudId}; PAT settings keep the existing basic auth.
+        if self.config.auth_type == "oauth":
+            access_token, base_url = self._resolve_oauth()
+            confluence = Confluence(url=base_url, token=access_token, cloud=True)
+            validate_creds(confluence)
+            return confluence
+
         confluence = Confluence(
             url=self.config.url,
             username=self.config.username if self.config.username else None,
@@ -100,6 +108,22 @@ class GenericConfluenceTool(CodeMieTool, FileToolMixin):
         )
         validate_creds(confluence)
         return confluence
+
+    def _resolve_oauth(self) -> tuple[str, str]:
+        """Return (access_token, api_base_url) for an OAuth-backed Confluence integration."""
+        from langchain_core.tools import ToolException
+
+        if not self.config.integration_id:
+            raise ToolException("Confluence OAuth configuration is incomplete: 'integration_id' is required.")
+        from codemie.service.confluence_oauth.constants import confluence_api_base_url
+        from codemie.service.confluence_oauth.token_manager import ConfluenceOAuthTokenManager
+
+        manager = ConfluenceOAuthTokenManager()
+        access_token = manager.get_valid_access_token(self.config.integration_id, self.config.acting_user_id)
+        cloud_id = self.config.cloud_id or manager.get_cloud_id(self.config.integration_id, self.config.acting_user_id)
+        if not cloud_id:
+            raise ToolException("Confluence OAuth: no Atlassian site (cloud_id) is available for this account.")
+        return access_token, confluence_api_base_url(cloud_id)
 
     def execute(
         self,

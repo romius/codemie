@@ -481,6 +481,10 @@ class ToolkitService:
     ) -> list[BaseTool]:
         """Main method to collect all tools for an assistant.
 
+        Per-user OAuth connect gating is NOT done here: tools assemble regardless of connection
+        status, and the caller (build_agent / build_agent_for_workflow) applies one aggregate connect
+        gate after assembly via oauth_connect_gate, so all unconnected providers are prompted together.
+
         When smart_tool_selection_enabled=True (or TOOL_SELECTION_ENABLED=True):
         Uses semantic search with request.text to find relevant tools when no toolkits configured
 
@@ -780,6 +784,9 @@ class ToolkitService:
         # Use SettingsService.get_config directly (similar to ToolConfigResolver but with is_admin support)
         from codemie.service.settings.settings import SettingsService
 
+        # Per-user OAuth connect gating is not done here: tools assemble regardless of connection
+        # status, and the caller applies one aggregate connect gate after assembly (oauth_connect_gate)
+        # so all unconnected providers are surfaced together before streaming starts.
         stored_config = SettingsService.get_config(
             user_id=user_id,
             project_name=project_name,

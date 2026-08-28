@@ -32,9 +32,16 @@ if TYPE_CHECKING:
 def _has_mcp_auth_package() -> bool:
     try:
         version("codemie-enterprise")
+        return True
     except PackageNotFoundError:
-        return False
-    return True
+        # A source checkout (e.g. bind-mounted dev setup) has no installed dist
+        # metadata; fall back to import-spec detection so the package is still usable.
+        from importlib.util import find_spec
+
+        try:
+            return find_spec("codemie_enterprise.mcp_auth") is not None
+        except (ImportError, ValueError):
+            return False
 
 
 HAS_MCP_AUTH: bool = _has_mcp_auth_package()

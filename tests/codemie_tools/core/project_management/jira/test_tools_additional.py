@@ -29,9 +29,11 @@ class TestGenericJiraIssueToolAdditional:
         # Execute
         tool = GenericJiraIssueTool(config=config)
 
-        # Assert
+        # Assert: client is built lazily — construction must not validate creds
         assert tool.issue_search_pattern == r'/rest/api/\d+/search'
         assert "JIRA Tool for Official Atlassian JIRA REST API V2" in tool.description
+        mock_validate_creds.assert_not_called()
+        tool._ensure_client()
         mock_validate_creds.assert_called_once()
 
     @patch('codemie_tools.core.project_management.jira.tools.validate_jira_creds')
@@ -44,11 +46,13 @@ class TestGenericJiraIssueToolAdditional:
         # Execute
         tool = GenericJiraIssueTool(config=config)
 
-        # Assert
+        # Assert: client is built lazily — construction must not validate creds
         assert tool.issue_search_pattern == r'/rest/api/3/search/jql'
         assert tool.description == "Cloud JIRA description"
-        mock_validate_creds.assert_called_once()
         mock_get_description.assert_called_once_with(api_version=3)
+        mock_validate_creds.assert_not_called()
+        tool._ensure_client()
+        mock_validate_creds.assert_called_once()
 
     @patch('codemie_tools.core.project_management.jira.tools.validate_jira_creds')
     def test_execute_with_invalid_method(self, mock_validate_creds):

@@ -554,7 +554,8 @@ Instead, leverage the schema's data to generate deeper insights and improve tool
         # without threading through params.
         assistant._runtime_skill_contributions = skill_contributions
 
-        # Get tools for the agent
+        # Get tools for the agent. Don't gate per-user OAuth connections per-tool during assembly;
+        # the aggregate gate below prompts for all unconnected providers together (MCP-style).
         tools = ToolkitService.get_tools(
             assistant,
             request,
@@ -567,6 +568,13 @@ Instead, leverage the schema's data to generate deeper insights and improve tool
             smart_tool_selection_enabled=smart_tool_selection_enabled,
             request_headers=request_headers,
         )
+
+        # Pre-stream connect gate: if any shared per-user OAuth integration the assistant uses is not
+        # connected by the acting user, raise one aggregate gate now (before streaming starts — the
+        # only point a connect gate can surface to the UI).
+        from codemie.service.tools.oauth_connect_gate import enforce_oauth_connected
+
+        enforce_oauth_connected(tools, user.id)
 
         # Prepare system prompt with decorations and schema
         system_prompt = cls._prepare_system_prompt(assistant, user, request, thread_generator)
@@ -838,6 +846,12 @@ Instead, leverage the schema's data to generate deeper insights and improve tool
             )
         except ToolException as exc:
             raise ValueError(exc)
+
+        # Same aggregate per-user OAuth connect gate as the chat path: prompt for every unconnected
+        # provider together before the node runs (BaseNode surfaces MCPAuthenticationRequiredException).
+        from codemie.service.tools.oauth_connect_gate import enforce_oauth_connected
+
+        enforce_oauth_connected(tools, user.id)
 
         # Apply tool output token limits if specified
         if workflow_assistant.limit_tool_output_tokens:

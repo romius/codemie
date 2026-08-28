@@ -104,6 +104,9 @@ class CredentialTypes(str, Enum):
     SHAREPOINT = "SharePoint"
     XWIKI = "XWiki"
     GOOGLE_OAUTH = "GoogleOAuth"
+    GITLAB_OAUTH = "GitLabOAuth"
+    JIRA_OAUTH = "JiraOAuth"
+    CONFLUENCE_OAUTH = "ConfluenceOAuth"
 
     # Project settings
     DIAL = "DIAL"

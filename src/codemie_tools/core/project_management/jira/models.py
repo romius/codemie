@@ -52,6 +52,16 @@ class JiraConfig(CodeMieToolConfig, FileConfigMixin):
         description="Is this a Jira Cloud instance? Toggle on if using Atlassian Cloud",
     )
 
+    # OAuth 2.0 (Atlassian 3LO) — populated when this config is loaded from a JIRA_OAUTH Settings
+    # row. The tool consults the Jira OAuth token manager per request; fields here identify the
+    # setting and the acting user, and carry the Atlassian cloud_id used to build the API base URL.
+    auth_type: str = Field(default="pat", description="'pat' (default) or 'oauth' for Atlassian 3LO")
+    integration_id: str = Field(default="", description="Setting row id — used to resolve OAuth tokens")
+    acting_user_id: str = Field(
+        default="", description="Codemie user id whose per-user OAuth token to use", exclude=True
+    )
+    cloud_id: str = Field(default="", description="Atlassian cloud id for https://api.atlassian.com/ex/jira/{cloud_id}")
+
     @model_validator(mode='before')
     def validate_config(cls, values: Dict[str, Any]) -> Dict[str, Any]:
         if "password" in values:

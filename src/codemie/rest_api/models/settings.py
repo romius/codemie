@@ -46,6 +46,10 @@ class GitAuthType(str, Enum):
 
     PAT = "pat"
     GITHUB_APP = "github_app"
+    # Per-user GitLab OAuth (3LO). The access token is used like a PAT in the clone URL
+    # (userinfo "oauth2:<token>@"), so it flows through the token branch in git_loader; this
+    # member exists so the credential is labeled accurately instead of masquerading as a PAT.
+    OAUTH = "oauth"
 
 
 class Credentials(BaseModel):

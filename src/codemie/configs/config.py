@@ -420,6 +420,44 @@ class Config(BaseSettings):
     # grants no access the user does not already have. Requires admin consent once per tenant.
     SHAREPOINT_OAUTH_SCOPES: str = "Sites.ReadWrite.All Files.ReadWrite.All offline_access User.Read"
 
+    # GitLab OAuth (Authorization Code + PKCE). App credentials (client_id/client_secret) and the
+    # callback base URL are supplied per integration through the UI.
+    GITLAB_OAUTH_ENABLED: bool = False
+    GITLAB_OAUTH_SCOPES: str = "api read_user"
+    GITLAB_OAUTH_DEFAULT_INSTANCE_URL: str = "https://gitlab.com"
+    GITLAB_OAUTH_ALLOWED_INSTANCE_URLS: str = Field(
+        default="",
+        description=(
+            "Comma-separated allowlist of GitLab instance URLs the OAuth client_secret may be sent "
+            "to. Empty => only GITLAB_OAUTH_DEFAULT_INSTANCE_URL is allowed."
+        ),
+    )
+
+    # --- Atlassian (Jira) OAuth 2.0 (3LO) ---
+    # Like GitLab OAuth, the application id / secret / callback base URL are supplied per integration
+    # through the UI. Atlassian Cloud always authorizes at auth.atlassian.com and products are
+    # reached via https://api.atlassian.com/ex/jira/{cloudId}.
+    JIRA_OAUTH_ENABLED: bool = False
+    # offline_access is required to receive a refresh token.
+    JIRA_OAUTH_SCOPES: str = "offline_access read:jira-work read:jira-user write:jira-work manage:jira-project"
+
+    # --- Atlassian (Confluence) OAuth 2.0 (3LO) ---
+    CONFLUENCE_OAUTH_ENABLED: bool = False
+    CONFLUENCE_OAUTH_SCOPES: str = (
+        "offline_access read:confluence-content.all write:confluence-content "
+        "read:confluence-space.summary search:confluence"
+    )
+
+    # Escape hatch for local/OSS development only. When False (default), enabling an OAuth provider
+    # with a non-confidential encryption backend (plain/base64) blocks the OAuth flow (fail closed).
+    OAUTH_ALLOW_INSECURE_TOKEN_STORAGE: bool = Field(default=False)
+
+    # Comma-separated allowlist of callback base URLs the OAuth flow may redirect back to. The
+    # deployment's own CALLBACK_API_BASE_URL is always allowed; empty => only that default is allowed.
+    # A caller-supplied callback_base_url outside this set is rejected so /initiate cannot be pointed
+    # at an attacker-controlled host to intercept the authorization code.
+    OAUTH_CALLBACK_ALLOWED_BASE_URLS: str = Field(default="")
+
     MCP_AUTH_ENABLED: bool = False
     MCP_AUTH_HMAC_SECRET: str = ""
     REDIS_HOST: str = "localhost"
@@ -908,6 +946,39 @@ class Config(BaseSettings):
         from codemie.core.utils import get_api_root_path
 
         return f"{self.CALLBACK_API_BASE_URL}{get_api_root_path()}/v1/google-oauth/callback"
+
+    @computed_field
+    @property
+    def gitlab_oauth_redirect_uri(self) -> str:
+        """Fallback redirect URI for GitLab OAuth, built from CALLBACK_API_BASE_URL.
+
+        The effective redirect URI is normally derived from the per-integration callback base URL;
+        this env-based value is used only when the integration omits one.
+        """
+        from codemie.core.utils import get_api_root_path
+
+        return f"{self.CALLBACK_API_BASE_URL}{get_api_root_path()}/v1/gitlab-oauth/callback"
+
+    @computed_field
+    @property
+    def jira_oauth_redirect_uri(self) -> str:
+        """Fallback redirect URI for Jira (Atlassian) OAuth, built from CALLBACK_API_BASE_URL.
+
+        The effective redirect URI is normally derived from the per-integration callback base URL;
+        this env-based value is used only when the integration omits one.
+        """
+        from codemie.core.utils import get_api_root_path
+
+        return f"{self.CALLBACK_API_BASE_URL}{get_api_root_path()}/v1/atlassian-oauth/callback"
+
+    @computed_field
+    @property
+    def confluence_oauth_redirect_uri(self) -> str:
+        """Fallback redirect URI for Confluence (Atlassian) OAuth. Shared with Jira on the single
+        /v1/atlassian-oauth/callback so only one Callback URL is registered on the Atlassian app."""
+        from codemie.core.utils import get_api_root_path
+
+        return f"{self.CALLBACK_API_BASE_URL}{get_api_root_path()}/v1/atlassian-oauth/callback"
 
     @property
     def verbose(self) -> bool:

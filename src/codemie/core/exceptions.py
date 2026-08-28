@@ -55,6 +55,22 @@ class ExtendedHTTPException(Exception):
         self.help = help
 
 
+class GitLabOAuthNotConnected(ExtendedHTTPException):
+    """Raised when the acting user has no OAuth token row for a GitLab integration.
+
+    Signals that the user must complete OAuth under their own GitLab account before the
+    shared integration can be used on their behalf; surfaced to the user as an actionable
+    connect prompt rather than a generic failure.
+    """
+
+    def __init__(self, setting_id: str = "", details: str = ""):
+        super().__init__(
+            code=400,
+            message="Connect your GitLab account to use this integration.",
+            details=details or f"No GitLab OAuth token for the current user on setting '{setting_id}'.",
+        )
+
+
 class TaskException(Exception):
     original_exc: Optional[Any] = None
 
@@ -85,6 +101,71 @@ class MCPAuthenticationRequiredException(Exception):
     def __init__(self, payload: dict) -> None:
         self.payload = payload
         super().__init__(str(payload))
+
+
+class GitLabAuthRequiredException(MCPAuthenticationRequiredException):
+    """Raised when a shared GitLab integration is used but the acting user has no token.
+
+    Subclasses MCPAuthenticationRequiredException so it rides the same "authentication
+    required" propagation the agent/stream layers already implement (tool assembly raises,
+    the run surfaces the payload to the client instead of a swallowed tool error). The
+    payload carries a distinct ``error`` value so the client renders a GitLab connect gate.
+    """
+
+    def __init__(self, setting_id: str, integration_name: str = "") -> None:
+        super().__init__(
+            {
+                "error": "gitlab_auth_required",
+                "setting_id": setting_id,
+                "integration_name": integration_name or "GitLab integration",
+            }
+        )
+
+
+class JiraAuthRequiredException(MCPAuthenticationRequiredException):
+    """Raised when a shared Jira OAuth integration is used but the acting user has no token.
+
+    Mirrors GitLabAuthRequiredException: subclasses MCPAuthenticationRequiredException so it rides
+    the existing auth-required propagation, and carries a distinct ``error`` value so the client
+    renders a Jira connect gate.
+    """
+
+    def __init__(self, setting_id: str, integration_name: str = "") -> None:
+        super().__init__(
+            {
+                "error": "jira_auth_required",
+                "setting_id": setting_id,
+                "integration_name": integration_name or "Jira integration",
+            }
+        )
+
+
+class ConfluenceAuthRequiredException(MCPAuthenticationRequiredException):
+    """Raised when a shared Confluence OAuth integration is used but the acting user has no token."""
+
+    def __init__(self, setting_id: str, integration_name: str = "") -> None:
+        super().__init__(
+            {
+                "error": "confluence_auth_required",
+                "setting_id": setting_id,
+                "integration_name": integration_name or "Confluence integration",
+            }
+        )
+
+
+class OAuthConnectRequiredException(MCPAuthenticationRequiredException):
+    """Raised when one or more shared per-user OAuth integrations the assistant uses are not
+    connected by the acting user.
+
+    Mirrors the MCP ``authentication_required`` aggregate: instead of prompting for one provider at a
+    time, all unconnected GitLab/Jira/Confluence integrations are surfaced together so the user can
+    connect them in a single step and resend once. Each entry in ``providers`` reuses the
+    per-provider ``error`` value (gitlab_auth_required / jira_auth_required / confluence_auth_required)
+    so the client can render the existing per-provider connect prompts.
+    """
+
+    def __init__(self, providers: list[dict]) -> None:
+        super().__init__({"error": "oauth_connect_required", "providers": providers})
 
 
 class LiteLLMException(Exception):

@@ -21,6 +21,7 @@ from cachetools import TTLCache
 
 from codemie.configs.config import config
 from codemie.configs.logger import logger
+from codemie.service.security import tms_vault_ops
 from codemie.service.security.token_providers.base_provider import TokenProviderException
 
 _AUDIT_SOURCE = "token_exchange"
@@ -37,7 +38,9 @@ class TMSTokenStore:
     def __init__(self, tms: Any, audit_context_provider: Any) -> None:
         self._tms = tms
         self._audit_ctx = audit_context_provider
-        self._fallback: TTLCache[str, str] = TTLCache(maxsize=config.TOKEN_CACHE_MAX_SIZE, ttl=config.TOKEN_CACHE_TTL)
+        # Token exchange caches the access-token string; tool OAuth caches the full token object.
+        # Keys never overlap (MCP auth_config_id vs tool integration_id), so one cache serves both.
+        self._fallback: TTLCache[str, Any] = TTLCache(maxsize=config.TOKEN_CACHE_MAX_SIZE, ttl=config.TOKEN_CACHE_TTL)
 
     def get(self, user_id: str, auth_config_id: str) -> str | None:
         from codemie_enterprise.mcp_auth import (
@@ -53,8 +56,12 @@ class TMSTokenStore:
         fallback_key = f"{user_id}:{auth_config_id}"
 
         try:
-            with self._audit_ctx.context(source=_AUDIT_SOURCE, correlation_id=auth_config_id):
-                token_data = self._tms.retrieve(user_id, auth_config_id)
+            token_data = tms_vault_ops.retrieve_token(
+                self._tms,
+                self._audit_ctx.context(source=_AUDIT_SOURCE, correlation_id=auth_config_id),
+                user_id,
+                auth_config_id,
+            )
             return token_data.access_token
         except TokenNotFound:
             return self._fallback.get(fallback_key)
@@ -85,7 +92,6 @@ class TMSTokenStore:
     ) -> None:
         from codemie_enterprise.mcp_auth import (
             OAuth2RefreshMetadata,
-            OAuth2TokenData,
             TMSAuditError,
             TMSCryptoError,
             TMSPersistenceError,
@@ -99,7 +105,7 @@ class TMSTokenStore:
             return
 
         refresh_metadata = OAuth2RefreshMetadata(**refresh_metadata_kwargs) if refresh_metadata_kwargs else None
-        token_data = OAuth2TokenData(
+        token_data = tms_vault_ops.build_oauth2_token_data(
             access_token=access_token,
             expires_at=expires_at,
             refresh_token=refresh_token,
@@ -113,8 +119,13 @@ class TMSTokenStore:
         else:
             logger.debug("Storing token without refresh_metadata")
         try:
-            with self._audit_ctx.context(source=_AUDIT_SOURCE, correlation_id=auth_config_id):
-                self._tms.store(user_id, auth_config_id, token_data)
+            tms_vault_ops.store_token(
+                self._tms,
+                self._audit_ctx.context(source=_AUDIT_SOURCE, correlation_id=auth_config_id),
+                user_id,
+                auth_config_id,
+                token_data,
+            )
         except TMSAuditError as exc:
             raise TokenProviderException(
                 message=_AUDIT_POLICY_ERROR_MESSAGE,
@@ -138,8 +149,12 @@ class TMSTokenStore:
         fallback_key = f"{user_id}:{auth_config_id}"
 
         try:
-            with self._audit_ctx.context(source=_AUDIT_SOURCE, correlation_id=auth_config_id):
-                self._tms.delete(user_id, auth_config_id)
+            tms_vault_ops.delete_token(
+                self._tms,
+                self._audit_ctx.context(source=_AUDIT_SOURCE, correlation_id=auth_config_id),
+                user_id,
+                auth_config_id,
+            )
         except TMSAuditError as exc:
             raise TokenProviderException(
                 message=_AUDIT_POLICY_ERROR_MESSAGE,
@@ -159,8 +174,11 @@ class TMSTokenStore:
         )
 
         try:
-            with self._audit_ctx.context(source=_AUDIT_SOURCE, correlation_id=None):
-                self._tms.delete_all_for_user(user_id)
+            tms_vault_ops.delete_all_for_user(
+                self._tms,
+                self._audit_ctx.context(source=_AUDIT_SOURCE, correlation_id=None),
+                user_id,
+            )
         except TMSAuditError as exc:
             raise TokenProviderException(
                 message=_AUDIT_POLICY_ERROR_MESSAGE,

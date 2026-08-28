@@ -391,6 +391,9 @@ class SettingsService(BaseSettingsService):
 
         if request.credential_type == CredentialTypes.SHAREPOINT:
             request.credential_values = cls._sharepoint_credential_values(request, user_id)
+        # Per-user OAuth integrations keep only the shared app credentials on the setting row; the
+        # creator's per-user tokens are written to enterprise TMS after the row exists (see below).
+        cls._keep_only_oauth_app_credentials(request)
 
         prepared_creds = cls._prepare_cred_values(request.credential_type, request.credential_values)
         prepared_creds = cls._filter_empty_sensitive_fields(prepared_creds)
@@ -438,6 +441,10 @@ class SettingsService(BaseSettingsService):
         )
 
         saved = new_user_setting.save()
+
+        # Per-user OAuth settings (GitLab / Jira / Confluence) are created with app credentials only;
+        # the creator connects their own account afterward via the explicit OAuth connect flow, which
+        # writes the per-user token to enterprise TMS. Setting creation no longer runs an OAuth flow.
         cls._clear_litellm_user_credentials_cache_if_needed(
             credential_type=request.credential_type,
             settings_type=settings_type,
@@ -487,6 +494,9 @@ class SettingsService(BaseSettingsService):
 
         if request.credential_type == CredentialTypes.SHAREPOINT:
             request.credential_values = cls._sharepoint_credential_values(request, user_id or user_setting.user_id)
+        # Keep only shared app credentials on the setting; per-user tokens are refreshed in
+        # enterprise TMS after the update (see below) when a re-auth was performed.
+        cls._keep_only_oauth_app_credentials(request)
 
         prepared_creds = cls._prepare_cred_values(request.credential_type, request.credential_values)
 
@@ -495,20 +505,8 @@ class SettingsService(BaseSettingsService):
         # Remove credentials that are no longer in the prepared credentials
         prepared_cred_keys = [cred.key for cred in prepared_creds]
 
-        # For GOOGLE_OAUTH, preserve OAuth token credentials even if not in update request
-        if request.credential_type == CredentialTypes.GOOGLE_OAUTH:
-            from codemie.service.google_oauth.settings_service import GoogleOAuthSettingsService
-
-            preserved_keys = GoogleOAuthSettingsService.get_preserved_credential_keys(
-                user_setting.credential_values, prepared_cred_keys
-            )
-            user_setting.credential_values = [
-                cred for cred in user_setting.credential_values if cred.key in preserved_keys
-            ]
-        else:
-            user_setting.credential_values = [
-                cred for cred in user_setting.credential_values if cred.key in prepared_cred_keys
-            ]
+        # For OAuth types, preserve app credentials even if not in the update request.
+        cls._preserve_existing_credentials(request, user_setting, prepared_cred_keys)
 
         # Create a dictionary for existing credentials to quickly find and update keys
         existing_creds_dict = {cred.key: cred for cred in user_setting.credential_values}
@@ -525,11 +523,45 @@ class SettingsService(BaseSettingsService):
         user_setting.is_global = request.is_global
         user_setting.update_date = datetime.now(UTC)
         user_setting.update()
+
+        # Per-user OAuth re-authorization is no longer performed through the setting update path;
+        # users (re)connect their own accounts via the explicit OAuth connect flow, which writes the
+        # per-user token to enterprise TMS. Only app credentials are edited here.
         cls._clear_litellm_user_credentials_cache_if_needed(
             credential_type=request.credential_type,
             settings_type=user_setting.setting_type,
             user_id=user_id or user_setting.user_id,
         )
+
+    @staticmethod
+    def _cleanup_gitlab_oauth_tokens(setting_id: str) -> None:
+        """Invalidate all user tokens for a GitLab OAuth integration in enterprise TMS."""
+        from codemie.service.oauth.token_port import ToolOAuthTokenPort, map_tms_error_to_http
+
+        try:
+            ToolOAuthTokenPort.invalidate_by_integration(setting_id)
+        except Exception as exc:
+            raise map_tms_error_to_http("GitLab", exc)
+
+    @staticmethod
+    def _cleanup_jira_oauth_tokens(setting_id: str) -> None:
+        """Invalidate all user tokens for a Jira OAuth integration in enterprise TMS."""
+        from codemie.service.oauth.token_port import ToolOAuthTokenPort, map_tms_error_to_http
+
+        try:
+            ToolOAuthTokenPort.invalidate_by_integration(setting_id)
+        except Exception as exc:
+            raise map_tms_error_to_http("Jira", exc)
+
+    @staticmethod
+    def _cleanup_confluence_oauth_tokens(setting_id: str) -> None:
+        """Invalidate all user tokens for a Confluence OAuth integration in enterprise TMS."""
+        from codemie.service.oauth.token_port import ToolOAuthTokenPort, map_tms_error_to_http
+
+        try:
+            ToolOAuthTokenPort.invalidate_by_integration(setting_id)
+        except Exception as exc:
+            raise map_tms_error_to_http("Confluence", exc)
 
     @classmethod
     def delete_setting(cls, credential_id: str, user_id: Optional[str] = None) -> None:
@@ -543,6 +575,15 @@ class SettingsService(BaseSettingsService):
                 token_manager.revoke_token(credential_id)
             except Exception as exc:
                 logger.warning(f"Failed to revoke Google OAuth token for setting {credential_id}: {exc}")
+
+        if setting.credential_type == CredentialTypes.GITLAB_OAUTH:
+            cls._cleanup_gitlab_oauth_tokens(credential_id)
+
+        if setting.credential_type == CredentialTypes.JIRA_OAUTH:
+            cls._cleanup_jira_oauth_tokens(credential_id)
+
+        if setting.credential_type == CredentialTypes.CONFLUENCE_OAUTH:
+            cls._cleanup_confluence_oauth_tokens(credential_id)
 
         Settings.delete_setting(credential_id)
         cls._clear_litellm_user_credentials_cache_if_needed(
@@ -588,6 +629,14 @@ class SettingsService(BaseSettingsService):
                 if new_cred.value != cls.MASKED_VALUE:
                     encrypted_cred = cls._encrypt_fields([new_cred], force_all=force_all)[0]
                     user_setting.credential_values.append(encrypted_cred)
+
+    # App-credential keys the admin enters in the GitLab OAuth integration form. They live on the
+    # setting alongside the delegated tokens so the token manager can refresh without env config.
+    GITLAB_OAUTH_APP_KEYS = ("client_id", "client_secret", "callback_base_url", "instance_url")
+    # Jira (Atlassian Cloud) OAuth app-credential keys. No instance URL — Atlassian always
+    # authorizes at auth.atlassian.com and the site is resolved per user via cloud_id.
+    JIRA_OAUTH_APP_KEYS = ("client_id", "client_secret", "callback_base_url")
+    CONFLUENCE_OAUTH_APP_KEYS = ("client_id", "client_secret", "callback_base_url")
 
     @classmethod
     def _prepare_cred_values(cls, cred_type: CredentialTypes, cred_values: List[CredentialValues]):
@@ -713,6 +762,135 @@ class SettingsService(BaseSettingsService):
 
         return None
 
+    # --- Per-user OAuth (GitLab / Jira / Confluence) shared helpers ---------------------------
+
+    @classmethod
+    def _oauth_app_keys(cls, credential_type) -> Optional[list]:
+        """Allowed shared-app credential keys for a per-user OAuth credential type, else None."""
+        return {
+            CredentialTypes.GITLAB_OAUTH: cls.GITLAB_OAUTH_APP_KEYS,
+            CredentialTypes.JIRA_OAUTH: cls.JIRA_OAUTH_APP_KEYS,
+            CredentialTypes.CONFLUENCE_OAUTH: cls.CONFLUENCE_OAUTH_APP_KEYS,
+        }.get(credential_type)
+
+    @classmethod
+    def _keep_only_oauth_app_credentials(cls, request) -> None:
+        """For a per-user OAuth integration, keep only the shared app credentials on the Settings
+        row; each member's tokens are written to enterprise TMS, not stored on the setting."""
+        app_keys = cls._oauth_app_keys(request.credential_type)
+        if app_keys is not None:
+            request.credential_values = [cred for cred in request.credential_values if cred.key in app_keys]
+
+    @staticmethod
+    def _oauth_settings_service(credential_type):
+        """Return the per-provider OAuth SettingsService class for a credential type, or None."""
+        if credential_type == CredentialTypes.GOOGLE_OAUTH:
+            from codemie.service.google_oauth.settings_service import GoogleOAuthSettingsService
+
+            return GoogleOAuthSettingsService
+        if credential_type == CredentialTypes.GITLAB_OAUTH:
+            from codemie.service.gitlab_oauth.settings_service import GitLabOAuthSettingsService
+
+            return GitLabOAuthSettingsService
+        if credential_type == CredentialTypes.JIRA_OAUTH:
+            from codemie.service.jira_oauth.settings_service import JiraOAuthSettingsService
+
+            return JiraOAuthSettingsService
+        if credential_type == CredentialTypes.CONFLUENCE_OAUTH:
+            from codemie.service.confluence_oauth.settings_service import ConfluenceOAuthSettingsService
+
+            return ConfluenceOAuthSettingsService
+        return None
+
+    @classmethod
+    def _preserve_existing_credentials(cls, request, user_setting, prepared_cred_keys) -> None:
+        """On update, keep existing OAuth app creds absent from the request; for non-OAuth
+        types keep only the keys present in the prepared credentials."""
+        service = cls._oauth_settings_service(request.credential_type)
+        if service is not None:
+            preserved_keys = service.get_preserved_credential_keys(user_setting.credential_values, prepared_cred_keys)
+        else:
+            preserved_keys = prepared_cred_keys
+        user_setting.credential_values = [cred for cred in user_setting.credential_values if cred.key in preserved_keys]
+
+    @staticmethod
+    def _inject_oauth_config_values(setting, user_id: str = None) -> dict:
+        """Normalise a Setting into config-constructor kwargs, injecting OAuth-specific fields.
+
+        All per-user OAuth settings are marked auth_type=oauth and carry integration_id (so the tool
+        resolves the per-user token via its token manager) and acting_user_id. GitLab mirrors
+        instance_url onto url; Jira/Confluence reach the Atlassian gateway with cloud=True (the tool
+        overrides the URL to https://api.atlassian.com/ex/{jira|confluence}/{cloud_id} per request).
+        """
+        values = setting.normalize_values()
+        if setting.credential_type not in (
+            CredentialTypes.GITLAB_OAUTH,
+            CredentialTypes.JIRA_OAUTH,
+            CredentialTypes.CONFLUENCE_OAUTH,
+        ):
+            return values
+        values.setdefault("auth_type", "oauth")
+        values["integration_id"] = setting.id
+        values["acting_user_id"] = user_id or ""
+        if setting.credential_type == CredentialTypes.GITLAB_OAUTH:
+            if not values.get("url") and values.get("instance_url"):
+                values["url"] = values["instance_url"]
+        else:
+            values["cloud"] = True
+        return values
+
+    @classmethod
+    def _find_setting(cls, credential_type, project_name, user_id, assistant_id, integration_id, repo_link=None):
+        """Retrieve a single Setting by credential type / project / owner, optionally matched to a
+        git repo link. Returns the Setting or None."""
+        search_fields_dict = {
+            SearchFields.CREDENTIAL_TYPE: credential_type,
+            SearchFields.PROJECT_NAME: project_name,
+        }
+        if user_id:
+            search_fields_dict[SearchFields.USER_ID] = user_id
+        else:  # No user_id => resolve the project-scoped setting.
+            search_fields_dict[SearchFields.SETTING_TYPE] = SettingType.PROJECT.value
+
+        if repo_link:  # Handle git credentials
+            search_fields_dict[SearchFields.CREDENTIAL_VALUES_KEY] = cls.URL
+            search_fields_dict[SearchFields.CREDENTIAL_VALUES_VALUE] = repo_link
+            logger.debug(f"Retrieve git creds for {repo_link}. Search fields: {search_fields_dict}")
+        return cls.retrieve_setting(search_fields_dict, assistant_id, integration_id)
+
+    @classmethod
+    def _lookup_setting(
+        cls, config_class, credential_type, user_id, project_name, assistant_id, integration_id, repo_link
+    ):
+        """Prefer an OAuth-backed setting over a (possibly empty/stale) PAT one for the same provider.
+
+        The OAuth fallback is keyed by config_class (not credential_type) because GIT is shared across
+        GitHub/GitLab — falling back on the type alone would misroute GitHub calls to a GitLab setting.
+        """
+        oauth_fallback_by_config = {
+            GitlabConfig: CredentialTypes.GITLAB_OAUTH,
+            JiraConfig: CredentialTypes.JIRA_OAUTH,
+            ConfluenceConfig: CredentialTypes.CONFLUENCE_OAUTH,
+        }
+        fallback_type = oauth_fallback_by_config.get(config_class)
+        setting = None
+        if fallback_type is not None:
+            setting = cls._find_setting(fallback_type, project_name, user_id, assistant_id, integration_id, repo_link)
+        if not setting:
+            setting = cls._find_setting(credential_type, project_name, user_id, assistant_id, integration_id, repo_link)
+        return setting
+
+    @classmethod
+    def _find_setting_by_repo_root(
+        cls, credential_type, project_name, user_id, assistant_id, integration_id, repo_link
+    ):
+        """Second-chance git lookup by the repo's root domain when the full link found nothing."""
+        if not (repo_link and repo_link.count("/") > 2):
+            return None
+        return cls._find_setting(
+            credential_type, project_name, user_id, assistant_id, integration_id, get_url_domain(repo_link)
+        )
+
     @classmethod
     def get_config(
         cls,
@@ -732,25 +910,17 @@ class SettingsService(BaseSettingsService):
                 f"Class: {config_class}, "
                 f"Supported types: {list(cls.__CREDENTIAL_CONFIG_TO_TYPE.keys())}"
             )
-        # Use tool_config if provided
-        if tool_config:
-            if tool_config.tool_creds:
-                return config_class(**tool_config.tool_creds)
-            elif tool_config.integration_id:
-                # If integration_id is provided, use it to look up credentials
-                integration_id = tool_config.integration_id
 
-        def _get_config(repo_link: str = None) -> T:
-            # Otherwise retrieve from settings
-            search_fields_dict = cls._build_setting_search_fields(
-                credential_type=credential_type,
-                project_name=project_name,
-                user_id=user_id,
-                repo_link=repo_link,
-            )
-            return cls.retrieve_setting(search_fields_dict, assistant_id, integration_id)
+        # Use tool_config if provided: explicit creds short-circuit; an integration_id narrows lookup.
+        if tool_config and tool_config.tool_creds:
+            return config_class(**tool_config.tool_creds)
+        if tool_config and tool_config.integration_id:
+            integration_id = tool_config.integration_id
 
-        setting = _get_config(**kwargs)
+        repo_link = kwargs.get("repo_link")
+        setting = cls._lookup_setting(
+            config_class, credential_type, user_id, project_name, assistant_id, integration_id, repo_link
+        )
         if not setting:
             if is_admin:
                 return cls._handle_missing_config(
@@ -758,53 +928,17 @@ class SettingsService(BaseSettingsService):
                     user_id=user_id,
                     credential_type=credential_type,
                 )
-            setting = cls._retrieve_setting_by_repo_root(kwargs.get("repo_link"), _get_config)
+            setting = cls._find_setting_by_repo_root(
+                credential_type, project_name, user_id, assistant_id, integration_id, repo_link
+            )
             if not setting:
                 return None
 
-        return cls._build_config(config_class, setting)
-
-    @classmethod
-    def _build_setting_search_fields(
-        cls,
-        credential_type: CredentialTypes,
-        project_name: Optional[str],
-        user_id: Optional[str],
-        repo_link: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """Build the search fields used to locate a stored setting."""
-        search_fields_dict = {
-            SearchFields.CREDENTIAL_TYPE: credential_type,
-            SearchFields.PROJECT_NAME: project_name,
-        }
-        if user_id:
-            search_fields_dict[SearchFields.USER_ID] = user_id
-        else:  # If user_id is not provided, means getting project setting type
-            search_fields_dict[SearchFields.SETTING_TYPE] = SettingType.PROJECT.value
-
-        if repo_link:  # Handle git credentials
-            search_fields_dict[SearchFields.CREDENTIAL_VALUES_KEY] = cls.URL
-            search_fields_dict[SearchFields.CREDENTIAL_VALUES_VALUE] = repo_link
-            logger.debug(f"Retrieve git creds for {repo_link}. Search fields: {search_fields_dict}")
-        return search_fields_dict
-
-    @staticmethod
-    def _retrieve_setting_by_repo_root(repo_link: Optional[str], retrieve: callable):
-        """Second-chance lookup for git credentials stored against the repository root URL.
-
-        Returns None for anything that is not a repository URL, so non-git configs simply
-        fall through to "no setting found".
-        """
-        if not repo_link or repo_link.count("/") <= 2:
-            return None
-        return retrieve(repo_link=get_url_domain(repo_link))
-
-    @staticmethod
-    def _build_config[T](config_class: Type[T], setting) -> T:
-        """Instantiate a tool config from a stored setting."""
-        config = config_class(**setting.normalize_values())
-        # A delegated SharePoint token is refreshed here, before any tool sees it: the
-        # tool can reach neither the app registration nor this record to renew it.
+        config = config_class(**cls._inject_oauth_config_values(setting, user_id=user_id))
+        # A delegated SharePoint token is refreshed here, before any tool sees it: the tool can
+        # reach neither the app registration nor this record to renew it. (Preserved from main;
+        # _inject_oauth_config_values is a no-op passthrough for SHAREPOINT, so this matches the
+        # prior _build_config behaviour.)
         if setting.credential_type == CredentialTypes.SHAREPOINT:
             from codemie.service.sharepoint_pkce_service import get_valid_access_token
 
@@ -1226,9 +1360,63 @@ class SettingsService(BaseSettingsService):
             tool_config=tool_config,
             repo_link=repo_link,
         )
+        # For GitLab repos, prefer a GitLab OAuth setting when PAT credentials are absent or empty.
+        # Cloning uses the resulting access_token as the password with username "oauth2" — GitLab's
+        # supported OAuth-over-HTTPS convention.
+        if repo_link and (not config or not getattr(config, "token", None)):
+            oauth_creds = cls._try_gitlab_oauth_creds(
+                user_id=user_id,
+                project_name=project_name,
+                assistant_id=assistant_id,
+                setting_id=setting_id,
+                repo_link=repo_link,
+            )
+            if oauth_creds is not None:
+                return oauth_creds
         if not config:
             config = Credentials(url="", token="", token_name="", auth_type="pat")
         return config
+
+    @classmethod
+    def _try_gitlab_oauth_creds(
+        cls,
+        user_id: str,
+        project_name: Optional[str],
+        assistant_id: Optional[str],
+        setting_id: Optional[str],
+        repo_link: str,
+    ) -> Optional[Credentials]:
+        """Return git Credentials backed by a GitLab OAuth setting, or None.
+
+        Only triggers when repo_link is a GitLab URL. The token is obtained via
+        GitLabOAuthTokenManager so it is auto-refreshed if within the expiry buffer.
+        """
+        from codemie.core.models import CodeRepoType
+
+        try:
+            if CodeRepoType.from_link(repo_link) != CodeRepoType.GITLAB:
+                return None
+        except ValueError:
+            return None
+
+        search_fields = {
+            SearchFields.CREDENTIAL_TYPE: CredentialTypes.GITLAB_OAUTH,
+            SearchFields.PROJECT_NAME: project_name,
+            SearchFields.USER_ID: user_id,
+        }
+        setting = cls.retrieve_setting(search_fields, assistant_id, setting_id)
+        if not setting or setting.credential_type != CredentialTypes.GITLAB_OAUTH:
+            return None
+
+        from codemie.service.gitlab_oauth.token_manager import GitLabOAuthTokenManager
+
+        try:
+            access_token = GitLabOAuthTokenManager().get_valid_access_token(setting.id, user_id)
+        except Exception as exc:
+            logger.warning(f"GitLab OAuth: unable to obtain access token for git clone (setting {setting.id}): {exc}")
+            return None
+
+        return Credentials(url=repo_link, token=access_token, token_name="oauth2", auth_type="oauth")
 
     @classmethod
     def get_svn_creds(

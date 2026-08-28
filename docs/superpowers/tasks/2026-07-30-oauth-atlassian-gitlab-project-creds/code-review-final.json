@@ -1,0 +1,124 @@
+{
+  "decision": "approve",
+  "rationale": "Per-user OAuth (GitLab, Jira, Confluence) reviewed against the design. Application credentials stay on the shared Settings row; per-user tokens are stored in the enterprise Token Management System keyed by (user_id, auth_config_id = setting_id), so there is no second token store and no member borrows another member's token. TMS supplies Postgres persistence, KMS-backed AEAD encryption, refresh-token rotation under its own per-(user, integration) Redis lock, and an audit trail. A provider-agnostic layer under service/oauth/ carries the shared behavior: token_port.py (TokenPort contract, TMS adapter, sanitizing map_tms_error_to_http), flow_engine.py + provider_adapters.py (Authorization Code + PKCE with per-provider adapters), state_store.py (namespaced encrypted Redis state, deliberately lock-free), and authorization.py (access control for the caller-supplied setting_id). OAuth state is HMAC-signed over provider/user/integration/redirect_uri/nonce/ts and cross-checked against the Redis state before the code exchange, so a captured state cannot be replayed against another integration. Every connect/connection/disconnect endpoint resolves the integration through the Ability model and answers 403 to a non-member, checking access before the credential-type check so a 400 cannot confirm an integration's existence. The connect gate resolves through retrieve rather than the TMS has_valid_token predicate, which would otherwise re-prompt an already-connected member every token lifetime. Callbacks publish every terminal outcome to the flow's result key (replay-safe), and a token that cannot yield a usable connection - notably an Atlassian account with no accessible site, hence no cloud_id - is reported as a failure instead of stored as a success. Disconnect revokes at the provider through the adapter (GitLab has an endpoint, Atlassian does not) and never lets a provider-side failure block the local delete. Secret hygiene holds: app secrets encrypted at rest and never serialized, status strips the token blob, TMS errors are mapped to 502/503 without leaking internals, and assert_token_vault_available fails startup when OAuth is enabled without a compatible, switched-on vault. ruff check and format are clean on all changed files, license headers pass across 2036 files, and the OAuth suites pass (163 passed, 1 skipped) under randomized ordering. No correctness, security, or contract blockers found.",
+  "confidence": "medium",
+  "risk_flags": [
+    "Release ordering: codemie-enterprise must publish 2.3.38 (the additive provider_username / provider_user_id / provider_metadata fields on OAuth2TokenData) and codemie must bump its pin and lock before this ships. Until then assert_token_vault_available refuses to boot with OAuth enabled, which is the intended fail-fast rather than a silent downgrade.",
+    "Tool OAuth now hard-requires the enterprise package and a TMS backend (MCP_AUTH_TMS_ENABLED, or MCP_AUTH_TMS_ALLOW_MOCK locally). A community build cannot enable these providers; this is the deliberate trade for a single audited vault.",
+    "MCP auth still writes to TMS directly rather than through TokenPort. The port was introduced as a bounded seam for tool OAuth; converging MCP onto it is follow-up work and is not required for this change to be correct."
+  ],
+  "business_review": [
+    {
+      "id": "AC-1",
+      "text": "Application credentials and user tokens are separated: app config stays on the shared Settings row, tokens become per-user.",
+      "status": "pass",
+      "rationale": "Settings.credential_values keeps only client_id, client_secret (encrypted), callback_base_url and instance_url; settings_service writes tokens exclusively through ToolOAuthTokenPort, never back onto the Settings row."
+    },
+    {
+      "id": "AC-2",
+      "text": "No new token table - per-user tokens live in the existing enterprise TMS credential store.",
+      "status": "pass",
+      "rationale": "service/oauth/token_port.py persists via the enterprise vault keyed by (user_id, auth_config_id = setting_id). No OAuth token model, repository, or Alembic table is introduced; the only schema change is the three new credentialtypes enum values."
+    },
+    {
+      "id": "AC-3",
+      "text": "The raw setting_id is used as the integration key without a prefix, and provider identity travels on the stored token.",
+      "status": "pass",
+      "rationale": "setting_id and MCP auth_config.id are server-generated UUIDs from disjoint tables, so they cannot collide. provider_username, provider_user_id and provider_metadata (carrying the Atlassian cloud_id) are written on OAuth2TokenData, and an OAuth2RefreshMetadata snapshot makes refresh self-contained."
+    },
+    {
+      "id": "AC-4",
+      "text": "One provider-agnostic OAuth layer is shared by the three providers instead of per-provider copies.",
+      "status": "pass",
+      "rationale": "service/oauth/ holds token_port, flow_engine, provider_adapters, state_store and authorization; the GitLab and Atlassian flow services are thin wrappers over OAuthFlowEngine, and Jira and Confluence share one Atlassian state store and callback."
+    },
+    {
+      "id": "AC-5",
+      "text": "OAuth state is signed and cross-checked so a captured state cannot be replayed against another integration or user.",
+      "status": "pass",
+      "rationale": "create_signed_oauth_state / decode_and_verify_oauth_state cover provider, user_id, integration_id, redirect_uri, nonce and ts under HMAC-SHA256 with a max age; handle_callback rejects any mismatch against the stored state. Tampering, expiry, wrong provider and cross-integration replay are covered by tests."
+    },
+    {
+      "id": "AC-6",
+      "text": "A member connects to an already-existing shared integration; app credentials are read from the integration with no environment fallbacks.",
+      "status": "pass",
+      "rationale": "POST /v1/{provider}-oauth/connect takes a setting_id, loads app credentials from that Settings row and initiates PKCE for the calling user. A misconfigured integration fails with a 400 naming the missing keys rather than silently authorizing against a global app."
+    },
+    {
+      "id": "AC-7",
+      "text": "Endpoints taking a caller-supplied setting_id authorize the caller, not merely authenticate them.",
+      "status": "pass",
+      "rationale": "service/oauth/authorization.py resolves the setting through Ability(user).can(READ, ProjectSetting|UserSetting): a project member (or the owner of a USER-scoped integration) passes, anyone else gets 403. Access is checked before the credential-type check so a wrong-type 400 cannot confirm the existence of an unseen integration. Covered for all three providers by router tests plus test_authorization.py."
+    },
+    {
+      "id": "AC-8",
+      "text": "Flow progress and durable connection state are reported by two distinct endpoints.",
+      "status": "pass",
+      "rationale": "GET /status/{state} reports one in-flight authorization (pending / success / error) and GET /connection?setting_id=... reports the caller's durable state (connected with provider_username, or not_connected). They answer different questions, so collapsing them onto one route would overload it; the UI is aligned with both."
+    },
+    {
+      "id": "AC-9",
+      "text": "Every terminal callback outcome is published so the waiting browser tab is never left polling a dead state.",
+      "status": "pass",
+      "rationale": "flow_engine._fail publishes provider errors, missing-code and token-exchange failures to the result key. Only a flow still pending when the callback arrives is published, so a replayed callback cannot overwrite an already-published success - asserted directly by test_flow_engine.py."
+    },
+    {
+      "id": "AC-10",
+      "text": "A token that cannot be turned into a usable connection is a failure, not a stored success.",
+      "status": "pass",
+      "rationale": "OAuthCallbackError is raised when Atlassian accessible-resources yields no site, an entry without a cloud_id, a malformed payload or an HTTP error; the engine reports the failure and persists no token. Without cloud_id the tool runtime cannot reach the Atlassian gateway, so storing such a token would present a broken connection as connected."
+    },
+    {
+      "id": "AC-11",
+      "text": "Resolution is by acting user, and the connect gate fires after tool assembly without re-prompting connected members.",
+      "status": "pass",
+      "rationale": "get_config / _inject_oauth_config_values thread the acting user_id; enforce_oauth_connected aggregates every unconnected provider into one gate. has_connection resolves through retrieve (refreshing when needed) rather than the TMS has_valid_token predicate, which reports false for a merely expired access token and would re-prompt every token lifetime while disagreeing with /connection."
+    },
+    {
+      "id": "AC-12",
+      "text": "Lifecycle: deleting the integration clears every user's credential; a user disconnects only their own.",
+      "status": "pass",
+      "rationale": "invalidate_by_integration clears all credentials for a setting_id in one call. DELETE /connection routes through engine.revoke_connection, which revokes at the provider via the adapter (GitLab endpoint; documented Atlassian no-op) and always performs the local delete, so a provider outage cannot leave the credential behind."
+    },
+    {
+      "id": "AC-13",
+      "text": "Secret hygiene and fail-closed guards.",
+      "status": "pass",
+      "rationale": "App secrets are encrypted at rest and never serialized; OAuth state in Redis is encrypted with short TTLs; callbacks set CSP and X-Frame-Options and status strips the token blob. assert_secure_token_storage blocks initiation on a non-confidential backend, and assert_token_vault_available refuses startup when OAuth is enabled without a compatible enterprise package and a switched-on TMS. All three *_OAUTH_ENABLED flags default to False."
+    },
+    {
+      "id": "AC-14",
+      "text": "TMS failures are sanitized and distinguished from 'this user must connect'.",
+      "status": "pass",
+      "rationale": "map_tms_error_to_http maps vault unavailability to 503 and persistence / crypto / audit / refresh faults to 502 without leaking the underlying text; TokenNotFound and ReAuthenticationRequired are matched by type and surface as a connect prompt. Redis outages in the state store propagate instead of being reported as 'no such state', so an incident is not disguised as an expired link."
+    }
+  ],
+  "standards_review": [
+    {
+      "standard": "commit-format",
+      "status": "pass",
+      "notes": "Commits follow the 'EPMCDME-13527: <description>' convention from .ai-run/guides/standards/git-workflow.md, split by provider and concern. A few earlier commits use conventional-commit style; the guide's squash-merge default resolves this at merge time."
+    },
+    {
+      "standard": "code-quality",
+      "status": "pass",
+      "notes": "ruff check and ruff format are clean on every changed file. Behavior shared by the three providers lives once in service/oauth/ (flow engine, state store, token port, authorization) with per-provider adapters carrying only genuine differences; revocation delegates to the existing GitLab token manager rather than duplicating it. The tree carries no unreferenced OAuth modules, endpoints, or empty packages."
+    },
+    {
+      "standard": "test-coverage",
+      "status": "pass",
+      "notes": "163 passed, 1 skipped across the OAuth suites under randomized ordering. Coverage spans signed state (tamper / expiry / wrong provider / cross-integration replay), the flow engine (PKCE round-trip, state cross-check, failure publication, replay safety, finalize failure), authorization (member / admin / non-member / owner, 404 vs 403 vs 400 ordering) for all three routers, the state store (Redis outage propagates, undecryptable payload reads as absent), Atlassian cloud_id failure modes, refresh-token recovery gated on provider identity, the startup vault guard, and the connect gate. A cross-file sys.modules stub leak that made test_token_port.py fail depending on run order was fixed by consolidating onto the shared tms_stub."
+    },
+    {
+      "standard": "security",
+      "status": "pass",
+      "notes": "Per-user token isolation in one audited KMS-backed vault; signed, replay-resistant OAuth state; authorization on every endpoint accepting a caller-supplied setting_id, ordered so error codes do not leak existence; encrypted state and app secrets; sanitized TMS errors; fail-closed startup and initiation guards; OAuth disabled by default. gitleaks reports no findings."
+    },
+    {
+      "standard": "documentation",
+      "status": "pass",
+      "notes": "The design spec and implementation plan under docs/superpowers/ describe the TMS-backed design, including the authorization, callback-failure, result-publication and revocation decisions, and the blocking release ordering for codemie-enterprise 2.3.38."
+    }
+  ],
+  "findings": []
+}
