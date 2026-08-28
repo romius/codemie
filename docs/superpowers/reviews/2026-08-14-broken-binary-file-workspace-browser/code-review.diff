@@ -1,0 +1,198 @@
+diff --git a/src/codemie/rest_api/routers/agent_workspace.py b/src/codemie/rest_api/routers/agent_workspace.py
+index a16873390..63a09a799 100644
+--- a/src/codemie/rest_api/routers/agent_workspace.py
++++ b/src/codemie/rest_api/routers/agent_workspace.py
+@@ -17,6 +17,7 @@ from __future__ import annotations
+ from pathlib import PurePosixPath
+ from typing import Optional
+ 
++import base64
+ from fastapi import APIRouter, Depends, Query, Response
+ from starlette import status
+ 
+@@ -145,7 +146,27 @@ def get_workspace_file_content(
+     user: User = Depends(authenticate),
+ ) -> WorkspaceFileContentResponse:
+     try:
+-        return workspace_service.get_file_content(workspace_id, file_path, user)
++        file_content = workspace_service.get_file_content(workspace_id, file_path, user)
++        if file_content.is_binary:
++            mime_type = (file_content.mime_type or "").lower()
++            is_image = mime_type.startswith("image/")
++            if is_image:
++                raw = file_content.content if isinstance(file_content.content, bytes) else str(file_content.content).encode("utf-8", errors="replace")
++                content: str | None = base64.b64encode(raw).decode("ascii")
++            else:
++                content = None
++        else:
++            content = file_content.content if isinstance(file_content.content, str) else str(file_content.content)
++
++        return WorkspaceFileContentResponse(
++            path=file_content.path,
++            mime_type=file_content.mime_type,
++            checksum=file_content.checksum,
++            size=file_content.size,
++            version=file_content.version,
++            is_binary=file_content.is_binary,
++            content=content,
++        )
+     except Exception as exception:
+         raise _as_http_error(exception) from exception
+ 
+diff --git a/src/codemie/service/agent_workspace_service.py b/src/codemie/service/agent_workspace_service.py
+index ba2a98563..a47f8c7fd 100644
+--- a/src/codemie/service/agent_workspace_service.py
++++ b/src/codemie/service/agent_workspace_service.py
+@@ -19,6 +19,7 @@ import hashlib
+ import mimetypes
+ import re
+ from pathlib import PurePosixPath
++from typing import Any
+ 
+ from codemie.core.exceptions import ValidationException
+ from codemie.core.models import UserEntity
+@@ -32,7 +33,6 @@ from codemie.rest_api.models.agent_workspace import (
+     ExecuteWorkspaceScriptResponse,
+     WorkspaceDeleteFileResponse,
+     WorkspaceEditFileResponse,
+-    WorkspaceFileContentResponse,
+     WorkspaceFileItemResponse,
+     WorkspaceGrepMatchResponse,
+ )
+@@ -49,6 +49,34 @@ MULTIPLE_OLD_STRING_ERROR = (
+ SANDBOX_FILE_PREFIX = "sandbox:/v1/files/"
+ 
+ 
++class WorkspaceFileContent:
++    """Internal representation of workspace file content.
++
++    This is intentionally *not* the REST response model.
++    - Text files: `content` is a `str`
++    - Binary files: `content` is `bytes`
++    """
++
++    def __init__(
++        self,
++        *,
++        path: str,
++        mime_type: str,
++        checksum: str,
++        size: int,
++        version: int,
++        is_binary: bool,
++        content: str | bytes,
++    ) -> None:
++        self.path = path
++        self.mime_type = mime_type
++        self.checksum = checksum
++        self.size = size
++        self.version = version
++        self.is_binary = is_binary
++        self.content = content
++
++
+ class AgentWorkspaceService:
+     def __init__(self):
+         self.repository = AgentWorkspaceRepository()
+@@ -237,7 +265,7 @@ class AgentWorkspaceService:
+         saved_file = self._upsert_workspace_file_content(workspace.id, file_path, content)
+         return WorkspaceFileItemResponse.from_model(saved_file)
+ 
+-    def get_file_content(self, workspace_id: str, file_path: str, user: User) -> WorkspaceFileContentResponse:
++    def get_file_content(self, workspace_id: str, file_path: str, user: User) -> WorkspaceFileContent:
+         workspace = self.get_workspace(workspace_id, user)
+         workspace_file = self._get_workspace_file_or_raise(workspace, file_path)
+         file_object = self.file_repository.read_file(
+@@ -246,21 +274,41 @@ class AgentWorkspaceService:
+             mime_type=workspace_file.mime_type,
+         )
+         is_binary = self._is_binary_workspace_content(workspace_file.mime_type, file_object.content)
+-        content = file_object.content
+         checksum = workspace_file.checksum
+         size = workspace_file.size
+-        if not checksum and file_object.content is not None:
+-            raw = file_object.content if isinstance(file_object.content, bytes) else file_object.content.encode("utf-8")
++        raw_content: Any = file_object.content
++
++        if not checksum and raw_content is not None:
++            raw = raw_content if isinstance(raw_content, bytes) else str(raw_content).encode("utf-8")
+             checksum = hashlib.sha256(raw).hexdigest()
+             size = len(raw)
+-        return WorkspaceFileContentResponse(
++
++        # Normalize content type for callers:
++        # - text: always `str`
++        # - binary: always `bytes`
++        if is_binary:
++            if raw_content is None:
++                normalized_content: bytes = b""
++            elif isinstance(raw_content, bytes):
++                normalized_content = raw_content
++            else:
++                normalized_content = str(raw_content).encode("utf-8", errors="replace")
++        else:
++            if raw_content is None:
++                normalized_content = ""
++            elif isinstance(raw_content, bytes):
++                normalized_content = self._to_text_content(raw_content)
++            else:
++                normalized_content = str(raw_content)
++
++        return WorkspaceFileContent(
+             path=workspace_file.path,
+             mime_type=workspace_file.mime_type,
+             checksum=checksum,
+             size=size,
+             version=workspace_file.version,
+             is_binary=is_binary,
+-            content=content,
++            content=normalized_content,
+         )
+ 
+     def _is_binary_workspace_content(self, mime_type: str | None, content: object) -> bool:
+diff --git a/src/codemie_tools/data_management/workspace/tools.py b/src/codemie_tools/data_management/workspace/tools.py
+index a8f92a1c8..d19e29f57 100644
+--- a/src/codemie_tools/data_management/workspace/tools.py
++++ b/src/codemie_tools/data_management/workspace/tools.py
+@@ -121,16 +121,36 @@ class ReadWorkspaceFileTool(BaseWorkspaceTool):
+         file_content = self.workspace_service.get_file_content(workspace_id, file_path, self.user)
+ 
+         if getattr(file_content, "is_binary", False):
+-            raw = file_content.content or b""
++            raw = getattr(file_content, "content", b"") or b""
+             if not isinstance(raw, bytes):
+-                raw = str(raw).encode("utf-8")
++                raw = str(raw).encode("utf-8", errors="replace")
+             b64 = base64.b64encode(raw).decode("ascii")
+ 
+-            payload = file_content.model_dump(mode="json")
+-            payload["content"] = "The file is binary. The content below is base64-encoded.\n\n" + b64
++            payload = {
++                "path": getattr(file_content, "path", file_path),
++                "mime_type": getattr(file_content, "mime_type", None),
++                "checksum": getattr(file_content, "checksum", ""),
++                "size": getattr(file_content, "size", 0),
++                "version": getattr(file_content, "version", 0),
++                "is_binary": True,
++                "content": b64,
++                "content_encoding": "base64",
++            }
+             return self._dump_json(payload)
+ 
+-        return self._dump_json(file_content)
++        # `AgentWorkspaceService.get_file_content()` returns an internal object for both
++        # text and binary. For text files, `content` is always a string here, so dumping
++        # the internal object is safe and keeps fields consistent.
++        payload = {
++            "path": getattr(file_content, "path", file_path),
++            "mime_type": getattr(file_content, "mime_type", None),
++            "checksum": getattr(file_content, "checksum", ""),
++            "size": getattr(file_content, "size", 0),
++            "version": getattr(file_content, "version", 0),
++            "is_binary": bool(getattr(file_content, "is_binary", False)),
++            "content": getattr(file_content, "content", None),
++        }
++        return self._dump_json(payload)
+ 
+ 
+ class WriteWorkspaceFileTool(BaseWorkspaceTool):

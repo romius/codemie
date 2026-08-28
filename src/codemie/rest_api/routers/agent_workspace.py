@@ -17,6 +17,7 @@ from __future__ import annotations
 from pathlib import PurePosixPath
 from typing import Optional
 
+import base64
 from fastapi import APIRouter, Depends, Query, Response
 from starlette import status
 
@@ -109,12 +110,11 @@ def get_workspace_by_conversation(conversation_id: str, user: User = Depends(aut
 )
 def list_workspace_files(
     workspace_id: str,
-    prefix: Optional[str] = Query(default=None),
-    recursive: bool = Query(default=True),
+    glob: Optional[str] = Query(default=None),
     user: User = Depends(authenticate),
 ) -> list[WorkspaceFileItemResponse]:
     try:
-        return workspace_service.list_files(workspace_id, user, prefix=prefix, recursive=recursive)
+        return workspace_service.list_files(workspace_id, user, glob=glob)
     except Exception as exception:
         raise _as_http_error(exception) from exception
 
@@ -146,7 +146,34 @@ def get_workspace_file_content(
     user: User = Depends(authenticate),
 ) -> WorkspaceFileContentResponse:
     try:
-        return workspace_service.get_file_content(workspace_id, file_path, user)
+        file_content = workspace_service.get_file_content(workspace_id, file_path, user)
+        content_encoding: str | None = None
+        if file_content.is_binary:
+            mime_type = (file_content.mime_type or "").lower()
+            is_image = mime_type.startswith("image/")
+            if is_image:
+                raw = (
+                    file_content.content
+                    if isinstance(file_content.content, bytes)
+                    else str(file_content.content).encode("utf-8", errors="replace")
+                )
+                content: str | None = base64.b64encode(raw).decode("ascii")
+                content_encoding = "base64"
+            else:
+                content = None
+        else:
+            content = file_content.content if isinstance(file_content.content, str) else str(file_content.content)
+
+        return WorkspaceFileContentResponse(
+            path=file_content.path,
+            mime_type=file_content.mime_type,
+            checksum=file_content.checksum,
+            size=file_content.size,
+            version=file_content.version,
+            is_binary=file_content.is_binary,
+            content=content,
+            content_encoding=content_encoding,
+        )
     except Exception as exception:
         raise _as_http_error(exception) from exception
 
@@ -216,12 +243,11 @@ def delete_workspace_file(
 def grep_workspace_files(
     workspace_id: str,
     query: str = Query(...),
-    prefix: Optional[str] = Query(default=None),
-    recursive: bool = Query(default=True),
+    glob: Optional[str] = Query(default=None),
     user: User = Depends(authenticate),
 ) -> WorkspaceGrepResponse:
     try:
-        matches = workspace_service.grep_files(workspace_id, query, user, prefix=prefix, recursive=recursive)
+        matches = workspace_service.grep_files(workspace_id, query, user, glob=glob)
         return WorkspaceGrepResponse(matches=matches)
     except Exception as exception:
         raise _as_http_error(exception) from exception

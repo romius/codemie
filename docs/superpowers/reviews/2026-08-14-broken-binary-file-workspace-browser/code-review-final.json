@@ -1,0 +1,53 @@
+{
+  "gate_id": "code-review.final",
+  "decision": "approve",
+  "confidence": "low",
+  "rationale": "No-spec mode (confidence forced low — no acceptance criteria to audit). CR-001 fixed: content_encoding: Optional[str] added to WorkspaceFileContentResponse and set to 'base64' in the router for image content. CR-002 resolved by design decision: the REST API and tool channels are intentionally separate use cases — the REST API currently exposes only image binaries, with more binary types to be added as preview support is built out. Two lens findings dismissed: both derived from incorrectly transcribed dispatch-prompt diffs (self-reference bug and duplicate if-block) that do not exist in the actual code. No defer findings.",
+  "risk_flags": [],
+  "business_review": [],
+  "standards_review": [
+    {
+      "standard": "commit-format",
+      "status": "pass",
+      "notes": "Single commit 'EPMCDME-14122: Return correct file content for workspace browser' matches the required EPMCDME-####: Description format."
+    },
+    {
+      "standard": "code-quality",
+      "status": "partial",
+      "notes": "raw_content: Any in agent_workspace_service.py uses Any instead of the documented str | bytes | None union. The guide prefers explicit unions; not a blocking violation."
+    },
+    {
+      "standard": "security",
+      "status": "pass",
+      "notes": "errors='replace' appears only in binary-content normalization paths, not at an authentication or authorization decision boundary. The central authenticate dependency is used correctly. No credential handling in changed files."
+    }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "title": "REST API response missing content_encoding for base64-encoded image content",
+      "file": "src/codemie/rest_api/routers/agent_workspace.py",
+      "line": 155,
+      "severity": "major",
+      "triage": "patch",
+      "outcome": "fixed",
+      "problem": "When is_binary=True and mime_type starts with 'image/', the router base64-encodes content but WorkspaceFileContentResponse had no content_encoding field, so REST clients had to infer the encoding by parsing mime_type themselves.",
+      "impact": "API consumers could not reliably distinguish base64-encoded content from plain string content without out-of-band knowledge.",
+      "recommendation": "Add content_encoding: Optional[str] = None to WorkspaceFileContentResponse and set it to 'base64' in the router when encoding image content.",
+      "resolution": "content_encoding: Optional[str] = None added to WorkspaceFileContentResponse in models/agent_workspace.py; router now passes content_encoding='base64' when returning base64-encoded image content."
+    },
+    {
+      "id": "CR-002",
+      "title": "Undocumented behavioral inconsistency between tool and REST API for non-image binary files",
+      "file": "src/codemie_tools/data_management/workspace/tools.py",
+      "line": 123,
+      "severity": "major",
+      "triage": "decision_needed",
+      "outcome": "no_change_needed",
+      "problem": "The tools path base64-encodes all binary files; the REST API returns content=null for non-image binaries.",
+      "impact": "Intentional design divergence — the tool and REST API serve different use cases.",
+      "recommendation": "No action taken. The two channels are intentionally separate: the REST API currently exposes only image binary content, and additional binary types will be added to it progressively as preview support is built out. The tool always exposes full binary content for programmatic agent use.",
+      "resolution": "Accepted as intentional design decision by the author."
+    }
+  ]
+}

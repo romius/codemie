@@ -107,6 +107,7 @@ class WorkspaceFileContentResponse(BaseModel):
     version: int
     is_binary: bool
     content: Optional[str] = None
+    content_encoding: Optional[str] = None
 
 
 class WorkspaceEditFileRequest(BaseModel):

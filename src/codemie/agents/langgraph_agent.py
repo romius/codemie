@@ -61,6 +61,7 @@ from pydantic import BaseModel, Field
 from codemie.agents.agent_runtime_utils import (
     filter_history,
     is_unique_callback,
+    sanitize_rich_history_for_llm,
     serialize_inputs,
     serialize_messages,
     serialize_response,
@@ -407,6 +408,8 @@ class LangGraphAgent(WorkspaceAwareAgent):
                 f"Cannot handoff to {agent_name}: expected AIMessage as last message, got {type(ai_message).__name__}"
             )
 
+        sanitized_prefix = sanitize_rich_history_for_llm(messages[:-1])
+        messages = [*sanitized_prefix, ai_message]
         return messages, ai_message
 
     @classmethod
