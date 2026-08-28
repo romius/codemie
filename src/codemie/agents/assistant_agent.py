@@ -196,7 +196,12 @@ class AIToolsAgent(WorkspaceAwareAgent):
             ToolErrorCaptureCallback(agent_name=agent_name) if self._is_conversation_replay_v2_enabled() else None
         )
 
-        set_logging_info(uuid=request_uuid, user_id=user.id, user_email=user.username)
+        set_logging_info(
+            uuid=request_uuid,
+            user_id=user.id,
+            conversation_id=self.conversation_id,
+            user_email=user.username,
+        )
         self.agent_name = agent_name
         self.verbose = verbose
         self.is_react = is_react

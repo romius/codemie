@@ -147,6 +147,7 @@ async def authenticate(
         set_logging_info(
             uuid=request.state.uuid,
             user_id=user.id,
+            conversation_id='-',
             user_email=user.email,
         )
 

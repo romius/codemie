@@ -115,6 +115,10 @@ def json_serial(obj):
     return str(obj)
 
 
+# Sentinel used inside set_logging_info: keep whatever is already in the ContextVar.
+_LOGGING_CONVERSATION_ID_OMIT = object()
+
+
 def record_factory(*args, **kwargs):
     """
     Set a UUID for each log record
@@ -155,14 +159,27 @@ def process_record_msg(msg):
     return json.dumps(msg, default=json_serial)[1:-1]
 
 
-def set_logging_info(uuid: str = '-', user_id: str = '-', conversation_id: str = '-', user_email: str = "-"):
+def set_logging_info(
+    uuid: str = '-',
+    user_id: str = '-',
+    conversation_id: str | None = None,
+    user_email: str = "-",
+):
     """
-    Set a UUID for the current log record
+    Set correlation fields for the current log record.
+
+    When ``conversation_id`` is omitted or ``None`` (default), an already-bound
+    conversation_id is preserved instead of being wiped back to ``-``. This is
+    common when callers only refresh uuid/user_id. Pass ``'-'`` to clear it.
     """
     # Prevent sending nullable attributes
     uuid = uuid if uuid is not None else '-'
     user_id = user_id if user_id is not None else '-'
-    conversation_id = conversation_id if conversation_id is not None else '-'
+    user_email = user_email if user_email is not None else '-'
+    if conversation_id is None:
+        conversation_id = _LOGGING_CONVERSATION_ID_OMIT
+    if conversation_id is _LOGGING_CONVERSATION_ID_OMIT:
+        conversation_id = logging_conversation_id.get('-')
     logging_uuid.set(uuid)
     logging_user_id.set(user_id)
     current_user_email.set(user_email)

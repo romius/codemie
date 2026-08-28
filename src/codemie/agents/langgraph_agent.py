@@ -207,7 +207,12 @@ class LangGraphAgent(WorkspaceAwareAgent):
         self.smart_tool_selection_enabled = smart_tool_selection_enabled
         self.tool_selection_limit = tool_selection_limit or config.TOOL_SELECTION_LIMIT
 
-        set_logging_info(uuid=request_uuid, user_id=user.id, user_email=user.username)
+        set_logging_info(
+            uuid=request_uuid,
+            user_id=user.id,
+            conversation_id=self.conversation_id,
+            user_email=user.username,
+        )
         self.verbose = verbose
         self.is_react = is_react
         self.stream_steps = stream_steps

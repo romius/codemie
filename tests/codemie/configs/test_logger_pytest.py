@@ -36,11 +36,23 @@ def test_set_logging_info(input_logger_data: tuple, expected_logger_data: tuple)
     attr_names = ("uuid", "user_id", "conversation_id")
     attributes = {attr_name: attr_val for attr_val, attr_name in zip(input_logger_data, attr_names)}
 
+    # Isolate from other tests / prior ContextVar values
+    set_logging_info(uuid="-", user_id="-", conversation_id="-", user_email="-")
     set_logging_info(**attributes)
 
     assert logging_uuid.get() == expected_logger_data[0]
     assert logging_user_id.get() == expected_logger_data[1]
     assert logging_conversation_id.get() == expected_logger_data[2]
+
+
+def test_set_logging_info_preserves_conversation_id_when_omitted() -> None:
+    """Refreshing uuid/user_id must not wipe an already-bound conversation_id."""
+    set_logging_info(uuid="u1", user_id="user-1", conversation_id="conv-keep", user_email="a@b.c")
+    set_logging_info(uuid="u2", user_id="user-2", user_email="a@b.c")
+
+    assert logging_uuid.get() == "u2"
+    assert logging_user_id.get() == "user-2"
+    assert logging_conversation_id.get() == "conv-keep"
 
 
 def test_copy_and_restore_logging_context() -> None:
@@ -66,7 +78,7 @@ def test_copy_and_restore_logging_context() -> None:
     snapshot = copy_logging_context()
 
     # Simulate context reset (new task)
-    set_logging_info()  # resets to defaults
+    set_logging_info(uuid="-", user_id="-", conversation_id="-", user_email="-")
 
     # Restore from snapshot
     restore_logging_context(snapshot)

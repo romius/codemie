@@ -964,7 +964,7 @@ async def configure_logging(request: Request, call_next):
     uuid_str = request.headers.get("X-Request-ID", str(uuid.uuid4()))
 
     request.state.uuid = uuid_str
-    set_logging_info(uuid=uuid_str, user_id="")
+    set_logging_info(uuid=uuid_str, user_id="", conversation_id="-")
 
     # Attach the Codemie request ID to the active OTel span (created by
     # FastAPIInstrumentor before this middleware runs) so traces can be

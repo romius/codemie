@@ -45,7 +45,27 @@ from codemie.service.assistant_service import AssistantService
 from codemie.service.monitoring.hedging_monitoring_service import HedgingMetricPayload, HedgingMonitoringService
 from codemie.service.tools.dynamic_value_utils import process_string
 from codemie.service.tools.hedging_tool_service import HedgingToolService
-from codemie.configs.logger import copy_logging_context, restore_logging_context
+from codemie.configs.logger import copy_logging_context, restore_logging_context, set_logging_info
+
+
+def _bind_request_logging_context(
+    handler: StandardAssistantHandler,
+    request: AssistantChatRequest,
+    request_uuid: str | None = None,
+) -> None:
+    """Bind correlation fields for hedged lifecycle logs.
+
+    Auth middleware sets uuid/user_id but not conversation_id. Stream coordinator
+    logs also run after the request ContextVars may have been cleared (StreamingResponse
+    generator), so call this immediately before HEDGED lifecycle log lines and before
+    copying context into worker threads.
+    """
+    set_logging_info(
+        uuid=request_uuid or handler.request_uuid or "-",
+        user_id=handler.user.id,
+        conversation_id=request.conversation_id,
+        user_email=getattr(handler.user, "username", None) or getattr(handler.user, "email", None) or "-",
+    )
 
 
 def _lazy_observe(**kwargs):
@@ -417,6 +437,11 @@ class HedgedAssistantHandler(StandardAssistantHandler):
 
         request_headers = extract_custom_headers(raw_request)
         _otel_ctx = get_otel_context_for_thread()
+        _bind_request_logging_context(
+            self,
+            request,
+            request_uuid=self.request_uuid or getattr(raw_request.state, "uuid", "-"),
+        )
         logging_ctx = copy_logging_context()
         set_disable_prompt_cache(request.disable_cache or False)
 
@@ -504,6 +529,7 @@ class HedgedAssistantHandler(StandardAssistantHandler):
         # Must close before any yields to prevent a concurrent disconnect from also
         # calling save_chat_history on the same request.
         agent_queue.close(reason=HedgingCancellationReason.FAST_PATH_WON)
+        _bind_request_logging_context(self, request)
         logger.info(f"[HEDGED] fast-path won, tool={tool_name} assistant_id={self.assistant.id}")
         logger.debug(
             f"[HEDGE-COMPLETED] Hedged fast-path won race: tool={tool_name} "
@@ -620,6 +646,8 @@ class HedgedAssistantHandler(StandardAssistantHandler):
 
         served_by = "unknown"
         terminal_reason = "completed"
+        # StreamingResponse runs this generator after request ContextVars may be gone.
+        _bind_request_logging_context(self, request)
         try:
             if result_str is not None:
                 served_by = "fast_path"
@@ -654,6 +682,7 @@ class HedgedAssistantHandler(StandardAssistantHandler):
             if attempt is None and fast_path_thread.is_alive():
                 fast_path_thread.join(timeout=timeout_s)
                 attempt = fast_path_attempt[0]
+            _bind_request_logging_context(self, request)
             self._emit_hedging_metric(
                 request=request,
                 entry="stream",
@@ -675,6 +704,11 @@ class HedgedAssistantHandler(StandardAssistantHandler):
     ) -> BaseModelResponse:
         tool_name = self._tool_display_name()
         request_headers = extract_custom_headers(raw_request)
+        _bind_request_logging_context(
+            self,
+            request,
+            request_uuid=self.request_uuid or getattr(raw_request.state, "uuid", "-"),
+        )
         attempt = self._run_fast_path(request, raw_request.state.uuid, request_headers)
         result_str = self._parse_fast_path_result(attempt.result)
 
@@ -701,6 +735,11 @@ class HedgedAssistantHandler(StandardAssistantHandler):
             terminal_reason = "exception"
             raise
         finally:
+            _bind_request_logging_context(
+                self,
+                request,
+                request_uuid=self.request_uuid or getattr(raw_request.state, "uuid", "-"),
+            )
             self._emit_hedging_metric(
                 request=request,
                 entry="sync",

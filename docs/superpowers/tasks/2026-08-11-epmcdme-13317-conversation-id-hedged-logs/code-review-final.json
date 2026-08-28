@@ -1,0 +1,57 @@
+{
+  "verdict": "code-review.final",
+  "decision": "approve",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    {
+      "id": "AC-1",
+      "text": "Hedged lifecycle / coordinator logs include conversation_id when the chat request has one.",
+      "status": "pass",
+      "notes": "_bind_request_logging_context() calls set_logging_info(..., conversation_id=request.conversation_id) before copy_logging_context() and before [HEDGED] lifecycle log lines in hedged_handler.py."
+    },
+    {
+      "id": "AC-2",
+      "text": "Call sites that only refresh uuid/user_id must not wipe an already-bound conversation_id back to '-'.",
+      "status": "pass",
+      "notes": "set_logging_info uses _LOGGING_CONVERSATION_ID_OMIT sentinel; omitted conversation_id keeps ContextVar value. Explicit None/'-' still clears. Covered in test_logger_pytest.py."
+    },
+    {
+      "id": "AC-3",
+      "text": "Assistant / streaming / auth / main request paths that know conversation_id pass it into logging context.",
+      "status": "pass",
+      "notes": "assistant_agent.py, langgraph_agent.py, agent_streaming_callback.py, main.py, and authentication.py updated to bind conversation_id where available."
+    },
+    {
+      "id": "AC-4",
+      "text": "Regression tests cover omit-vs-clear behavior and hedged binding.",
+      "status": "pass",
+      "notes": "tests/codemie/configs/test_logger_pytest.py updated; tests/codemie/rest_api/handlers/test_hedged_handler.py adds coverage for conversation_id around hedged worker context."
+    },
+    {
+      "id": "AC-5",
+      "text": "Local sanity-api harness passes on the feature branch.",
+      "status": "pass",
+      "notes": "uvx codemie-test-harness --sanity-api → 184 passed, 4 skipped, 2 xpassed (~3m40s)."
+    }
+  ],
+  "standards_review": [
+    {
+      "standard": "git_workflow",
+      "status": "pass",
+      "notes": "Branch feature/EPMCDME-13317; MR title must use EPMCDME-13317: Keep ... (capital letter after ticket) per pipeline title validator."
+    },
+    {
+      "standard": "code_quality",
+      "status": "pass",
+      "notes": "Change is narrowly scoped to logging ContextVars and call-site binds; no behavioral change to hedging race/tool selection beyond log correlation."
+    },
+    {
+      "standard": "security",
+      "status": "pass",
+      "notes": "Only correlation IDs (uuid, user_id, conversation_id, user_email already used in logging context). No new secrets, tokens, or auth bypass. conversation_id is an existing product field already used elsewhere in request handling."
+    }
+  ],
+  "findings": [],
+  "rationale": "Reviewed the 9-file diff for keeping conversation_id in hedged and related request logs. The omit-sentinel in set_logging_info correctly preserves ContextVar when callers refresh uuid/user only; hedged_handler re-binds before context copy and lifecycle logs so StreamingResponse/coordinator paths do not log with conversation_id='-'. Unit/handler tests and local sanity-api (184 passed) support merge. No blocking findings."
+}

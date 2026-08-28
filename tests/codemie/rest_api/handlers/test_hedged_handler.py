@@ -1191,3 +1191,219 @@ class TestFastPathOtelContextPropagation:
         mock_get_ctx.assert_called_once()
         mock_attach.assert_called_once_with(mock_get_ctx.return_value)
         mock_detach.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# TestLoggingContextConversationId (MDDAAIAD-1205 / EPMCDME-13317)
+# ---------------------------------------------------------------------------
+
+
+class TestLoggingContextConversationId:
+    """Hedged lifecycle logs must carry conversation_id from the originating request."""
+
+    def _run_handle_stream(self, handler, request_, raw_request, extra_patches=()):
+        from contextlib import ExitStack
+
+        from codemie.core.thread import ThreadedGenerator
+
+        real_tg = ThreadedGenerator(
+            request_uuid="req-uuid",
+            user_id="user-1",
+            conversation_id=getattr(request_, "conversation_id", "") or "",
+        )
+        mock_agent = Mock()
+        mock_agent.last_generation_result = None
+        mock_agent.stream = Mock()
+
+        with ExitStack() as stack:
+            stack.enter_context(
+                patch(
+                    "codemie.rest_api.handlers.hedged_handler.HedgingToolService.instantiate",
+                    return_value=_make_fast_tool(_HIT_RESULT),
+                )
+            )
+            stack.enter_context(
+                patch("codemie.rest_api.handlers.hedged_handler.AssistantService.build_agent", return_value=mock_agent)
+            )
+            stack.enter_context(
+                patch("codemie.rest_api.handlers.hedged_handler.ThreadedGenerator", return_value=real_tg)
+            )
+            stack.enter_context(
+                patch("codemie.rest_api.handlers.hedged_handler.extract_custom_headers", return_value={})
+            )
+            stack.enter_context(patch("codemie.rest_api.handlers.hedged_handler.set_disable_prompt_cache"))
+            stack.enter_context(patch("codemie.rest_api.handlers.hedged_handler.get_otel_context_for_thread"))
+            stack.enter_context(patch("codemie.rest_api.handlers.hedged_handler.attach_otel_context"))
+            stack.enter_context(patch("codemie.rest_api.handlers.hedged_handler.detach_otel_context"))
+            for p in extra_patches:
+                stack.enter_context(p)
+
+            response = handler._handle_stream(request_, raw_request, time())
+            asyncio.run(_consume(response.body_iterator))
+
+    def test_fast_path_restore_includes_conversation_id(self, handler, request_, raw_request):
+        request_.conversation_id = "conv-qa-1205"
+        restored: dict[str, str] = {}
+
+        def _capture_restore(snapshot):
+            restored.update(snapshot)
+            from codemie.configs.logger import set_logging_info as _set
+
+            _set(**snapshot)
+
+        self._run_handle_stream(
+            handler,
+            request_,
+            raw_request,
+            extra_patches=(
+                patch(
+                    "codemie.rest_api.handlers.hedged_handler.restore_logging_context",
+                    side_effect=_capture_restore,
+                ),
+            ),
+        )
+
+        assert restored.get("conversation_id") == "conv-qa-1205"
+        assert restored.get("user_id") == "user-1"
+        assert restored.get("uuid") == "req-uuid"
+
+    def test_none_conversation_id_preserves_existing_in_snapshot(self, handler, request_, raw_request):
+        """None on the request means omit: an already-bound conversation_id is kept."""
+        from codemie.configs.logger import set_logging_info as real_set
+
+        real_set(uuid="pre", user_id="user-1", conversation_id="conv-keep", user_email="pre@example.com")
+        request_.conversation_id = None
+        restored: dict[str, str] = {}
+
+        def _capture_restore(snapshot):
+            restored.update(snapshot)
+            from codemie.configs.logger import set_logging_info as _set
+
+            _set(**snapshot)
+
+        self._run_handle_stream(
+            handler,
+            request_,
+            raw_request,
+            extra_patches=(
+                patch(
+                    "codemie.rest_api.handlers.hedged_handler.restore_logging_context",
+                    side_effect=_capture_restore,
+                ),
+            ),
+        )
+
+        assert restored.get("conversation_id") == "conv-keep"
+        assert restored.get("user_id") == "user-1"
+
+    def test_set_logging_info_called_before_copy_with_request_fields(self, handler, request_, raw_request):
+        request_.conversation_id = "conv-before-copy"
+        call_order: list[str] = []
+        set_kwargs: dict = {}
+
+        def _set_logging_info(**kwargs):
+            call_order.append("set")
+            set_kwargs.update(kwargs)
+            from codemie.configs.logger import set_logging_info as real_set
+
+            return real_set(**kwargs)
+
+        def _copy_logging_context():
+            call_order.append("copy")
+            from codemie.configs.logger import copy_logging_context as real_copy
+
+            return real_copy()
+
+        self._run_handle_stream(
+            handler,
+            request_,
+            raw_request,
+            extra_patches=(
+                patch(
+                    "codemie.rest_api.handlers.hedged_handler.set_logging_info",
+                    side_effect=_set_logging_info,
+                ),
+                patch(
+                    "codemie.rest_api.handlers.hedged_handler.copy_logging_context",
+                    side_effect=_copy_logging_context,
+                ),
+            ),
+        )
+
+        assert call_order[:2] == ["set", "copy"]
+        assert set_kwargs.get("conversation_id") == "conv-before-copy"
+        assert set_kwargs.get("user_id") == "user-1"
+        assert set_kwargs.get("uuid") == "req-uuid"
+
+    def test_hedged_won_log_keeps_conversation_id_after_context_cleared(self, handler, request_, raw_request):
+        """Simulate StreamingResponse: request ContextVars cleared before generator runs."""
+        import logging
+
+        from codemie.configs.logger import set_logging_info as real_set
+
+        request_.conversation_id = "conv-coordinator-1205"
+        records: list[logging.LogRecord] = []
+
+        class _Capture(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record)
+
+        cap = _Capture()
+        codemie_logger = logging.getLogger("codemie")
+        codemie_logger.addHandler(cap)
+        try:
+            from contextlib import ExitStack
+
+            from codemie.core.thread import ThreadedGenerator
+
+            real_tg = ThreadedGenerator(
+                request_uuid="req-uuid",
+                user_id="user-1",
+                conversation_id=request_.conversation_id,
+            )
+            mock_agent = Mock()
+            mock_agent.last_generation_result = None
+            mock_agent.stream = Mock()
+
+            with ExitStack() as stack:
+                stack.enter_context(
+                    patch(
+                        "codemie.rest_api.handlers.hedged_handler.HedgingToolService.instantiate",
+                        return_value=_make_fast_tool(_HIT_RESULT),
+                    )
+                )
+                stack.enter_context(
+                    patch(
+                        "codemie.rest_api.handlers.hedged_handler.AssistantService.build_agent",
+                        return_value=mock_agent,
+                    )
+                )
+                stack.enter_context(
+                    patch("codemie.rest_api.handlers.hedged_handler.ThreadedGenerator", return_value=real_tg)
+                )
+                stack.enter_context(
+                    patch("codemie.rest_api.handlers.hedged_handler.extract_custom_headers", return_value={})
+                )
+                stack.enter_context(patch("codemie.rest_api.handlers.hedged_handler.set_disable_prompt_cache"))
+                stack.enter_context(patch("codemie.rest_api.handlers.hedged_handler.get_otel_context_for_thread"))
+                stack.enter_context(patch("codemie.rest_api.handlers.hedged_handler.attach_otel_context"))
+                stack.enter_context(patch("codemie.rest_api.handlers.hedged_handler.detach_otel_context"))
+                stack.enter_context(patch.object(handler, "save_chat_history"))
+
+                response = handler._handle_stream(request_, raw_request, time())
+                # Middleware / request teardown clears ContextVars before body streams.
+                real_set(uuid="-", user_id="-", conversation_id="-", user_email="-")
+                asyncio.run(_consume(response.body_iterator))
+        finally:
+            codemie_logger.removeHandler(cap)
+
+        hedged = [
+            r
+            for r in records
+            if "[HEDGED] fast-path won" in str(r.getMessage()) or "[HEDGED] agent path won" in str(r.getMessage())
+        ]
+        assert hedged, "expected [HEDGED] fast-path/agent path won lifecycle log"
+        for record in hedged:
+            assert record.conversation_id == "conv-coordinator-1205"
+            assert record.user_id == "user-1"
+            assert record.uuid == "req-uuid"

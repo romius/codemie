@@ -306,6 +306,7 @@ class AgentStreamingCallback(StreamingStdOutCallbackHandler):
         set_logging_info(
             uuid=self.gen.context.request_uuid,
             user_id=self.gen.context.user_id,
+            conversation_id=getattr(self.gen, "conversation_id", None) or "-",
             user_email=current_user_email.get(),
         )
         logger.debug(msg)
