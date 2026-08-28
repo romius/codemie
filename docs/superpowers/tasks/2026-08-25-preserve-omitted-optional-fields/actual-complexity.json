@@ -1,0 +1,70 @@
+{
+  "task": "Preserve omitted optional fields on partial assistant updates by honoring the model_fields_set contract across the master-record mapper and the assistant versioning path.",
+  "generated": "2026-08-25",
+  "dimensions": {
+    "component_scope": {
+      "score": 3,
+      "label": "M",
+      "affected": "AssistantBase/_map_assistant_request helpers, AssistantVersionCompareService.has_configuration_changes, AssistantVersionService.create_new_version",
+      "layers": "API model, Service"
+    },
+    "requirements_clarity": {
+      "score": 2,
+      "label": "S",
+      "status": "Clear",
+      "gaps": "Initial scope covered only the master-record mapper; the versioning path was discovered and folded in during code review (CR-001)."
+    },
+    "technical_risk": {
+      "score": 3,
+      "label": "M",
+      "risk_factors": "Correctness-sensitive persistence logic: a regression could silently wipe omitted optional fields or spuriously create new versions. Subtle reliance on Pydantic model_fields_set semantics.",
+      "mitigation": "Follows the pre-existing fields_set pattern already used by _should_update_field; fully reversible; covered by targeted regression tests for both the master-record and versioning paths."
+    },
+    "file_change_estimate": {
+      "score": 3,
+      "label": "M",
+      "modified_files": 6,
+      "modified_file_list": [
+        "src/codemie/rest_api/models/assistant.py",
+        "src/codemie/service/assistant/assistant_version_compare_service.py",
+        "src/codemie/service/assistant/assistant_version_service.py",
+        "tests/codemie/rest_api/models/test_map_assistant_request_helpers.py",
+        "tests/codemie/service/assistant/test_assistant_version_compare_service.py",
+        "tests/codemie/service/assistant/test_assistant_version_service_critical.py"
+      ],
+      "new_files": 0,
+      "new_file_list": [],
+      "affected_dirs": [
+        "src/codemie/rest_api/models",
+        "src/codemie/service/assistant",
+        "tests/codemie/rest_api/models",
+        "tests/codemie/service/assistant"
+      ]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 2,
+      "label": "S",
+      "layers_changed": ["API model", "Service"],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 14,
+  "size": "S",
+  "band_range": "10-14",
+  "files_changed": 6,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Three coordinated components across two layers: the AssistantBase mapper helpers plus both versioning services (compare + create_new_version), all applying the same partial-update contract." },
+    { "dimension": "technical_risk", "reason": "Persistence-correctness fix relying on model_fields_set; a defect would silently drop omitted fields or spawn spurious versions. Mitigated by an existing precedent pattern and dedicated regression tests." },
+    { "dimension": "file_change_estimate", "reason": "6 files changed (3 source + 3 test), all edits to existing files, spanning API-model and service test directories." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

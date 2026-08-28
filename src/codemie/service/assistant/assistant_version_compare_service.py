@@ -52,7 +52,13 @@ class AssistantVersionCompareService:
             return True
 
         current_dict = cls._prepare_for_comparison(current_config)
-        request_dict = {
+
+        # EPMCDME-14150: honor the partial-update contract. Only fields explicitly set in
+        # the request participate in the comparison; fields the client omitted (absent from
+        # request.model_fields_set) keep the current version's value, so a partial update is
+        # not mistaken for a change just because omitted optional fields default to None/[].
+        fields_set = request.model_fields_set
+        candidate = {
             'description': request.description or "",
             'system_prompt': request.system_prompt or "",
             'llm_model_type': request.llm_model_type,
@@ -75,7 +81,16 @@ class AssistantVersionCompareService:
             'custom_metadata': request.custom_metadata,
         }
 
-        diff = DeepDiff(current_dict, request_dict, ignore_order=False)
+        new_dict = dict(current_dict)
+        for key, value in candidate.items():
+            if key in fields_set:
+                new_dict[key] = value
+
+        # Match _prepare_for_comparison's toolkit cleaning for any overlaid toolkits.
+        if 'toolkits' in fields_set and new_dict.get('toolkits'):
+            new_dict['toolkits'] = cls._remove_settings_config_from_toolkits(new_dict['toolkits'])
+
+        diff = DeepDiff(current_dict, new_dict, ignore_order=False)
         return bool(diff)
 
     @classmethod

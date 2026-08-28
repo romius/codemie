@@ -26,49 +26,31 @@ class TestShouldUpdateField:
         assistant = AssistantBase(name="Test", description="Test", system_prompt="Test", project="demo")
 
         # Act & Assert - Legacy mode (fields_set = None)
-        assert assistant._should_update_field('description', 'new value', fields_set=None) is True
-        assert assistant._should_update_field('custom_metadata', {'key': 'value'}, fields_set=None) is True
-        assert assistant._should_update_field('temperature', 0.8, fields_set=None) is True
+        assert assistant._should_update_field('description', fields_set=None) is True
+        assert assistant._should_update_field('custom_metadata', fields_set=None) is True
+        assert assistant._should_update_field('temperature', fields_set=None) is True
 
     def test_should_update_when_field_in_fields_set(self):
-        """TC-1.2: Should update field when field is in fields_set"""
+        """TC-1.2: Should update field when field is explicitly set (present in fields_set)."""
         # Arrange
         assistant = AssistantBase(name="Test", description="Test", system_prompt="Test", project="demo")
-        fields_set = {'description', 'custom_metadata'}
+        fields_set = {'description', 'custom_metadata', 'temperature'}
 
-        # Act & Assert
-        assert assistant._should_update_field('description', 'new value', fields_set) is True
-        assert assistant._should_update_field('custom_metadata', {'key': 'value'}, fields_set) is True
+        # Act & Assert - explicitly-set fields are applied (so explicit set/clear still works)
+        assert assistant._should_update_field('description', fields_set) is True
+        assert assistant._should_update_field('custom_metadata', fields_set) is True
+        assert assistant._should_update_field('temperature', fields_set) is True
 
-    def test_should_not_update_when_field_not_in_fields_set_and_value_not_none(self):
-        """TC-1.3: Should not update field when not in fields_set and value is not None"""
+    def test_should_not_update_when_field_not_in_fields_set(self):
+        """TC-1.3: A field NOT explicitly set (omitted) must NOT be updated (partial-patch)."""
         # Arrange
         assistant = AssistantBase(name="Test", description="Test", system_prompt="Test", project="demo")
-        fields_set = {'description'}
+        fields_set = {'description'}  # everything else omitted
 
-        # Act & Assert
-        assert assistant._should_update_field('temperature', 0.8, fields_set) is False
-        assert assistant._should_update_field('custom_metadata', {'key': 'value'}, fields_set) is False
-
-    def test_should_update_when_value_is_none(self):
-        """TC-1.4: Should update field when value is None regardless of fields_set"""
-        # Arrange
-        assistant = AssistantBase(name="Test", description="Test", system_prompt="Test", project="demo")
-        fields_set = {'description'}  # custom_metadata not in fields_set
-
-        # Act & Assert - None values always processed
-        assert assistant._should_update_field('custom_metadata', None, fields_set) is True
-        assert assistant._should_update_field('temperature', None, fields_set) is True
-
-    def test_empty_string_vs_none(self):
-        """TC-1.5: Edge case - Empty string is treated differently from None"""
-        # Arrange
-        assistant = AssistantBase(name="Test", description="Test", system_prompt="Test", project="demo")
-        fields_set = {'description'}
-
-        # Act & Assert
-        assert assistant._should_update_field('system_prompt', '', fields_set) is False
-        assert assistant._should_update_field('system_prompt', None, fields_set) is True
+        # Act & Assert - omitted fields are preserved regardless of their (default) value
+        assert assistant._should_update_field('temperature', fields_set) is False
+        assert assistant._should_update_field('custom_metadata', fields_set) is False
+        assert assistant._should_update_field('system_prompt', fields_set) is False
 
 
 class TestGetFieldValueForUpdate:
@@ -203,3 +185,59 @@ class TestShouldUpdateSystemPrompt:
 
         # Assert
         assert result is True  # Whitespace differences detected
+
+
+class TestMapAssistantRequestPartialUpdate:
+    """Regression coverage for EPMCDME-14150 partial-update semantics.
+
+    Note: AssistantRequest requires system_prompt for CODEMIE-type assistants, so
+    system_prompt is always present in a valid request. The reproducible bug is on
+    truly-optional fields such as description; the tests below prove description is
+    preserved when omitted while system_prompt round-trips unchanged.
+    """
+
+    def test_partial_update_preserves_omitted_optional_fields(self):
+        """Omitting description keeps the stored value; unchanged system_prompt is preserved."""
+        assistant = AssistantBase(
+            name="Test",
+            description="Stored description",
+            system_prompt="Stored prompt",
+            project="demo",
+        )
+        # description omitted; system_prompt sent unchanged (required for CODEMIE type)
+        request = AssistantRequest(name="Test", system_prompt="Stored prompt", llm_model_type="gpt-4")
+
+        assistant._map_assistant_request(request)
+
+        assert assistant.description == "Stored description"
+        assert assistant.system_prompt == "Stored prompt"
+
+    def test_explicit_value_is_applied(self):
+        """A field explicitly set in the request is applied."""
+        assistant = AssistantBase(
+            name="Test",
+            description="Stored description",
+            system_prompt="Stored prompt",
+            project="demo",
+        )
+        request = AssistantRequest(
+            name="Test", description="New description", system_prompt="Stored prompt", llm_model_type="gpt-4"
+        )
+
+        assistant._map_assistant_request(request)
+
+        assert assistant.description == "New description"
+
+    def test_explicit_null_clears_field(self):
+        """A field explicitly set to None in the request is cleared."""
+        assistant = AssistantBase(
+            name="Test",
+            description="Stored description",
+            system_prompt="Stored prompt",
+            project="demo",
+        )
+        request = AssistantRequest(name="Test", description=None, system_prompt="Stored prompt", llm_model_type="gpt-4")
+
+        assistant._map_assistant_request(request)
+
+        assert assistant.description is None

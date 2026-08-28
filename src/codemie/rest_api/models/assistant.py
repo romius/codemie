@@ -864,9 +864,9 @@ class AssistantBase(CommonBaseModel, Owned):
         return list({ctx.name for ctx in self.context if (ctx.name, ctx.context_type) not in index_parts})
 
     @staticmethod
-    def _should_update_field(field: str, field_value: Any, fields_set: set | None) -> bool:
+    def _should_update_field(field: str, fields_set: set | None) -> bool:
         """Check if a field should be updated based on whether it was explicitly set."""
-        return fields_set is None or field in fields_set or field_value is None
+        return fields_set is None or field in fields_set
 
     @staticmethod
     def _get_field_value_for_update(field: str, field_value: Any) -> Any:
@@ -893,7 +893,7 @@ class AssistantBase(CommonBaseModel, Owned):
         self.updated_date = datetime.now(UTC)
 
         # Type-safe field mapping using reflection
-        fields_set = getattr(request, '__fields_set__', None)
+        fields_set = request.model_fields_set
         request_fields = request.model_fields
 
         # Get all updatable fields except special cases that need custom handling
@@ -913,7 +913,7 @@ class AssistantBase(CommonBaseModel, Owned):
         # Update fields based on whether they were explicitly set or we're in legacy mode
         for field in updatable_fields:
             field_value = getattr(request, field)
-            if self._should_update_field(field, field_value, fields_set):
+            if self._should_update_field(field, fields_set):
                 value_to_set = self._get_field_value_for_update(field, field_value)
                 setattr(self, field, value_to_set)
 

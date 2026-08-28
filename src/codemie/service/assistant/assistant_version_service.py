@@ -98,25 +98,34 @@ class AssistantVersionService:
 
         logger.debug(f"Creating version {new_version_number} for assistant {assistant.id}")
 
+        # EPMCDME-14150: honor the partial-update contract. Fields the client omitted are
+        # absent from request.model_fields_set, so snapshot them from the merged assistant
+        # (which already holds the preserved stored value) instead of the request's None/[]
+        # defaults; explicitly-set fields still come from the request.
+        fields_set = request.model_fields_set
+
+        def versioned(name: str):
+            return getattr(request, name) if name in fields_set else getattr(assistant, name)
+
         config = AssistantConfiguration(
             assistant_id=assistant.id,
             version_number=new_version_number,
-            description=request.description or "",
-            system_prompt=request.system_prompt or "",
-            llm_model_type=request.llm_model_type,
-            enable_image_generation=request.enable_image_generation,
-            image_generation_model=request.image_generation_model,
-            temperature=request.temperature,
-            top_p=request.top_p,
-            tools_tokens_size_limit=request.tools_tokens_size_limit,
-            context=request.context,
-            toolkits=request.toolkits,
-            mcp_servers=request.mcp_servers,
-            assistant_ids=request.assistant_ids,
-            conversation_starters=request.conversation_starters,
-            bedrock=request.bedrock,
-            agent_card=request.agent_card,
-            custom_metadata=request.custom_metadata,
+            description=versioned('description') or "",
+            system_prompt=versioned('system_prompt') or "",
+            llm_model_type=versioned('llm_model_type'),
+            enable_image_generation=versioned('enable_image_generation'),
+            image_generation_model=versioned('image_generation_model'),
+            temperature=versioned('temperature'),
+            top_p=versioned('top_p'),
+            tools_tokens_size_limit=versioned('tools_tokens_size_limit'),
+            context=versioned('context'),
+            toolkits=versioned('toolkits'),
+            mcp_servers=versioned('mcp_servers'),
+            assistant_ids=versioned('assistant_ids'),
+            conversation_starters=versioned('conversation_starters'),
+            bedrock=versioned('bedrock'),
+            agent_card=versioned('agent_card'),
+            custom_metadata=versioned('custom_metadata'),
             created_by=CreatedByUser(id=user.id, username=user.username, name=user.name),
             change_notes=change_notes or "Configuration updated",
         )

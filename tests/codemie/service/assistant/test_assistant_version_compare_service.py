@@ -268,6 +268,39 @@ class TestPrepareForComparison:
 
         assert AssistantVersionCompareService.has_configuration_changes("assistant-123", request) is True
 
+    @patch('codemie.service.assistant.assistant_version_compare_service.AssistantConfiguration')
+    def test_has_configuration_changes_false_for_partial_update_omitting_versioned_fields(
+        self, mock_config_class, mock_config_v1
+    ):
+        """EPMCDME-14150 (CR-001): a partial update that omits versioned fields must NOT
+        count as a change just because omitted fields default to None/[]. Only explicitly
+        set fields participate in the comparison."""
+        mock_config_class.get_current_version.return_value = mock_config_v1
+
+        # Partial update: only required fields, sent unchanged; every other versioned
+        # field is omitted (absent from model_fields_set).
+        request = AssistantRequest(
+            name="Assistant",
+            system_prompt=mock_config_v1.system_prompt,
+            llm_model_type=mock_config_v1.llm_model_type,
+        )
+
+        assert AssistantVersionCompareService.has_configuration_changes("assistant-123", request) is False
+
+    @patch('codemie.service.assistant.assistant_version_compare_service.AssistantConfiguration')
+    def test_has_configuration_changes_true_when_set_field_actually_changes(self, mock_config_class, mock_config_v1):
+        """A field explicitly set to a new value is still detected as a change."""
+        mock_config_class.get_current_version.return_value = mock_config_v1
+
+        request = AssistantRequest(
+            name="Assistant",
+            system_prompt=mock_config_v1.system_prompt,
+            llm_model_type=mock_config_v1.llm_model_type,
+            temperature=0.1,  # changed from 0.7
+        )
+
+        assert AssistantVersionCompareService.has_configuration_changes("assistant-123", request) is True
+
 
 class TestGenerateSummary:
     """Tests for _generate_summary method"""

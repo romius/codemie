@@ -111,6 +111,57 @@ class TestCreateNewVersionCritical:
         assert call_kwargs['change_notes'] == "Metadata update"
         new_config.save.assert_called_once()
 
+    @patch('codemie.service.assistant.assistant_version_service.AssistantConfiguration')
+    def test_create_new_version_preserves_omitted_versioned_fields(self, mock_config_class, mock_assistant, mock_user):
+        """EPMCDME-14150 (CR-001): fields omitted from a partial update must be snapshotted
+        from the merged assistant, not wiped to the request's None/[] defaults."""
+        # Merged assistant carries the real stored values.
+        mock_assistant.temperature = 0.7
+        mock_assistant.top_p = 0.9
+        mock_assistant.custom_metadata = {'status': 'published'}
+        mock_assistant.conversation_starters = ['Hi there']
+
+        # Partial update: only required fields are provided; temperature, top_p,
+        # custom_metadata and conversation_starters are omitted.
+        request = AssistantRequest(
+            name="Test Assistant",
+            system_prompt="Test Prompt",
+            llm_model_type="gpt-4",
+        )
+
+        new_config = MagicMock()
+        mock_config_class.return_value = new_config
+        mock_config_class.get_latest_version_number.return_value = 1
+
+        AssistantVersionService.create_new_version(assistant=mock_assistant, request=request, user=mock_user)
+
+        call_kwargs = mock_config_class.call_args[1]
+        assert call_kwargs['temperature'] == 0.7
+        assert call_kwargs['top_p'] == 0.9
+        assert call_kwargs['custom_metadata'] == {'status': 'published'}
+        assert call_kwargs['conversation_starters'] == ['Hi there']
+
+    @patch('codemie.service.assistant.assistant_version_service.AssistantConfiguration')
+    def test_create_new_version_applies_explicitly_set_fields(self, mock_config_class, mock_assistant, mock_user):
+        """A field explicitly set in the request is still written to the new version."""
+        mock_assistant.temperature = 0.7
+
+        request = AssistantRequest(
+            name="Test Assistant",
+            system_prompt="Test Prompt",
+            llm_model_type="gpt-4",
+            temperature=0.2,  # explicitly changed
+        )
+
+        new_config = MagicMock()
+        mock_config_class.return_value = new_config
+        mock_config_class.get_latest_version_number.return_value = 1
+
+        AssistantVersionService.create_new_version(assistant=mock_assistant, request=request, user=mock_user)
+
+        call_kwargs = mock_config_class.call_args[1]
+        assert call_kwargs['temperature'] == 0.2
+
 
 class TestApplyVersionToAssistant:
     """CRITICAL: Test metadata application to assistant - TC-VS-3.1"""

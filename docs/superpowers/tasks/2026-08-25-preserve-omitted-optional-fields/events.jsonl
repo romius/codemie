@@ -1,0 +1,8 @@
+{"event":"lifecycle_emission","intent":"record_complexity_score","assessment_mode":"initial","status":"succeeded"}
+{"schema":1,"ts":"2026-08-25T06:04:26Z","event":"decision.recorded","phase":3,"actor":"decision-router","summary":"Decision recorded for spec.approved: approve","artifacts":["decisions.jsonl"],"data":{"gate_id":"spec.approved","mode":"hitl","decision":"approve","source":"hitl","escalated":false}}
+{"event":"lifecycle_emission","intent":"artifact_published","artifact_kind":"spec","status":"succeeded"}
+{"schema":1,"ts":"2026-08-25T06:09:57Z","event":"decision.recorded","phase":4,"actor":"decision-router","summary":"Decision recorded for plan.approved: approve","artifacts":["decisions.jsonl"],"data":{"gate_id":"plan.approved","mode":"hitl","decision":"approve","source":"hitl","escalated":false}}
+{"event":"lifecycle_emission","intent":"artifact_published","artifact_kind":"plan","status":"succeeded"}
+{"schema":1,"ts":"2026-08-25T06:45:00Z","event":"decision.recorded","phase":6,"actor":"decision-router","summary":"Decision recorded for code-review.final: approve (track CR-001 separately)","artifacts":["decisions.jsonl","code-review-final.json"],"data":{"gate_id":"code-review.final","mode":"hitl","decision":"approve","source":"hitl","escalated":false}}
+{"schema":1,"ts":"2026-08-25T08:25:46Z","event":"decision.recorded","phase":6,"actor":"decision-router","summary":"Decision recorded for code-review.check: approve (CR-001 resolved)","artifacts":["decisions.jsonl","code-review-check.json"],"data":{"gate_id":"code-review.check","mode":"hitl","decision":"approve","source":"hitl","escalated":false}}
+{"event":"lifecycle_emission","intent":"record_complexity_score","assessment_mode":"actual","status":"succeeded"}

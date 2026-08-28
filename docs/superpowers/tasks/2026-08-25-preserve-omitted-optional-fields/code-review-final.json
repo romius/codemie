@@ -1,0 +1,29 @@
+{
+  "gate_id": "code-review.final",
+  "decision": "request-changes",
+  "rationale": "Core fix is correct and all four acceptance criteria are met: the master Assistant record now preserves omitted None-default optional fields (blind, edge-case, and acceptance lenses agree; the normal GET path reads the master record, so the reported user-visible bug is genuinely fixed). Ruff passes; commits follow the EPMCDME-14150 format. One decision_needed finding drives request-changes/low: the parallel versioning side effect (has_configuration_changes + create_new_version) snapshots from the raw request, not the merged assistant, so a partial update still writes a wiped version snapshot and spuriously creates a new version. This is pre-existing (the diff does not touch the versioning path) but the fix now makes the master record diverge from its version snapshot, which the explicit version pin/restore path (assistant_factory.py:144, router assistant.py:2015) would apply. Whether to expand this ticket to align the versioning path or track it as a follow-up is a scope decision for the human. 1 finding emitted (decision_needed); 1 deferred (add update_assistant-level integration coverage) noted here; 1 dismissed (unused field_value param — ruff does not flag it, signature retained for caller compatibility).",
+  "confidence": "low",
+  "risk_flags": ["data-integrity"],
+  "business_review": [
+    {"criterion": "_should_update_field updates only explicitly set fields unless a full update is intended", "status": "met", "notes": "Line 869 now returns `fields_set is None or field in fields_set`."},
+    {"criterion": "Omitted None-default fields are preserved during partial updates", "status": "met", "notes": "model_fields_set excludes omitted fields; setattr skipped. Verified for master record."},
+    {"criterion": "Regression test covers partial update preserving description and system_prompt", "status": "met", "notes": "TestMapAssistantRequestPartialUpdate covers preserve/apply/clear; system_prompt preserved via unchanged-value path (cannot be truly omitted for CODEMIE type)."},
+    {"criterion": "API behavior matches the model docstring", "status": "met", "notes": "Pydantic v2 model_fields_set makes explicit-vs-default authoritative; explicit null still clears."}
+  ],
+  "standards_review": [
+    {"standard": "git commit format (EPMCDME-####: ...)", "status": "pass", "notes": "Two commits both use `EPMCDME-14150: ...`."},
+    {"standard": "code-quality (ruff)", "status": "pass", "notes": "`ruff check` passes on both changed files; unused field_value param not flagged."},
+    {"standard": "security-patterns", "status": "na", "notes": "No auth/secret/injection surface in this diff."}
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "triage": "decision_needed",
+      "severity": "major",
+      "location": "src/codemie/service/assistant/assistant_version_compare_service.py:53 and src/codemie/service/assistant/assistant_version_service.py:104 (interaction with src/codemie/rest_api/models/assistant.py:1114 update_assistant)",
+      "problem": "The versioning side effect invoked by update_assistant reads raw request.* defaults rather than the merged assistant. has_configuration_changes builds request_dict from request fields (omitted versioned fields carry None/[]), and create_new_version snapshots the new AssistantConfiguration directly from request. After this fix, a partial update preserves the master record but still (a) returns True from has_configuration_changes on nearly every partial update (version spam) and (b) writes a version snapshot with omitted versioned fields wiped (temperature=None, toolkits=[], context=[], custom_metadata=None), diverging from the corrected master.",
+      "impact": "Normal reads use the master record and are correct, so the reported bug is fixed. However the explicit version pin/restore path (assistant_factory.py:144 sub-assistant pinning; router assistant.py:2015 chat with request.version) applies the version snapshot, which would re-introduce wiped config for a partially-edited assistant. Version history/compare also shows spurious 'all removed' diffs and every partial edit bumps the version.",
+      "recommendation": "Scope decision for the human: either (a) expand this ticket to make the versioning path honor the same partial-update contract (compute has_configuration_changes and build the create_new_version snapshot from the post-merge assistant, or gate each field on request.model_fields_set), plus an update_assistant-level integration test asserting omitted versioned fields survive in the new snapshot and no version is created when nothing changed; or (b) track it as a dedicated follow-up ticket and merge this fix as the scoped master-record correction. The versioning code is untouched by this diff and is a broader, pre-existing concern."
+    }
+  ]
+}

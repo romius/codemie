@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "task": "Fix assistant partial update so omitted optional None-default fields are preserved by correcting _should_update_field, migrating __fields_set__ to model_fields_set, and adding regression coverage for description and system_prompt.",
+  "generated": "2026-08-25",
+  "dimensions": {
+    "component_scope":      { "score": 2, "label": "S" },
+    "requirements_clarity": { "score": 1, "label": "XS" },
+    "technical_risk":       { "score": 2, "label": "S" },
+    "file_change_estimate": { "score": 2, "label": "S" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 1, "label": "XS" }
+  },
+  "total": 9,
+  "size": "XS",
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Single domain-model component: Assistant._should_update_field and the fields_set read in _map_assistant_request (models/assistant.py). Router and repository are pass-throughs needing no change. A second helper path (_should_update_system_prompt) must also be covered, keeping this just above trivial." },
+    { "dimension": "technical_risk", "reason": "Fix aligns with an already-proven convention (model_fields_set / exclude_unset used in assistant_service, mcp_config_service, models/index). Pure logic change, trivially reversible. Slight elevation because existing unit tests (TC-1.4, TC-1.5) encode the buggy contract and must be rewritten in lockstep, and a downstream AssistantVersionService.has_configuration_changes side effect must be verified." },
+    { "dimension": "file_change_estimate", "reason": "One production file (~2 focused edits in models/assistant.py), 2-3 existing test edits (test_map_assistant_request_helpers.py, possibly test_map_assistant_request_metadata.py), plus 1-2 new regression tests, spanning src/.../models and tests/.../models." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}
