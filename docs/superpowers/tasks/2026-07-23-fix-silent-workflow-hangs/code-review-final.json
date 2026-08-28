@@ -1,0 +1,115 @@
+{
+  "decision": "request-changes",
+  "confidence": "medium",
+  "rationale": "All three lenses ran. Four blocking major findings: (1) startup_recovery only checks IN_PROGRESS child states, missing INTERRUPTED — inconsistent with fail() which cleans both; (2) startup_recovery wraps the entire scan in a single outer try/except, meaning one failed save() aborts all remaining recovery work; (3) startup_recovery uses plain 'execution_id' while fail() uses EXECUTION_ID_KEYWORD — may cause ES term-match vs full-text divergence; (4) the nested double-failure path in base_node.py (finish_state throws AND fallback write throws) has no dedicated unit test. Zero security findings. AC-2 through AC-5 are fully met; AC-1 is per-scope (UI rendering is out-of-scope per spec); AC-6 and AC-8 are partial due to the INTERRUPTED gap and missing double-failure test. 2 defer findings omitted: unbounded pagination in startup_recovery (operational concern, not a blocking correctness issue at current scale) and callbacks-see-inconsistent-state (pre-existing design issue not introduced by this diff).",
+  "risk_flags": [],
+  "business_review": [
+    {
+      "id": "AC-1",
+      "text": "LLM error in SummarizeConversationCommandNode transitions to FAILED and shows error in UI",
+      "status": "pass",
+      "notes": "Backend transition to FAILED is verified by test; UI rendering of failed step status is out of scope per spec ('Frontend changes — UI already renders Failed status correctly once the backend sets it')."
+    },
+    {
+      "id": "AC-2",
+      "text": "When interrupted, all steps that were IN_PROGRESS at interrupt time transition to INTERRUPTED",
+      "status": "pass",
+      "notes": "_interrupt_predecessor_state predicate extended to include IN_PROGRESS; test_marks_in_progress_predecessor_as_interrupted verifies."
+    },
+    {
+      "id": "AC-3",
+      "text": "finish_state() throwing inside BaseNode.__call__ does not suppress the original node exception",
+      "status": "pass",
+      "notes": "raise e is unconditional after both try/except blocks; test_original_exception_raised_when_finish_state_throws confirms RuntimeError propagates when finish_state raises OSError."
+    },
+    {
+      "id": "AC-4",
+      "text": "When finish_state() throws and direct fallback also fails, the step is recovered at next startup",
+      "status": "pass",
+      "notes": "startup_recovery.py covers the path; test_orphaned_states_are_marked_failed confirms IN_PROGRESS states under terminal executions are marked FAILED."
+    },
+    {
+      "id": "AC-5",
+      "text": "fail() transitions all in-flight step states to FAILED",
+      "status": "pass",
+      "notes": "fail() mirrors abort(); test_fail_marks_in_progress_states_as_failed verifies both IN_PROGRESS and INTERRUPTED → FAILED."
+    },
+    {
+      "id": "AC-6",
+      "text": "At startup, IN_PROGRESS states under terminal executions are marked FAILED and the count is logged",
+      "status": "partial",
+      "notes": "Only IN_PROGRESS states are recovered; INTERRUPTED child states are silently skipped (see CR-001). Logging path is correct."
+    },
+    {
+      "id": "AC-7",
+      "text": "All existing workflow execution tests pass",
+      "status": "pass",
+      "notes": "Implementation transcript confirms 65 tests passing, 0 failures across all 4 affected test suites."
+    },
+    {
+      "id": "AC-8",
+      "text": "New unit tests cover each fix",
+      "status": "partial",
+      "notes": "Fix 3 double-failure path (both finish_state and direct write fail) lacks a dedicated unit test (see CR-004)."
+    }
+  ],
+  "standards_review": [
+    {
+      "standard": "git-workflow",
+      "status": "na",
+      "notes": "Commit messages not present in diff. Branch name EPMCDME-10973_fix-silent-workflow-hangs conforms to ticket-first naming convention per git-workflow.md."
+    },
+    {
+      "standard": "code-quality",
+      "status": "pass",
+      "notes": "New module startup_recovery.py has Apache 2.0 license header. Public function has return type annotation (-> None). from __future__ import annotations present. Existing files follow established patterns."
+    },
+    {
+      "standard": "security",
+      "status": "pass",
+      "notes": "Changes are internal state management only — no auth flows, no user input parsing, no secrets handling. No security concerns identified."
+    }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "title": "startup_recovery misses INTERRUPTED child states",
+      "severity": "major",
+      "triage": "patch",
+      "location": "src/codemie/service/workflow_execution/startup_recovery.py:44",
+      "problem": "recover_orphaned_workflow_states() only marks child states with status IN_PROGRESS as FAILED. Child states in INTERRUPTED status are silently skipped. The outer loop already iterates over executions with overall_status INTERRUPTED, but the inner predicate does not match those child states. By contrast, fail() explicitly transitions both IN_PROGRESS and INTERRUPTED child states to FAILED.",
+      "impact": "WorkflowExecutionState rows stuck in INTERRUPTED after a crash are never cleaned up at startup, leaving them permanently in an intermediate status visible in the UI. The startup recovery does not fully achieve the spec's stated goal of cleaning up all orphaned in-flight states.",
+      "recommendation": "Mirror the fail() condition: change the inner predicate at line 44 to `if state.status in (WorkflowExecutionStatusEnum.IN_PROGRESS, WorkflowExecutionStatusEnum.INTERRUPTED):`"
+    },
+    {
+      "id": "CR-002",
+      "title": "startup_recovery single exception aborts entire scan",
+      "severity": "major",
+      "triage": "patch",
+      "location": "src/codemie/service/workflow_execution/startup_recovery.py:35-54",
+      "problem": "The entire triple-nested loop (over terminal statuses → executions → states) is wrapped in a single outer try/except. If any individual state.save() raises (e.g., a DB constraint violation on one row, or a stale object error), the exception is caught and the function returns immediately, silently leaving all subsequent executions and their orphaned states unprocessed.",
+      "impact": "A single corrupt or contested DB row permanently blocks recovery of all other orphaned states on every restart. The function logs 'scan failed' but gives no indication of how many states were skipped.",
+      "recommendation": "Move the exception handling inside the innermost per-state block (or per-execution block) so a failure on one row is logged and skipped while the scan continues for the rest. The outer try/except can remain as a safety net for the initial query."
+    },
+    {
+      "id": "CR-003",
+      "title": "startup_recovery uses plain 'execution_id' instead of EXECUTION_ID_KEYWORD constant",
+      "severity": "major",
+      "triage": "patch",
+      "location": "src/codemie/service/workflow_execution/startup_recovery.py:41",
+      "problem": "The WorkflowExecutionState query uses `fields={'execution_id': execution.execution_id}` while workflow_execution_service.fail() uses the constant EXECUTION_ID_KEYWORD = 'execution_id.keyword'. In Elasticsearch mode, the .keyword suffix is required for an exact-match term query; using the bare field name falls back to a full-text match which may return wrong results or miss records entirely.",
+      "impact": "In an ES-backed deployment, startup recovery may silently fail to locate orphaned states, providing false assurance that no orphans exist.",
+      "recommendation": "Import and use the same EXECUTION_ID_KEYWORD constant used in workflow_execution_service to guarantee consistent query semantics across both DB backends."
+    },
+    {
+      "id": "CR-004",
+      "title": "No test for double-failure path in BaseNode (both finish_state and fallback write fail)",
+      "severity": "major",
+      "triage": "patch",
+      "location": "tests/codemie/workflows/test_base_node_lifecycle.py",
+      "problem": "test_original_exception_raised_when_finish_state_throws sets finish_state.side_effect = OSError but does not also fail the direct fallback DB write. The nested except block where both writes fail (logging 'State will be recovered at startup') has no coverage. AC-8 requires tests for each fix, and this inner fallback is a distinct code path in Fix 3.",
+      "impact": "A regression in the double-failure branch (e.g., raise e accidentally removed, or wrong exception caught) would leave states stuck in IN_PROGRESS with no test catching it.",
+      "recommendation": "Add a test that mocks both finish_state to raise and WorkflowExecutionState.get_by_id (or state.save) to also raise, then asserts the original RuntimeError still propagates and the error log contains the 'recovered at startup' message."
+    }
+  ]
+}

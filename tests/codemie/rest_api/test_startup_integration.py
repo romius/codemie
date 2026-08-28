@@ -21,6 +21,7 @@ correctly initializes LiteLLM services, models, and cleanup tasks.
 from __future__ import annotations
 
 from contextlib import ExitStack
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -103,6 +104,31 @@ def test_initialize_preconfigured_content_runs_all_content_in_order():
                     main._initialize_preconfigured_content()
 
     assert calls == ["assistants", "skills", "workflows", "katas"]
+
+
+def test_startup_recovery_receives_cutoff_captured_before_background_execution():
+    """The recovery scan must not include workflow states created after scheduling."""
+    from codemie.rest_api.main import _schedule_startup_recovery
+
+    tasks = []
+    background_awaitable = object()
+    recovery_task = MagicMock()
+    mock_to_thread = MagicMock(return_value=background_awaitable)
+    before = datetime.now()
+
+    with (
+        patch("codemie.service.workflow_execution.startup_recovery.recover_orphaned_workflow_states") as mock_recover,
+        patch("codemie.rest_api.main.asyncio.to_thread", mock_to_thread),
+        patch("codemie.rest_api.main.asyncio.create_task", return_value=recovery_task),
+    ):
+        _schedule_startup_recovery(tasks)
+
+    after = datetime.now()
+    mock_to_thread.assert_called_once()
+    recover_callable, cutoff = mock_to_thread.call_args.args
+    assert recover_callable is mock_recover
+    assert before <= cutoff <= after
+    assert tasks == [recovery_task]
 
 
 @pytest.mark.asyncio

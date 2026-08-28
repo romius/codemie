@@ -17,6 +17,7 @@ import uuid
 import traceback
 import contextlib
 from contextlib import asynccontextmanager
+from datetime import datetime
 from urllib.parse import urlsplit
 
 from elasticsearch import ApiError
@@ -315,6 +316,22 @@ async def ensure_predefined_budgets() -> None:
     from codemie.enterprise.litellm import ensure_predefined_budgets as _ensure_predefined_budgets
 
     await _ensure_predefined_budgets()
+
+
+def _schedule_startup_recovery(tasks: list[asyncio.Task]) -> None:
+    """Schedule orphaned workflow state recovery as a background task after readiness.
+
+    Running this after yield means the app is considered ready immediately; the scan
+    happens in a thread so the event loop is not blocked.
+    """
+    from codemie.service.workflow_execution.startup_recovery import recover_orphaned_workflow_states
+
+    started_before = datetime.now()
+    recovery_task = asyncio.create_task(
+        asyncio.to_thread(recover_orphaned_workflow_states, started_before),
+        name="startup_recovery",
+    )
+    tasks.append(recovery_task)
 
 
 def _schedule_budget_reconciliation(app: FastAPI, tasks: list[asyncio.Task]) -> None:
@@ -772,6 +789,7 @@ async def lifespan(app: FastAPI):
 
     _setup_metrics_rotation_scheduler(app)
     _schedule_budget_reconciliation(app, tasks)
+    _schedule_startup_recovery(tasks)
 
     yield
 

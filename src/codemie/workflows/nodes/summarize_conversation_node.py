@@ -14,9 +14,11 @@
 
 from typing import Any, Type
 
+import httpx
 from langchain_core.messages import HumanMessage, RemoveMessage
 from langgraph.constants import END
 from langgraph.types import Command
+from openai import APIConnectionError, APITimeoutError, RateLimitError
 from pydantic import BaseModel
 
 from codemie.configs import logger
@@ -31,6 +33,19 @@ from codemie.workflows.memory_utils import _create_message_batches
 from codemie.workflows.models import AgentMessages
 from codemie.workflows.nodes.base_node import BaseNode, StateSchemaType
 from codemie.workflows.utils import get_messages_from_state_schema, should_summarize_memory, prepare_messages
+
+# Sentinel: summarization was needed but skipped so the graph continues without rewriting messages.
+SKIP_SUMMARIZATION = object()
+
+_TRANSIENT_LLM_ERRORS = (
+    ConnectionError,
+    TimeoutError,
+    httpx.TimeoutException,
+    httpx.RequestError,
+    APITimeoutError,
+    APIConnectionError,
+    RateLimitError,
+)
 
 
 class SummarizeConversationNodeConfigSchema(BaseModel):
@@ -80,38 +95,33 @@ class SummarizeConversationCommandNode(BaseNode[AgentMessages]):
 
     def execute(self, state_schema: AgentMessages, execution_context: dict):
         messages = get_messages_from_state_schema(state_schema=state_schema)
-        summary = ""
+
+        total_tokens, should_summarize = should_summarize_memory(self.workflow_config, messages)
+
+        if not should_summarize:
+            return None
+
+        logger.info(f"Summarizing workflow conversation because it's too long, next: {state_schema.get(NEXT_KEY)}")
         try:
-            total_tokens, should_summarize = should_summarize_memory(self.workflow_config, messages)
-
-            if not should_summarize:
-                return None
-
-            logger.info(f"Summarizing workflow conversation because it's too long, next: {state_schema.get(NEXT_KEY)}")
-            # If total tokens exceed MAX_TOKENS_LIMIT, process in batches
             if total_tokens > MAX_TOKENS_LIMIT:
                 messages_to_process = messages[1:]
 
                 message_batches = _create_message_batches(messages=messages_to_process, max_tokens=MAX_TOKENS_LIMIT)
 
-                # Process each batch and collect summaries
                 batch_summaries = []
                 llm = get_llm_by_credentials(request_id=self.request_id)
                 for batch in message_batches:
                     response = llm.invoke(batch + [HumanMessage(content=result_summarizer_prompt)])
                     batch_summaries.append(str(response.content))
 
-                # Combine all summaries
-                summary = "\n\nCombined Summary:\n" + "\n".join(batch_summaries)
+                return "\n\nCombined Summary:\n" + "\n".join(batch_summaries)
             else:
                 llm = get_llm_by_credentials(request_id=self.request_id)
                 response = llm.invoke(messages + [HumanMessage(content=result_summarizer_prompt)])
-                summary = str(response.content)
-
-            return summary
-        except Exception as e:
-            logger.error(f"Error in SummarizeConversationCommandNode: {e}")
-            return summary
+                return str(response.content)
+        except _TRANSIENT_LLM_ERRORS as transient:
+            logger.warning(f"Summarization skipped due to transient error: {transient}")
+            return SKIP_SUMMARIZATION
 
     def get_task(self, *arg, **kwargs):
         return "Summarizing workflow conversation because it's too long"
@@ -130,9 +140,9 @@ class SummarizeConversationCommandNode(BaseNode[AgentMessages]):
 
         Returns:
             str: The markdown string as-is (when summarization occurred),
-                 or JSON "null" (when no summarization was needed)
+                 or JSON "null" (when no summarization was needed or it was skipped)
         """
-        if output is None:
+        if output is None or output is SKIP_SUMMARIZATION:
             return "null"
         return str(output)
 
@@ -141,6 +151,11 @@ class SummarizeConversationCommandNode(BaseNode[AgentMessages]):
     ) -> Command | None:
         # This node might have been called by mistake because of an issue,
         # so we should not update the state if the raw_output is None
+        if raw_output is SKIP_SUMMARIZATION:
+            next_node_list = state_schema.get(NEXT_KEY)
+            next_node = next_node_list[-1] if next_node_list else END
+            logger.warning(f"Summarization skipped due to transient error; continuing to next node: {next_node}")
+            return Command(goto=next_node)
         if not raw_output:
             return Command(goto=END)
 

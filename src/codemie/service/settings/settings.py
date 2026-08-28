@@ -892,7 +892,7 @@ class SettingsService(BaseSettingsService):
         )
 
     @classmethod
-    def get_config(
+    def get_config[T](
         cls,
         config_class: Type[T],
         user_id: str = None,

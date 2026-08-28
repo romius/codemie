@@ -15,13 +15,20 @@
 import json
 import traceback
 from abc import ABC, abstractmethod
+from datetime import datetime
 from typing import Generic, TypeVar, Type, Any, Optional
 
 from langgraph.types import Command
 
+from codemie.chains.base import StreamedGenerationResult, WorkflowStateEvent, WorkflowStateEventType
 from codemie.configs import logger
 from codemie.core.exceptions import MCPAuthenticationRequiredException, TaskException
-from codemie.core.workflow_models import WorkflowExecutionStatusEnum, WorkflowState, WorkflowConfig
+from codemie.core.workflow_models import (
+    WorkflowExecutionStatusEnum,
+    WorkflowExecutionState,
+    WorkflowState,
+    WorkflowConfig,
+)
 from codemie.core.thought_queue import ThoughtQueue
 from codemie.rest_api.models.assistant import AssistantBase
 from codemie.rest_api.models.guardrail import GuardrailEntity, GuardrailSource
@@ -185,28 +192,10 @@ class BaseNode(ABC, Generic[StateSchemaType]):
         raw_output = None
 
         try:
-            if self._is_execution_aborted():
-                raise ExecutionAbortedException
-
-            # Call the on_start method of each callback
-            for callback in self.callbacks:
-                callback.on_node_start(
-                    state_id=execution_state_id,
-                    node_name=current_node_name,
-                    task=task,
-                    execution_context=execution_context,
-                )
-
-            raw_output = self.execute(state_schema, execution_context)
-            processed_output = self.post_process_output(state_schema, task, raw_output)
-
-            return self._complete_successful_execution(
-                state_schema=state_schema,
-                execution_context=execution_context,
-                execution_state_id=execution_state_id,
-                raw_output=raw_output,
-                processed_output=processed_output,
+            raw_output, final_state = self._run_success_path(
+                state_schema, execution_context, execution_state_id, task, current_node_name
             )
+            return final_state
         except ExecutionAbortedException:
             self.workflow_execution_service.abort_state(execution_state_id)
             return {MESSAGES_VARIABLE: [ABORTED_MSG], NEXT_KEY: [END_NODE]}
@@ -218,15 +207,28 @@ class BaseNode(ABC, Generic[StateSchemaType]):
         finally:
             self.after_execution(result=raw_output, state_schema=state_schema, args=self.args, kwargs=self.kwargs)
 
-    def _complete_successful_execution(
+    def _run_success_path(
         self,
         state_schema: Type[StateSchemaType],
         execution_context: dict,
         execution_state_id: str,
-        raw_output,
-        processed_output,
-    ):
-        """Finish state, notify callbacks, record transition, and return final state."""
+        task: str,
+        current_node_name: str,
+    ) -> tuple[Any, Any]:
+        if self._is_execution_aborted():
+            raise ExecutionAbortedException
+
+        for callback in self.callbacks:
+            callback.on_node_start(
+                state_id=execution_state_id,
+                node_name=current_node_name,
+                task=task,
+                execution_context=execution_context,
+            )
+
+        raw_output = self.execute(state_schema, execution_context)
+        processed_output = self.post_process_output(state_schema, task, raw_output)
+
         if self._is_execution_aborted():
             status = WorkflowExecutionStatusEnum.ABORTED
         else:
@@ -246,16 +248,11 @@ class BaseNode(ABC, Generic[StateSchemaType]):
         final_state = self.finalize_and_update_state(
             raw_output=raw_output,
             processed_output=processed_output,
-            success=True,  # add logic to make it dynamic
+            success=True,
             state_schema=state_schema,
         )
 
-        # Record transition from previous state to current state
-        # workflow_context captures the state at the transition point (input to this node)
         previous_state_id = state_schema.get(PREVIOUS_EXECUTION_STATE_ID)
-
-        # Serialize INPUT state (before node execution) with size limits
-        # Exclude internal tracking fields from workflow_context
         state_for_serialization = {
             k: v
             for k, v in state_schema.items()
@@ -281,18 +278,51 @@ class BaseNode(ABC, Generic[StateSchemaType]):
             final_state[PREVIOUS_EXECUTION_STATE_NAMES] = prev_state_names
             final_state[PREVIOUS_EXECUTION_STATE_ID] = execution_state_id
 
-        return final_state
+        return raw_output, final_state
+
+    def _direct_state_update(self, execution_state_id: str) -> None:
+        """Fallback when finish_state fails: update the state row directly and emit the stream event."""
+        try:
+            state = WorkflowExecutionState.get_by_id(execution_state_id)
+            if state and state.status == WorkflowExecutionStatusEnum.IN_PROGRESS:
+                state.status = WorkflowExecutionStatusEnum.FAILED
+                completed_at = datetime.now()
+                state.completed_at = completed_at
+                state.save()
+                if self.thought_queue:
+                    state_event = WorkflowStateEvent(
+                        id=state.id,
+                        name=state.name,
+                        task=state.task,
+                        status=WorkflowExecutionStatusEnum.FAILED.value,
+                        event_type=WorkflowStateEventType.STATE_FINISH,
+                        started_at=state.started_at.isoformat() if state.started_at else None,
+                        completed_at=completed_at.isoformat(),
+                    )
+                    self.thought_queue.send(StreamedGenerationResult(workflow_state=state_event).model_dump_json())
+        except Exception as direct_exc:
+            logger.error(
+                f"Direct state update also failed for {execution_state_id}: {direct_exc}. "
+                + "State will be recovered at startup."
+            )
 
     def _handle_execution_exception(self, e: Exception, execution_state_id: str):
         """Handle generic execution failure, including LiteLLM BadRequestError."""
         from litellm.exceptions import BadRequestError as LiteLLMBadRequestError
 
         self.handle_execution_failure(e)
-        self.workflow_execution_service.finish_state(
-            execution_state_id,
-            output=str(e),
-            status=WorkflowExecutionStatusEnum.FAILED,
-        )
+        try:
+            self.workflow_execution_service.finish_state(
+                execution_state_id,
+                output=str(e),
+                status=WorkflowExecutionStatusEnum.FAILED,
+            )
+        except Exception as finish_exc:
+            logger.error(
+                f"finish_state failed for state {execution_state_id}: {finish_exc}. "
+                + "Attempting direct state update."
+            )
+            self._direct_state_update(execution_state_id)
         for callback in self.callbacks:
             callback.on_node_fail(exception=e, execution_state_id=execution_state_id)
 
@@ -304,7 +334,7 @@ class BaseNode(ABC, Generic[StateSchemaType]):
             )
             return {NEXT_KEY: [END_NODE]}
 
-        raise e
+        raise
 
     def _handle_mcp_auth_required(
         self,

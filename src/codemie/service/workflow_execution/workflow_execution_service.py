@@ -73,6 +73,7 @@ class WorkflowExecutionService:
                 self._update_assistant_response_in_history(error_message)
 
                 self.workflow_execution.update(refresh=True)
+                self._cleanup_inflight_states()
 
         if not self.workflow_execution:
             self._flush_llm_usage_metric(
@@ -89,6 +90,31 @@ class WorkflowExecutionService:
             additional_attributes={"error_class": error_class, "error_cause": error_message},
         )
         request_summary_manager.clear_summary(self.workflow_execution_id)
+
+    def _cleanup_inflight_states(
+        self, target_status: WorkflowExecutionStatusEnum = WorkflowExecutionStatusEnum.FAILED
+    ) -> None:
+        """Mark all in-flight step states as target_status; per-state failures are logged and skipped."""
+        try:
+            states = WorkflowExecutionState.get_all_by_fields(fields={EXECUTION_ID_KEYWORD: self.workflow_execution_id})
+        except Exception as cleanup_exc:
+            logger.error(f"Failed to query in-flight states for execution {self.workflow_execution_id}: {cleanup_exc}")
+            states = []
+
+        for state in states:
+            if state.status in (
+                WorkflowExecutionStatusEnum.IN_PROGRESS,
+                WorkflowExecutionStatusEnum.INTERRUPTED,
+            ):
+                try:
+                    state.status = target_status
+                    state.completed_at = datetime.now()
+                    state.save()
+                except Exception as cleanup_exc:
+                    logger.error(
+                        f"Failed to mark state as {target_status} for execution "
+                        f"{self.workflow_execution_id}: {cleanup_exc}. Continuing cleanup."
+                    )
 
     def abort(self):
         with self.workflow_execution_lock:
@@ -109,17 +135,7 @@ class WorkflowExecutionService:
                     self.workflow_execution.tokens_usage = calculated_tokens
 
                 self.workflow_execution.update(refresh=True)
-
-                states = WorkflowExecutionState.get_all_by_fields(
-                    fields={EXECUTION_ID_KEYWORD: self.workflow_execution_id}
-                )
-                for state in states:
-                    if state.status in (
-                        WorkflowExecutionStatusEnum.IN_PROGRESS,
-                        WorkflowExecutionStatusEnum.INTERRUPTED,
-                    ):
-                        state.status = WorkflowExecutionStatusEnum.ABORTED
-                        state.save()
+                self._cleanup_inflight_states(WorkflowExecutionStatusEnum.ABORTED)
 
         if not self.workflow_execution:
             self._flush_llm_usage_metric(WorkflowExecutionStatusEnum.ABORTED)
@@ -495,18 +511,40 @@ class WorkflowExecutionService:
             f"thoughts count: {len(thoughts)}"
         )
 
-    def _interrupt_predecessor_state(self, interrupted_state_id: str) -> None:
-        """Marks states that transition directly into the interrupted state as INTERRUPTED."""
+    def _interrupt_predecessor_state(self, interrupted_state_id: str) -> Optional[str]:
+        """Marks states that transition directly into the interrupted state as INTERRUPTED.
+
+        Returns the predecessor execution-state id on success, or None when no matching
+        predecessor exists or the state query failed (logged). Persist failures are
+        re-raised so callers can distinguish "not found" from "found but save failed".
+        """
         predecessor_ids = {s.id for s in self.workflow_config.states if interrupted_state_id in s.next.leads_to()}
-        states = WorkflowExecutionState.get_all_by_fields(
-            fields={EXECUTION_ID_KEYWORD: self.workflow_execution_id}, order_by="update_date", order_desc=True
-        )
+        try:
+            states = WorkflowExecutionState.get_all_by_fields(
+                fields={EXECUTION_ID_KEYWORD: self.workflow_execution_id}, order_by="update_date", order_desc=True
+            )
+        except Exception as exc:
+            logger.error(
+                f"Failed to query states to interrupt predecessor for execution {self.workflow_execution_id}: {exc}"
+            )
+            return None
 
         for state in states:
-            if state.state_id in predecessor_ids and state.status == WorkflowExecutionStatusEnum.SUCCEEDED:
-                state.status = WorkflowExecutionStatusEnum.INTERRUPTED
-                state.save()
+            if state.state_id in predecessor_ids and state.status in (
+                WorkflowExecutionStatusEnum.SUCCEEDED,
+                WorkflowExecutionStatusEnum.IN_PROGRESS,
+            ):
+                try:
+                    state.status = WorkflowExecutionStatusEnum.INTERRUPTED
+                    state.save()
+                except Exception as exc:
+                    logger.error(
+                        f"Failed to mark predecessor state as INTERRUPTED for execution "
+                        f"{self.workflow_execution_id}: {exc}"
+                    )
+                    raise
                 return state.id
+        return None
 
     def _send_interrupted_event(self, interrupted_state_id: str, execution_state_id: Optional[str] = None) -> None:
         """Stream a STATE_INTERRUPTED event to the client with last=True to signal end-of-stream."""

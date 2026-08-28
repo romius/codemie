@@ -86,14 +86,14 @@ class TestInterruptPredecessorState:
         state_a.save.assert_not_called()
 
     @patch("codemie.service.workflow_execution.workflow_execution_service.WorkflowExecutionState.get_all_by_fields")
-    def test_skips_non_succeeded_predecessor(self, mock_get_states, service):
+    def test_marks_in_progress_predecessor_as_interrupted(self, mock_get_states, service):
         state_a = _make_state("state_a", WorkflowExecutionStatusEnum.IN_PROGRESS)
         mock_get_states.return_value = [state_a]
 
         service._interrupt_predecessor_state("state_b")
 
-        assert state_a.status == WorkflowExecutionStatusEnum.IN_PROGRESS
-        state_a.save.assert_not_called()
+        assert state_a.status == WorkflowExecutionStatusEnum.INTERRUPTED
+        state_a.save.assert_called_once()
 
     @patch("codemie.service.workflow_execution.workflow_execution_service.WorkflowExecutionState.get_all_by_fields")
     def test_marks_only_last_iteration_in_loop(self, mock_get_states, service):
@@ -123,6 +123,56 @@ class TestInterruptPredecessorState:
             order_by="update_date",
             order_desc=True,
         )
+
+    @patch("codemie.service.workflow_execution.workflow_execution_service.WorkflowExecutionState.get_all_by_fields")
+    def test_save_failure_is_reraised(self, mock_get_states, service):
+        state_a = _make_state("state_a", WorkflowExecutionStatusEnum.SUCCEEDED)
+        state_a.save.side_effect = OSError("db down")
+        mock_get_states.return_value = [state_a]
+
+        with pytest.raises(OSError, match="db down"):
+            service._interrupt_predecessor_state("state_b")
+
+    @patch("codemie.service.workflow_execution.workflow_execution_service.WorkflowExecutionState.get_all_by_fields")
+    def test_query_failure_returns_none(self, mock_get_states, service):
+        mock_get_states.side_effect = OSError("index unavailable")
+
+        assert service._interrupt_predecessor_state("state_b") is None
+
+
+class TestInterrupt:
+    @patch("codemie.service.workflow_execution.workflow_execution_service.WorkflowExecutionState.get_all_by_fields")
+    def test_propagates_and_does_not_send_event_when_predecessor_save_fails(self, mock_get_states, service):
+        """A partial predecessor update must not be reported as a successful interrupt."""
+        state_a = _make_state("state_a", WorkflowExecutionStatusEnum.IN_PROGRESS)
+        state_a.save.side_effect = OSError("db down")
+        mock_get_states.return_value = [state_a]
+
+        with (
+            patch.object(service, "_refresh_workflow_execution"),
+            patch.object(service, "_calculate_tokens_usage", return_value={}),
+            patch.object(service, "_send_interrupted_event") as mock_event,
+        ):
+            with pytest.raises(OSError, match="db down"):
+                service.interrupt("state_b")
+
+        assert service.workflow_execution.overall_status == WorkflowExecutionStatusEnum.INTERRUPTED
+        mock_event.assert_not_called()
+
+    @patch("codemie.service.workflow_execution.workflow_execution_service.WorkflowExecutionState.get_all_by_fields")
+    def test_passes_predecessor_id_when_interrupt_succeeds(self, mock_get_states, service):
+        state_a = _make_state("state_a", WorkflowExecutionStatusEnum.SUCCEEDED)
+        state_a.id = "pred-1"
+        mock_get_states.return_value = [state_a]
+
+        with (
+            patch.object(service, "_refresh_workflow_execution"),
+            patch.object(service, "_calculate_tokens_usage", return_value={}),
+            patch.object(service, "_send_interrupted_event") as mock_event,
+        ):
+            service.interrupt("state_b")
+
+        mock_event.assert_called_once_with("state_b", "pred-1")
 
 
 class TestResumeStates:
@@ -208,6 +258,55 @@ class TestStartState:
 
         _, kwargs = mock_state_cls.call_args
         assert kwargs["iteration_number"] is None
+
+
+class TestAbort:
+    def _patch_abort_internals(self, service):
+        return (
+            patch.object(service, "_refresh_workflow_execution"),
+            patch.object(service, "_calculate_tokens_usage", return_value={}),
+            patch("codemie.service.workflow_execution.workflow_execution_service.WorkflowMonitoringService"),
+            patch("codemie.service.workflow_execution.workflow_execution_service.request_summary_manager"),
+        )
+
+    @patch("codemie.service.workflow_execution.workflow_execution_service.WorkflowExecutionState.get_all_by_fields")
+    def test_db_failure_on_get_all_by_fields_does_not_propagate(self, mock_get_states, service):
+        """abort() must swallow a DB failure when querying child states, just like fail() does."""
+        mock_get_states.side_effect = OSError("ES unreachable")
+
+        patches = self._patch_abort_internals(service)
+        with patches[0], patches[1], patches[2], patches[3]:
+            service.abort()  # must not raise
+
+        assert service.workflow_execution.overall_status == WorkflowExecutionStatusEnum.ABORTED
+
+    @patch("codemie.service.workflow_execution.workflow_execution_service.WorkflowExecutionState.get_all_by_fields")
+    def test_per_state_save_failure_does_not_abort_remaining_states(self, mock_get_states, service):
+        """A save() failure on one child state must not prevent remaining states from being marked ABORTED."""
+        state_bad = _make_state("bad", WorkflowExecutionStatusEnum.IN_PROGRESS)
+        state_bad.save.side_effect = OSError("constraint violation")
+        state_good = _make_state("good", WorkflowExecutionStatusEnum.IN_PROGRESS)
+        mock_get_states.return_value = [state_bad, state_good]
+
+        patches = self._patch_abort_internals(service)
+        with patches[0], patches[1], patches[2], patches[3]:
+            service.abort()  # must not raise
+
+        state_bad.save.assert_called_once()
+        state_good.save.assert_called_once()
+
+    @patch("codemie.service.workflow_execution.workflow_execution_service.WorkflowExecutionState.get_all_by_fields")
+    def test_completed_at_set_on_aborted_states(self, mock_get_states, service):
+        """abort() must set completed_at on child states, matching fail() behaviour."""
+        state = _make_state("state_x", WorkflowExecutionStatusEnum.IN_PROGRESS)
+        mock_get_states.return_value = [state]
+
+        patches = self._patch_abort_internals(service)
+        with patches[0], patches[1], patches[2], patches[3]:
+            service.abort()
+
+        assert state.completed_at is not None
+        assert state.status == WorkflowExecutionStatusEnum.ABORTED
 
 
 class TestSendInterruptedEvent:
@@ -390,3 +489,26 @@ class TestAuthenticationRequired:
         assert service.workflow_execution.overall_status == WorkflowExecutionStatusEnum.AUTHENTICATION_REQUIRED
         assert service.workflow_execution.output == output
         service.workflow_execution.update.assert_called_with(refresh=True)
+
+
+class TestFail:
+    @patch("codemie.service.workflow_execution.workflow_execution_service.WorkflowExecutionState.get_all_by_fields")
+    @patch("codemie.service.workflow_execution.workflow_execution_service.WorkflowMonitoringService")
+    def test_fail_marks_in_progress_states_as_failed(self, mock_monitoring, mock_get_states, service):
+        """fail() must transition any IN_PROGRESS or INTERRUPTED step states to FAILED."""
+        in_progress = _make_state("state_a", WorkflowExecutionStatusEnum.IN_PROGRESS)
+        interrupted = _make_state("state_b", WorkflowExecutionStatusEnum.INTERRUPTED)
+        succeeded = _make_state("state_c", WorkflowExecutionStatusEnum.SUCCEEDED)
+        mock_get_states.return_value = [in_progress, interrupted, succeeded]
+
+        with patch.object(service, "_refresh_workflow_execution"):
+            with patch.object(service, "_calculate_tokens_usage", return_value={}):
+                with patch.object(service, "_update_assistant_response_in_history"):
+                    service.fail(error_class="RuntimeError", error_message="boom")
+
+        assert in_progress.status == WorkflowExecutionStatusEnum.FAILED
+        in_progress.save.assert_called_once()
+        assert interrupted.status == WorkflowExecutionStatusEnum.FAILED
+        interrupted.save.assert_called_once()
+        assert succeeded.status == WorkflowExecutionStatusEnum.SUCCEEDED
+        succeeded.save.assert_not_called()

@@ -28,6 +28,7 @@ This module tests the following critical functionality:
 - append_to_context semantics for output_key and JSON schema output
 """
 
+import contextlib
 import pytest
 from unittest.mock import Mock, patch
 from langgraph.types import Command
@@ -375,6 +376,70 @@ def test_node_execution_failure_with_exception_handling(
 
     # Verify after_execution was called (finally block)
     assert after_execution_called
+
+
+def test_original_exception_raised_when_finish_state_throws(
+    mock_workflow_execution_service, mock_thought_queue, mock_callbacks
+):
+    """
+    When finish_state() itself throws inside BaseNode's exception handler,
+    the ORIGINAL node exception must still be re-raised unconditionally.
+    """
+    workflow_state = WorkflowState(
+        id="test_node",
+        task="Test",
+        assistant_id="assistant_1",
+        next=WorkflowNextState(state_id="next"),
+    )
+    state_schema = {MESSAGES_VARIABLE: [], CONTEXT_STORE_VARIABLE: {}}
+
+    node = MockNode(
+        callbacks=mock_callbacks,
+        workflow_execution_service=mock_workflow_execution_service,
+        thought_queue=mock_thought_queue,
+        workflow_state=workflow_state,
+    )
+
+    original_exc = RuntimeError("node execute failed")
+    node.execute = Mock(side_effect=original_exc)
+
+    mock_workflow_execution_service.finish_state.side_effect = OSError("DB connection lost")
+
+    with pytest.raises(RuntimeError, match="node execute failed"):
+        node(state_schema)
+
+
+@patch("codemie.workflows.nodes.base_node.WorkflowExecutionState")
+def test_original_exception_raised_when_both_state_writes_fail(
+    mock_wes_class, mock_workflow_execution_service, mock_thought_queue, mock_callbacks
+):
+    """
+    When finish_state() throws AND the direct fallback DB write also fails,
+    the ORIGINAL node exception must still be re-raised unconditionally.
+    """
+    workflow_state = WorkflowState(
+        id="test_node",
+        task="Test",
+        assistant_id="assistant_1",
+        next=WorkflowNextState(state_id="next"),
+    )
+    state_schema = {MESSAGES_VARIABLE: [], CONTEXT_STORE_VARIABLE: {}}
+
+    node = MockNode(
+        callbacks=mock_callbacks,
+        workflow_execution_service=mock_workflow_execution_service,
+        thought_queue=mock_thought_queue,
+        workflow_state=workflow_state,
+    )
+
+    original_exc = RuntimeError("node execute failed")
+    node.execute = Mock(side_effect=original_exc)
+
+    mock_workflow_execution_service.finish_state.side_effect = OSError("DB connection lost")
+    mock_wes_class.get_by_id.side_effect = OSError("DB still down")
+
+    with pytest.raises(RuntimeError, match="node execute failed"):
+        node(state_schema)
 
 
 def test_state_finalization_with_output_key_configuration(
@@ -1752,3 +1817,61 @@ class TestStateId:
         _, kwargs = mock_workflow_execution_service.start_state.call_args
         assert kwargs["workflow_state_id"] == "assistant_2 1 of 5"
         assert kwargs["state_id"] == "assistant_2"
+
+
+class TestHandleExecutionException:
+    """Tests for _handle_execution_exception error handling behaviour."""
+
+    def _make_node(self, mock_workflow_execution_service, mock_thought_queue):
+        return MockNode(
+            callbacks=[],
+            workflow_execution_service=mock_workflow_execution_service,
+            thought_queue=mock_thought_queue,
+        )
+
+    def test_handle_exception_uses_bare_raise_not_raise_e(self, mock_workflow_execution_service, mock_thought_queue):
+        """_handle_execution_exception must use bare raise (not 'raise e') to preserve traceback.
+
+        With 'raise e' Sentry/Datadog group the error at base_node.py because raise e
+        replaces __traceback__ with a new one starting at that line, hiding the original
+        raise site.
+        """
+        import inspect
+        from codemie.workflows.nodes import base_node as base_node_module
+
+        source = inspect.getsource(base_node_module.BaseNode._handle_execution_exception)
+        raise_statements = [line.strip() for line in source.splitlines() if line.strip() == "raise e"]
+        assert not raise_statements, (
+            "_handle_execution_exception contains 'raise e'; replace with bare 'raise' "
+            "to preserve the original exception traceback for Sentry/Datadog grouping."
+        )
+
+    @patch("codemie.workflows.nodes.base_node.WorkflowExecutionState.get_by_id")
+    def test_fallback_sends_sse_state_finish_event_when_finish_state_fails(
+        self, mock_get_by_id, mock_workflow_execution_service, mock_thought_queue
+    ):
+        """When finish_state raises, the fallback must still emit STATE_FINISH to thought_queue."""
+        import json
+        from codemie.core.workflow_models import WorkflowExecutionStatusEnum
+
+        mock_workflow_execution_service.finish_state.side_effect = RuntimeError("DB down")
+
+        mock_state = Mock()
+        mock_state.status = WorkflowExecutionStatusEnum.IN_PROGRESS
+        mock_state.id = "state-1"
+        mock_state.name = "test_node"
+        mock_state.task = "some task"
+        mock_state.started_at = None
+        mock_state.completed_at = None
+        mock_get_by_id.return_value = mock_state
+
+        node = self._make_node(mock_workflow_execution_service, mock_thought_queue)
+
+        with contextlib.suppress(RuntimeError):
+            node._handle_execution_exception(RuntimeError("execution error"), "state-1")
+
+        mock_thought_queue.send.assert_called()
+        sent_json = mock_thought_queue.send.call_args[0][0]
+        sent_data = json.loads(sent_json)
+        workflow_state = sent_data.get("workflow_state", {})
+        assert workflow_state.get("status") == WorkflowExecutionStatusEnum.FAILED.value
