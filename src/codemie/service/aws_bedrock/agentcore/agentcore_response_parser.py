@@ -267,7 +267,7 @@ class AgentcoreResponseParser:
                 args = json.loads(args)
             except json.JSONDecodeError:
                 return args
-        return json.dumps(args)
+        return json.dumps(args, ensure_ascii=False)
 
     @staticmethod
     def _make_thought(text: str, name: Any = None, args: Any = None, in_progress: bool = False) -> Thought:

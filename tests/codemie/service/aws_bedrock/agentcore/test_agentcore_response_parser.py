@@ -103,6 +103,57 @@ def test_parse_json_reasoning_with_name_and_args():
     assert '"q": "weather"' in thoughts[0].input_text
 
 
+def test_parse_json_reasoning_preserves_non_ascii_args():
+    """AC #5: non-ASCII tool args land in Thought.input_text as readable UTF-8, not \\uXXXX."""
+    parser = AgentcoreResponseParser()
+    body = json.dumps(
+        {
+            "output": "done",
+            "thinking": "reasoning text",
+            "tool": "SearchTool",
+            "args": {"q": "Bakı şəhəri", "note": "Привет 😀"},
+        },
+        ensure_ascii=False,
+    ).encode("utf-8")
+    reasoning = AgentcoreReasoningConfig(
+        text_path="thinking",
+        active_path="unused",
+        name_path="tool",
+        args_path="args",
+    )
+    text, thoughts = parser.parse_json(body, _json_response_config("output", reasoning))
+
+    input_text = thoughts[0].input_text
+    assert "Bakı şəhəri" in input_text
+    assert "Привет 😀" in input_text
+    assert "\\u" not in input_text
+    assert json.loads(input_text) == {"q": "Bakı şəhəri", "note": "Привет 😀"}
+
+
+def test_parse_json_reasoning_ascii_args_unaffected():
+    """AC #6: ASCII-only tool args are unchanged by the encoding fix."""
+    parser = AgentcoreResponseParser()
+    body = json.dumps(
+        {
+            "output": "done",
+            "thinking": "reasoning text",
+            "tool": "SearchTool",
+            "args": {"q": "weather", "count": 3},
+        }
+    ).encode()
+    reasoning = AgentcoreReasoningConfig(
+        text_path="thinking",
+        active_path="unused",
+        name_path="tool",
+        args_path="args",
+    )
+    text, thoughts = parser.parse_json(body, _json_response_config("output", reasoning))
+
+    input_text = thoughts[0].input_text
+    assert "\\u" not in input_text
+    assert json.loads(input_text) == {"q": "weather", "count": 3}
+
+
 # --- parse_streaming ---
 
 

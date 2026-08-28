@@ -112,3 +112,51 @@ class TestLangGraphEventAdapter:
         parsed = json.loads(tool_args_str)  # Should not raise JSONDecodeError
         assert parsed["query"] == 'MATCH (n) WHERE n.name = "test" RETURN n'
         assert parsed["repository_ids"] == ["6a565360-fd33-4bd6-9510-aa333670bf72"]
+
+    def test_parse_update_type_preserves_non_ascii_tool_args(self, mock_agent):
+        """AC #5: non-ASCII tool args render as readable UTF-8, not \\uXXXX escapes."""
+        adapter = LangGraphEventAdapter(mock_agent)
+
+        ai_message = AIMessage(content="")
+        ai_message.tool_calls = [
+            {
+                "name": "search_tool",
+                "args": {"query": "Bakı şəhəri", "note": "Привет 😀"},
+                "id": "call-non-ascii",
+            }
+        ]
+
+        value = {"agent": {"messages": [ai_message]}}
+        adapter.parse_update_type(value)
+
+        mock_agent._on_tool_start.assert_called_once()
+        tool_args_str = mock_agent._on_tool_start.call_args.args[1]
+
+        # Readable characters are present verbatim, and no \uXXXX escapes leaked.
+        assert "Bakı şəhəri" in tool_args_str
+        assert "Привет 😀" in tool_args_str
+        assert "\\u" not in tool_args_str
+        # Still valid JSON that round-trips to the original values.
+        assert json.loads(tool_args_str) == {"query": "Bakı şəhəri", "note": "Привет 😀"}
+
+    def test_parse_update_type_ascii_args_unaffected(self, mock_agent):
+        """AC #6: ASCII-only tool args are unchanged by the encoding fix."""
+        adapter = LangGraphEventAdapter(mock_agent)
+
+        ai_message = AIMessage(content="")
+        ai_message.tool_calls = [
+            {
+                "name": "search_tool",
+                "args": {"query": "hello world", "count": 3},
+                "id": "call-ascii",
+            }
+        ]
+
+        value = {"agent": {"messages": [ai_message]}}
+        adapter.parse_update_type(value)
+
+        mock_agent._on_tool_start.assert_called_once()
+        tool_args_str = mock_agent._on_tool_start.call_args.args[1]
+
+        assert "\\u" not in tool_args_str
+        assert json.loads(tool_args_str) == {"query": "hello world", "count": 3}

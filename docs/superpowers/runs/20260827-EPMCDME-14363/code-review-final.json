@@ -1,0 +1,39 @@
+{
+  "decision": "approve",
+  "rationale": "Two-line change in src/codemie/agents/langgraph_event_adapter.py: both json.dumps(unpack_json_strings(tool_call[\"args\"])) calls — the streaming tool_calls branch (line 161) and the regular_calls branch (line 228) — now pass ensure_ascii=False. This makes non-ASCII tool arguments (Cyrillic, Azerbaijani, emoji) render as UTF-8 in the emitted tool-start events and debug logs instead of \\uXXXX escape sequences. The change affects only the string encoding of the logged/emitted value; the data flow, payload structure, unpack_json_strings behaviour, and the _on_tool_start telemetry contract are unchanged. json.dumps output is consumed by logger.debug and _on_tool_start over UTF-8 streams, so there is no security, correctness, or performance concern. The two call sites are edited identically. No new imports or dependencies.",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    {
+      "criterion": "Non-ASCII tool arguments are preserved (not \\uXXXX-escaped) in tool-start events and logs",
+      "status": "pass",
+      "notes": "ensure_ascii=False applied at both json.dumps sites (langgraph_event_adapter.py:161 and :228)."
+    },
+    {
+      "criterion": "No change to tool-call data flow or payload structure",
+      "status": "pass",
+      "notes": "Only the string encoding of the serialized value changes; unpack_json_strings input and _on_tool_start signature are untouched."
+    }
+  ],
+  "standards_review": [
+    {
+      "standard": "code-quality: ruff format & check",
+      "status": "pass",
+      "notes": "make ruff — All checks passed! Both edited lines carry a space after the comma, matching ruff formatting."
+    },
+    {
+      "standard": "license headers",
+      "status": "pass",
+      "notes": "make license-check — Checked 2054 files, 0 missing license headers."
+    },
+    {
+      "standard": "git-workflow: commit format & hygiene",
+      "status": "pass",
+      "notes": "Single focused commit prefixed EPMCDME-14363:; no extraneous files (credentials.json and result artifacts removed, credentials.json added to .gitignore)."
+    }
+  ],
+  "findings": [],
+  "superseded_findings": [],
+  "finding_status": [],
+  "superseded_by": null
+}

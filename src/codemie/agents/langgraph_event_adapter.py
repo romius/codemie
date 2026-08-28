@@ -158,7 +158,7 @@ class LangGraphEventAdapter:
                 self.agent._on_llm_end(content, run_id=message.id)
             for tool_call in message.tool_calls:
                 tool_name = tool_call["name"]
-                tool_args = json.dumps(unpack_json_strings(tool_call["args"]))
+                tool_args = json.dumps(unpack_json_strings(tool_call["args"]), ensure_ascii=False)
                 run_id = self.agent._tool_call_id_to_uuid(tool_call.get("id", ""))
                 logger.debug(f"Calling Tool: {tool_name} with input {tool_args}")
                 self.agent._on_tool_start(tool_name, tool_args, run_id=run_id)
@@ -225,7 +225,7 @@ class LangGraphEventAdapter:
         if regular_calls:
             for tool_call in regular_calls:
                 tool_name = tool_call["name"]
-                tool_args = json.dumps(unpack_json_strings(tool_call["args"]))
+                tool_args = json.dumps(unpack_json_strings(tool_call["args"]), ensure_ascii=False)
                 run_id = self.agent._tool_call_id_to_uuid(tool_call.get("id", ""))
                 logger.debug(f"Calling Tool: {tool_name} with input {tool_args}")
                 self.agent._on_tool_start(tool_name, tool_args, run_id=run_id, author=author)
