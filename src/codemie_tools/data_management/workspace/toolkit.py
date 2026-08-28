@@ -140,6 +140,8 @@ class AgentWorkspaceToolkit(BaseToolkit):
                 user=self.user,
                 workspace_service=shared_service,
                 workspace_id=resolved_workspace_id,
+                llm_model=self.llm_model,
+                request_uuid=self.request_uuid,
             ),
         ]
 
