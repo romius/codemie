@@ -185,6 +185,7 @@ class TestProjectsRouterAuditorRouteLevel:
         call_kwargs = mock_visibility_service.get_visible_project_with_members.call_args.kwargs
         assert call_kwargs["is_admin"] is True
 
+    @patch("codemie.rest_api.routers.projects.project_budget_assignment_repository")
     @patch("codemie.rest_api.routers.projects.config")
     @patch("codemie.rest_api.routers.projects.budget_repository")
     @patch("codemie.rest_api.routers.projects._spend_repo")
@@ -200,11 +201,14 @@ class TestProjectsRouterAuditorRouteLevel:
         mock_spend_repo,
         mock_budget_repo,
         mock_config,
+        mock_project_budget_repo,
     ):
         """EPMCDME-10930 spec 5.2: GET /v1/projects/{name}?include_spending=true actually
         returns spending data for a pure auditor (not just is_admin=True passed downstream).
         """
         from codemie.rest_api.routers.projects import get_project_detail
+
+        mock_project_budget_repo.get_assigned_budget_summaries_for_projects = AsyncMock(return_value={})
 
         mock_config.ENABLE_USER_MANAGEMENT = True
         mock_get_session.return_value.__enter__.return_value = MagicMock()
@@ -224,6 +228,7 @@ class TestProjectsRouterAuditorRouteLevel:
         key_row = MagicMock(budget_period_spend=100.0, cumulative_spend=500.0, budget_id=None)
         mock_spend_repo.get_latest_key_spending_for_project = AsyncMock(return_value=key_row)
         mock_spend_repo.get_latest_budget_rows_for_project = AsyncMock(return_value=[])
+        mock_spend_repo.get_lifetime_spend = AsyncMock(return_value=500.0)
 
         response = await get_project_detail(
             request=MagicMock(method="GET", url=SimpleNamespace(path="/v1/projects/some-project")),

@@ -948,24 +948,27 @@ class ProjectSpendTrackingRepository:
         session: AsyncSession,
         project_name: str,
         rows_limit: int = 50,
+        spend_subject_type: str = "budget",
     ) -> list[ProjectSpendTracking]:
-        """Return the most recent budget-based rows per budget_id for a project.
+        """Return the most recent rows per budget_id for a project.
 
         Args:
             session: Async database session
             project_name: Project name to query
             rows_limit: Maximum number of rows to return
+            spend_subject_type: Exact-match filter on the subject type to read
 
         Returns:
-            List of most recent budget-based ProjectSpendTracking rows
+            List of most recent ProjectSpendTracking rows for the requested subject type
         """
         latest_dates_subq = (
             select(
                 ProjectSpendTracking.budget_id,
                 func.max(ProjectSpendTracking.spend_date).label("max_spend_date"),
+                func.max(ProjectSpendTracking.created_at).label("max_created_at"),
             )
             .where(ProjectSpendTracking.project_name == project_name)
-            .where(ProjectSpendTracking.spend_subject_type == "budget")
+            .where(ProjectSpendTracking.spend_subject_type == spend_subject_type)
             .group_by(ProjectSpendTracking.budget_id)
             .subquery()
         )
@@ -975,10 +978,11 @@ class ProjectSpendTrackingRepository:
             .join(
                 latest_dates_subq,
                 (ProjectSpendTracking.budget_id == latest_dates_subq.c.budget_id)
-                & (ProjectSpendTracking.spend_date == latest_dates_subq.c.max_spend_date),
+                & (ProjectSpendTracking.spend_date == latest_dates_subq.c.max_spend_date)
+                & (ProjectSpendTracking.created_at == latest_dates_subq.c.max_created_at),
             )
             .where(ProjectSpendTracking.project_name == project_name)
-            .where(ProjectSpendTracking.spend_subject_type == "budget")
+            .where(ProjectSpendTracking.spend_subject_type == spend_subject_type)
             .limit(rows_limit)
         )
 
@@ -1019,6 +1023,35 @@ class ProjectSpendTrackingRepository:
                 cutoffs[category] = previous[category][1]
             previous[category] = (current, row.spend_date)
         return cutoffs
+
+    async def get_lifetime_spend(
+        self,
+        session: AsyncSession,
+        project_name: str,
+        spend_subject_type: str | None = None,
+    ) -> float:
+        """Return a project's all-time spend as the sum of ``daily_spend``.
+
+        Summing the daily deltas counts each day once across budget_id regenerations,
+        which reading the latest ``cumulative_spend`` per budget_id would not.
+
+        Args:
+            session: Async database session
+            project_name: Project to query
+            spend_subject_type: Optional exact-match filter; when None, excludes project_budget
+
+        Returns:
+            Total daily_spend across every stored snapshot for the project
+        """
+        filters = [ProjectSpendTracking.project_name == project_name]
+        if spend_subject_type is None:
+            filters.append(ProjectSpendTracking.spend_subject_type.not_in(_EXCLUDED_SUBJECT_TYPES_DEFAULT))
+        else:
+            filters.append(ProjectSpendTracking.spend_subject_type == spend_subject_type)
+
+        stmt = select(func.coalesce(func.sum(ProjectSpendTracking.daily_spend), 0)).where(*filters)
+        result = await session.execute(stmt)
+        return float(result.scalar_one())
 
 
 project_spend_tracking_repository = ProjectSpendTrackingRepository()

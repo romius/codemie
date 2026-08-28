@@ -460,6 +460,48 @@ def _budget_info(budgets_by_id: dict[str, Budget], budget_id: str | None) -> tup
     return budget.max_budget, _parse_budget_reset_at(budget.budget_reset_at)
 
 
+def _drop_unassigned_budget_rows(budget_rows: list, assigned_budgets: list) -> list:
+    """Keep only spend rows whose budget is still assigned to the project.
+
+    Snapshot rows outlive the budget they were taken for, so an empty assignment list
+    drops every row. Callers apply this to project_budget rows only; personal projects
+    have no assignments to check against.
+    """
+    live_budget_ids = {row.budget_id for row in assigned_budgets}
+    return [row for row in budget_rows if row.budget_id in live_budget_ids]
+
+
+def _aggregate_budget_window(
+    assigned_budgets: list,
+    rows: list,
+    budgets_by_id: dict[str, Budget],
+) -> tuple[float | None, datetime | None]:
+    """Return a project's combined max_budget and earliest reset across its categories.
+
+    Sums the assigned budgets, covering categories that carry no spend snapshot. Projects
+    with no assignments fall back to the budgets behind ``rows``, skipping soft-deleted ones.
+
+    Returns:
+        Tuple of (summed max_budget, earliest budget_reset_at), each None when nothing resolves
+    """
+    if assigned_budgets:
+        total = sum(float(row.max_budget) for row in assigned_budgets)
+        resets = [_parse_budget_reset_at(row.budget_reset_at) for row in assigned_budgets]
+    else:
+        limits: list[float] = []
+        resets = []
+        for budget_id in {row.budget_id for row in rows if row is not None and row.budget_id}:
+            budget = budgets_by_id.get(budget_id)
+            if budget is None or budget.deleted_at is not None:
+                continue
+            limits.append(float(budget.max_budget))
+            resets.append(_parse_budget_reset_at(budget.budget_reset_at))
+        total = sum(limits) if limits else None
+
+    known_resets = [reset for reset in resets if reset is not None]
+    return total, (min(known_resets) if known_resets else None)
+
+
 def _build_widget_rows(
     budget_rows: list,
     project_name: str,
@@ -604,6 +646,7 @@ def _project_spending_summary(
     key_row: object | None,
     budget_rows: list[object],
     budgets_map: dict[str, Budget],
+    assigned_budgets: list | None = None,
 ) -> ProjectSpendingSummary | None:
     if key_row is None and not budget_rows:
         return None
@@ -611,9 +654,7 @@ def _project_spending_summary(
     current = (float(key_row.budget_period_spend) if key_row is not None else 0.0) + sum(
         float(row.budget_period_spend) for row in budget_rows
     )
-    meta_row = key_row if key_row is not None else budget_rows[0]
-    meta_budget = budgets_map.get(meta_row.budget_id) if meta_row.budget_id else None
-    budget_limit = float(meta_budget.max_budget) if meta_budget is not None else None
+    budget_limit, _ = _aggregate_budget_window(assigned_budgets or [], [key_row, *budget_rows], budgets_map)
     total_pct = (current / budget_limit * 100) if budget_limit else 0.0
 
     return ProjectSpendingSummary(
@@ -639,15 +680,30 @@ async def _attach_project_spending_summaries(
         budget_rows = await _spend_repo.get_latest_spending_by_project(
             async_session, manageable_names, spend_subject_type="budget"
         )
+        project_budget_rows = await _spend_repo.get_latest_spending_by_project(
+            async_session, manageable_names, spend_subject_type="project_budget"
+        )
         budgets_map = await budget_repository.get_all_keyed_by_id(async_session)
+        assigned_by_project = await project_budget_assignment_repository.get_assigned_budget_summaries_for_projects(
+            async_session, manageable_names
+        )
 
     latest_key_by_project = _latest_key_rows_by_project(key_rows)
     budget_rows_by_project = _budget_rows_grouped_by_project(budget_rows)
+    project_budget_rows_by_project = _budget_rows_grouped_by_project(project_budget_rows)
     for item in items:
+        assigned_budgets = assigned_by_project.get(item.name, [])
+        project_rows = project_budget_rows_by_project.get(item.name)
+        rows = (
+            _drop_unassigned_budget_rows(project_rows, assigned_budgets)
+            if project_rows
+            else budget_rows_by_project.get(item.name, [])
+        )
         item.spending = _project_spending_summary(
             key_row=latest_key_by_project.get(item.name),
-            budget_rows=budget_rows_by_project.get(item.name, []),
+            budget_rows=rows,
             budgets_map=budgets_map,
+            assigned_budgets=assigned_budgets,
         )
 
 
@@ -848,16 +904,38 @@ async def _attach_project_detail_spending(
 ) -> None:
     async with get_async_session() as async_session:
         key_row = await _spend_repo.get_latest_key_spending_for_project(async_session, project_name)
+        subject_type = "project_budget"
         budget_rows = await _spend_repo.get_latest_budget_rows_for_project(
-            async_session, project_name, rows_limit=spending_rows_limit
+            async_session, project_name, rows_limit=spending_rows_limit, spend_subject_type=subject_type
+        )
+        if not budget_rows:
+            subject_type = "budget"
+            budget_rows = await _spend_repo.get_latest_budget_rows_for_project(
+                async_session, project_name, rows_limit=spending_rows_limit
+            )
+        if not budget_rows and key_row is not None:
+            subject_type = "key"
+        lifetime_spend = await _spend_repo.get_lifetime_spend(
+            async_session, project_name, spend_subject_type=subject_type
         )
         budgets_map = await budget_repository.get_all_keyed_by_id(async_session)
+        assigned_by_project = await project_budget_assignment_repository.get_assigned_budget_summaries_for_projects(
+            async_session, [project_name]
+        )
+
+    assigned_budgets = assigned_by_project.get(project_name, [])
+    if subject_type == "project_budget":
+        budget_rows = _drop_unassigned_budget_rows(budget_rows, assigned_budgets)
+    if budget_rows:
+        key_row = None
 
     _populate_project_spending_summary(
         response=response,
         key_row=key_row,
         budget_rows=budget_rows,
         budgets_map=budgets_map,
+        lifetime_spend=lifetime_spend,
+        assigned_budgets=assigned_budgets,
     )
     _populate_project_spending_widget(
         response=response,
@@ -874,6 +952,8 @@ def _populate_project_spending_summary(
     key_row,
     budget_rows: list,
     budgets_map: dict,
+    lifetime_spend: float,
+    assigned_budgets: list | None = None,
 ) -> None:
     if key_row is None and not budget_rows:
         return
@@ -881,17 +961,13 @@ def _populate_project_spending_summary(
     current = (float(key_row.budget_period_spend) if key_row is not None else 0.0) + sum(
         float(row.budget_period_spend) for row in budget_rows
     )
-    cumulative = (float(key_row.cumulative_spend) if key_row is not None else 0.0) + sum(
-        float(row.cumulative_spend) for row in budget_rows
+    budget_limit, budget_reset_at = _aggregate_budget_window(
+        assigned_budgets or [], [key_row, *budget_rows], budgets_map
     )
-    meta_row = key_row if key_row is not None else budget_rows[0]
-    meta_budget = budgets_map.get(meta_row.budget_id) if meta_row and meta_row.budget_id else None
-    budget_limit = float(meta_budget.max_budget) if meta_budget is not None else None
-    budget_reset_at = _parse_budget_reset_at(meta_budget.budget_reset_at) if meta_budget else None
     total_pct = (current / budget_limit * 100) if budget_limit else 0.0
     response.spending = ProjectSpendingDetail(
         current_spending=round(current, 2),
-        cumulative_spend=round(cumulative, 2),
+        cumulative_spend=round(lifetime_spend, 2),
         budget_reset_at=budget_reset_at,
         time_until_reset=_format_time_until_reset(budget_reset_at),
         budget_limit=round(budget_limit, 2) if budget_limit is not None else None,
