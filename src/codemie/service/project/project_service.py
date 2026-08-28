@@ -23,10 +23,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session
 
 from codemie.clients.postgres import get_session
+from codemie.configs.customer_config import customer_config
 from codemie.configs.logger import logger
 from codemie.core.exceptions import ExtendedHTTPException
 from codemie.core.models import Application
 from codemie.repository.application_repository import application_repository
+from codemie.repository.cost_center_repository import cost_center_repository
 from codemie.repository.user_project_repository import user_project_repository
 from codemie.service.activity.activity_models import (
     ActivityDomain,
@@ -49,6 +51,7 @@ class ProjectService:
     MAX_PROJECT_NAME_LENGTH: Final[int] = 100
     MAX_PROJECT_DESCRIPTION_LENGTH: Final[int] = 500
     MAX_DISPLAY_NAME_LENGTH: Final[int] = 150
+    VALID_CHARGEBACK_ATTRIBUTIONS: Final[frozenset[str]] = frozenset({"project", "cost_center"})
     PROJECT_NAME_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
     RESERVED_PROJECT_NAMES: Final[set[str]] = {
         "admin",
@@ -101,6 +104,9 @@ class ProjectService:
         ),
         PERSONAL_DELETE="Cannot delete a personal project",
         PERSONAL_UPDATE="Cannot update a personal project",
+        # Chargeback validation
+        CHARGEBACK_ATTRIBUTION_INVALID="chargeback_attribution must be one of: 'project', 'cost_center'",
+        CHARGEBACK_ATTRIBUTION_NO_COST_CENTER="Cost center attribution requires a linked, active cost center",
     )
 
     @classmethod
@@ -184,9 +190,19 @@ class ProjectService:
         clear_cost_center: bool = False,
         enforce_member_spend_limits: bool | None = None,
         chargeback_enabled: bool | None = None,
+        chargeback_attribution: str | None = None,
     ) -> Application:
         with get_session() as session:
             project = cls._get_project_for_update(session, user, project_name)
+
+            if (
+                chargeback_enabled is not None or chargeback_attribution is not None
+            ) and not customer_config.is_feature_enabled("projectChargeback"):
+                raise ExtendedHTTPException(
+                    code=403,
+                    message="Feature not available",
+                    details="Project chargeback configuration is not enabled for this customer.",
+                )
 
             validated_name = cls._resolve_updated_name(session, project_name, name)
             validated_description = cls._validate_project_description(description) if description is not None else None
@@ -194,6 +210,11 @@ class ProjectService:
             resolved_cost_center_id = cls._resolve_updated_cost_center_id(
                 session, project, cost_center_id, clear_cost_center
             )
+            if chargeback_attribution is not None or cost_center_id is not None or clear_cost_center:
+                effective_chargeback_attribution = (
+                    chargeback_attribution if chargeback_attribution is not None else project.chargeback_attribution
+                )
+                cls._validate_chargeback_attribution(session, effective_chargeback_attribution, resolved_cost_center_id)
 
             project = application_repository.update_project(
                 session,
@@ -203,6 +224,7 @@ class ProjectService:
                 description=validated_description,
                 cost_center_id=resolved_cost_center_id,
                 chargeback_enabled=chargeback_enabled,
+                chargeback_attribution=chargeback_attribution,
             )
             if enforce_member_spend_limits is not None:
                 SettingsService.set_enforce_member_spend_limits(
@@ -280,6 +302,30 @@ class ProjectService:
         if clear_cost_center:
             return None
         return project.cost_center_id
+
+    @classmethod
+    def _validate_chargeback_attribution(
+        cls, session: Session, chargeback_attribution: str | None, resolved_cost_center_id: UUID | None
+    ) -> None:
+        if chargeback_attribution is None:
+            return
+        if chargeback_attribution not in cls.VALID_CHARGEBACK_ATTRIBUTIONS:
+            raise ExtendedHTTPException(code=400, message=cls.ERRORS.CHARGEBACK_ATTRIBUTION_INVALID)
+        if chargeback_attribution != "cost_center":
+            return
+        if not customer_config.is_feature_enabled("costCenters"):
+            raise ExtendedHTTPException(
+                code=403,
+                message="Feature not available",
+                details="Cost centers are not enabled for this customer.",
+            )
+        active = (
+            cost_center_repository.get_active_by_id(session, resolved_cost_center_id)
+            if resolved_cost_center_id is not None
+            else None
+        )
+        if active is None:
+            raise ExtendedHTTPException(code=400, message=cls.ERRORS.CHARGEBACK_ATTRIBUTION_NO_COST_CENTER)
 
     @classmethod
     def _resync_member_allocations_if_needed(

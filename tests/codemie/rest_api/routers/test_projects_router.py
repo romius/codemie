@@ -29,6 +29,7 @@ from codemie.core.exceptions import ExtendedHTTPException
 from codemie.rest_api.routers.projects import (
     router as projects_router,
     _authorize_project_access,
+    _build_project_detail_response,
     _raise_project_not_found,
     ProjectAssignmentRequest,
     ProjectAssignmentUpdateRequest,
@@ -93,6 +94,7 @@ class TestProjectCreationEndpoint:
             created_by="user-1",
             date=datetime(2026, 2, 10, tzinfo=UTC),
             chargeback_enabled=False,
+            chargeback_attribution="project",
         )
         mock_project_service.create_shared_project.return_value = project
 
@@ -128,6 +130,7 @@ class TestProjectCreationEndpoint:
             created_by="user-1",
             date=datetime(2026, 2, 10, tzinfo=UTC),
             chargeback_enabled=False,
+            chargeback_attribution="project",
         )
 
         response = create_project(
@@ -163,6 +166,7 @@ class TestProjectCreationEndpoint:
             date=datetime(2026, 2, 10, tzinfo=UTC),
             cost_center_id=cost_center_id,
             chargeback_enabled=False,
+            chargeback_attribution="project",
         )
 
         response = create_project(
@@ -1465,6 +1469,7 @@ class TestUpdateProjectEndpoint:
         updated_app.created_by = "user-1"
         updated_app.date = datetime(2024, 1, 1, tzinfo=UTC)
         updated_app.cost_center_id = None
+        updated_app.chargeback_attribution = "project"
         mock_project_service.update_project.return_value = updated_app
 
         user = MagicMock(id="user-1")
@@ -1487,6 +1492,7 @@ class TestUpdateProjectEndpoint:
             clear_cost_center=False,
             enforce_member_spend_limits=None,
             chargeback_enabled=None,
+            chargeback_attribution=None,
         )
 
     @patch("codemie.rest_api.routers.projects.config")
@@ -1506,6 +1512,7 @@ class TestUpdateProjectEndpoint:
         updated_app.created_by = "user-1"
         updated_app.date = datetime(2024, 1, 1, tzinfo=UTC)
         updated_app.cost_center_id = None
+        updated_app.chargeback_attribution = "project"
         cost_center_id = uuid4()
         mock_project_service.update_project.return_value = updated_app
 
@@ -1527,6 +1534,7 @@ class TestUpdateProjectEndpoint:
             clear_cost_center=False,
             enforce_member_spend_limits=None,
             chargeback_enabled=None,
+            chargeback_attribution=None,
         )
 
     @patch("codemie.rest_api.routers.projects.config")
@@ -1546,6 +1554,7 @@ class TestUpdateProjectEndpoint:
         updated_app.created_by = "user-1"
         updated_app.date = datetime(2024, 1, 1, tzinfo=UTC)
         updated_app.cost_center_id = None
+        updated_app.chargeback_attribution = "project"
         mock_project_service.update_project.return_value = updated_app
 
         user = MagicMock(id="user-1")
@@ -1566,6 +1575,7 @@ class TestUpdateProjectEndpoint:
             clear_cost_center=True,
             enforce_member_spend_limits=None,
             chargeback_enabled=None,
+            chargeback_attribution=None,
         )
 
     @patch("codemie.rest_api.routers.projects.config")
@@ -1584,6 +1594,7 @@ class TestUpdateProjectEndpoint:
         updated_app.created_by = "user-1"
         updated_app.date = datetime(2024, 1, 1, tzinfo=UTC)
         updated_app.cost_center_id = None
+        updated_app.chargeback_attribution = "project"
         mock_project_service.update_project.return_value = updated_app
 
         user = MagicMock(id="user-1")
@@ -1604,6 +1615,7 @@ class TestUpdateProjectEndpoint:
             clear_cost_center=False,
             enforce_member_spend_limits=True,
             chargeback_enabled=None,
+            chargeback_attribution=None,
         )
 
     @patch("codemie.rest_api.routers.projects.config")
@@ -2840,6 +2852,7 @@ class TestProjectDisplayNameEndpoints:
             created_by="user-1",
             date=datetime(2026, 1, 1, tzinfo=UTC),
             chargeback_enabled=False,
+            chargeback_attribution="project",
         )
 
         response = create_project(
@@ -2876,6 +2889,7 @@ class TestProjectDisplayNameEndpoints:
             created_by="user-1",
             date=datetime(2026, 1, 1, tzinfo=UTC),
             chargeback_enabled=False,
+            chargeback_attribution="project",
         )
 
         create_project(
@@ -2903,6 +2917,7 @@ class TestProjectDisplayNameEndpoints:
         updated_app.created_by = "user-1"
         updated_app.date = datetime(2026, 1, 1, tzinfo=UTC)
         updated_app.cost_center_id = None
+        updated_app.chargeback_attribution = "project"
         mock_project_service.update_project.return_value = updated_app
 
         user = MagicMock(id="user-1")
@@ -2924,6 +2939,7 @@ class TestProjectDisplayNameEndpoints:
             clear_cost_center=False,
             enforce_member_spend_limits=None,
             chargeback_enabled=None,
+            chargeback_attribution=None,
         )
 
     @patch("codemie.rest_api.routers.projects.config")
@@ -2944,6 +2960,7 @@ class TestProjectDisplayNameEndpoints:
         updated_app.created_by = "user-1"
         updated_app.date = datetime(2026, 1, 1, tzinfo=UTC)
         updated_app.cost_center_id = None
+        updated_app.chargeback_attribution = "project"
         mock_project_service.update_project.return_value = updated_app
 
         user = MagicMock(id="user-1")
@@ -2964,6 +2981,7 @@ class TestProjectDisplayNameEndpoints:
             clear_cost_center=False,
             enforce_member_spend_limits=None,
             chargeback_enabled=None,
+            chargeback_attribution=None,
         )
 
     @patch("codemie.rest_api.routers.projects.config")
@@ -2983,6 +3001,7 @@ class TestProjectDisplayNameEndpoints:
         updated_app.created_by = "user-1"
         updated_app.date = datetime(2026, 1, 1, tzinfo=UTC)
         updated_app.cost_center_id = None
+        updated_app.chargeback_attribution = "project"
         mock_project_service.update_project.return_value = updated_app
 
         user = MagicMock(id="user-1")
@@ -3003,6 +3022,7 @@ class TestProjectDisplayNameEndpoints:
             clear_cost_center=False,
             enforce_member_spend_limits=None,
             chargeback_enabled=None,
+            chargeback_attribution=None,
         )
 
 
@@ -3056,6 +3076,7 @@ class TestChargebackEnabledField:
         updated_app.created_by = "user-1"
         updated_app.date = datetime(2026, 1, 1, tzinfo=UTC)
         updated_app.cost_center_id = None
+        updated_app.chargeback_attribution = "project"
         updated_app.chargeback_enabled = True
         mock_project_service.update_project.return_value = updated_app
 
@@ -3077,6 +3098,7 @@ class TestChargebackEnabledField:
             clear_cost_center=False,
             enforce_member_spend_limits=None,
             chargeback_enabled=True,
+            chargeback_attribution=None,
         )
 
     @patch("codemie.rest_api.routers.projects.config")
@@ -3091,6 +3113,7 @@ class TestChargebackEnabledField:
         updated_app.created_by = "user-1"
         updated_app.date = datetime(2026, 1, 1, tzinfo=UTC)
         updated_app.cost_center_id = None
+        updated_app.chargeback_attribution = "project"
         updated_app.chargeback_enabled = True
         mock_project_service.update_project.return_value = updated_app
 
@@ -3101,3 +3124,119 @@ class TestChargebackEnabledField:
         )
 
         assert response.chargeback_enabled is True
+
+
+class TestChargebackAttributionField:
+    """Tests for chargeback_attribution propagation across API models and handlers."""
+
+    def test_project_list_item_has_chargeback_attribution_field(self):
+        item = ProjectListItem(
+            name="proj",
+            project_type="shared",
+            user_count=0,
+            admin_count=0,
+        )
+        assert item.chargeback_attribution == "project"
+
+    def test_project_create_response_has_chargeback_attribution_field(self):
+        from datetime import datetime, UTC
+
+        resp = ProjectCreateResponse(
+            name="proj",
+            description="desc",
+            project_type="shared",
+            created_by="user-1",
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        assert resp.chargeback_attribution == "project"
+
+    def test_project_detail_response_has_chargeback_attribution_field(self):
+        resp = ProjectDetailResponse(
+            name="proj",
+            project_type="shared",
+            user_count=0,
+            admin_count=0,
+            members=[],
+        )
+        assert resp.chargeback_attribution == "project"
+
+    def test_update_request_accepts_chargeback_attribution_alone(self):
+        payload = ProjectUpdateRequest(chargeback_attribution="cost_center")
+        assert payload.chargeback_attribution == "cost_center"
+
+    @patch("codemie.rest_api.routers.projects.config")
+    @patch("codemie.rest_api.routers.projects.project_service")
+    def test_update_project_passes_chargeback_attribution_to_service(self, mock_project_service, mock_config):
+        mock_config.ENABLE_USER_MANAGEMENT = True
+        updated_app = MagicMock()
+        updated_app.name = "my-project"
+        updated_app.display_name = None
+        updated_app.description = ""
+        updated_app.project_type = "shared"
+        updated_app.created_by = "user-1"
+        updated_app.date = datetime(2026, 1, 1, tzinfo=UTC)
+        updated_app.cost_center_id = None
+        updated_app.chargeback_attribution = "cost_center"
+        mock_project_service.update_project.return_value = updated_app
+
+        user = MagicMock(id="user-1")
+        update_project(
+            payload=ProjectUpdateRequest(chargeback_attribution="cost_center"),
+            project_name="my-project",
+            user=user,
+        )
+
+        mock_project_service.update_project.assert_called_once_with(
+            user=user,
+            project_name="my-project",
+            name=None,
+            display_name=None,
+            clear_display_name=False,
+            description=None,
+            cost_center_id=None,
+            clear_cost_center=False,
+            enforce_member_spend_limits=None,
+            chargeback_enabled=None,
+            chargeback_attribution="cost_center",
+        )
+
+    @patch("codemie.rest_api.routers.projects.config")
+    @patch("codemie.rest_api.routers.projects.project_service")
+    def test_update_project_response_includes_chargeback_attribution(self, mock_project_service, mock_config):
+        mock_config.ENABLE_USER_MANAGEMENT = True
+        updated_app = MagicMock()
+        updated_app.name = "my-project"
+        updated_app.display_name = None
+        updated_app.description = "desc"
+        updated_app.project_type = "shared"
+        updated_app.created_by = "user-1"
+        updated_app.date = datetime(2026, 1, 1, tzinfo=UTC)
+        updated_app.cost_center_id = None
+        updated_app.chargeback_attribution = "cost_center"
+        mock_project_service.update_project.return_value = updated_app
+
+        response = update_project(
+            payload=ProjectUpdateRequest(chargeback_attribution="cost_center"),
+            project_name="my-project",
+            user=MagicMock(id="user-1"),
+        )
+
+        assert response.chargeback_attribution == "cost_center"
+
+    def test_build_project_detail_response_includes_chargeback_attribution(self):
+        response = _build_project_detail_response(
+            {
+                "name": "proj",
+                "description": "desc",
+                "project_type": "shared",
+                "created_by": "user-1",
+                "created_at": datetime(2026, 1, 1, tzinfo=UTC),
+                "user_count": 0,
+                "admin_count": 0,
+                "members": [],
+                "chargeback_attribution": "cost_center",
+            },
+            "proj",
+        )
+
+        assert response.chargeback_attribution == "cost_center"

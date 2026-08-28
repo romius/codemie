@@ -118,3 +118,86 @@ class TestCostCenterServiceLogging:
             CostCenterService.delete(MagicMock(), user=_admin_user(), cost_center_id=existing.id)
 
         mock_logger.info.assert_not_called()
+
+
+class TestCostCenterServiceFeatureGate:
+    @patch("codemie.service.cost_center_service.customer_config", create=True)
+    def test_create_rejects_when_feature_disabled(self, mock_customer_config):
+        mock_customer_config.is_feature_enabled.return_value = False
+
+        with pytest.raises(ExtendedHTTPException) as exc_info:
+            CostCenterService.create(MagicMock(), user=_admin_user(), name="eng-123", description=None)
+
+        assert exc_info.value.code == 403
+        mock_customer_config.is_feature_enabled.assert_called_once_with("costCenters")
+
+    @patch("codemie.service.cost_center_service.customer_config", create=True)
+    def test_list_paginated_rejects_when_feature_disabled(self, mock_customer_config):
+        mock_customer_config.is_feature_enabled.return_value = False
+
+        with pytest.raises(ExtendedHTTPException) as exc_info:
+            CostCenterService.list_paginated(MagicMock(), user=_admin_user(), search=None, page=1, per_page=10)
+
+        assert exc_info.value.code == 403
+
+    @patch("codemie.service.cost_center_service.customer_config", create=True)
+    def test_get_or_404_rejects_when_feature_disabled(self, mock_customer_config):
+        mock_customer_config.is_feature_enabled.return_value = False
+
+        with pytest.raises(ExtendedHTTPException) as exc_info:
+            CostCenterService.get_or_404(MagicMock(), user=_admin_user(), cost_center_id=uuid4())
+
+        assert exc_info.value.code == 403
+
+    @patch("codemie.service.cost_center_service.customer_config", create=True)
+    def test_update_rejects_when_feature_disabled(self, mock_customer_config):
+        mock_customer_config.is_feature_enabled.return_value = False
+
+        with pytest.raises(ExtendedHTTPException) as exc_info:
+            CostCenterService.update(MagicMock(), user=_admin_user(), cost_center_id=uuid4(), description="x")
+
+        assert exc_info.value.code == 403
+
+    @patch("codemie.service.cost_center_service.customer_config", create=True)
+    def test_delete_rejects_when_feature_disabled(self, mock_customer_config):
+        mock_customer_config.is_feature_enabled.return_value = False
+
+        with pytest.raises(ExtendedHTTPException) as exc_info:
+            CostCenterService.delete(MagicMock(), user=_admin_user(), cost_center_id=uuid4())
+
+        assert exc_info.value.code == 403
+
+    @patch("codemie.service.cost_center_service.cost_center_repository")
+    @patch("codemie.service.cost_center_service.customer_config", create=True)
+    def test_ensure_exists_for_project_rejects_when_feature_disabled(self, mock_customer_config, mock_repo):
+        mock_customer_config.is_feature_enabled.return_value = False
+
+        with pytest.raises(ExtendedHTTPException) as exc_info:
+            CostCenterService.ensure_exists_for_project(MagicMock(), uuid4())
+
+        assert exc_info.value.code == 403
+        mock_repo.get_active_by_id.assert_not_called()
+
+    @patch("codemie.service.cost_center_service.cost_center_repository")
+    @patch("codemie.service.cost_center_service.customer_config", create=True)
+    def test_ensure_exists_for_project_skips_feature_check_when_cost_center_id_is_none(
+        self, mock_customer_config, mock_repo
+    ):
+        mock_customer_config.is_feature_enabled.return_value = False
+
+        result = CostCenterService.ensure_exists_for_project(MagicMock(), None)
+
+        assert result is None
+        mock_customer_config.is_feature_enabled.assert_not_called()
+        mock_repo.get_active_by_id.assert_not_called()
+
+    @patch("codemie.service.cost_center_service.cost_center_repository")
+    @patch("codemie.service.cost_center_service.customer_config", create=True)
+    def test_ensure_exists_for_project_succeeds_when_feature_enabled(self, mock_customer_config, mock_repo):
+        mock_customer_config.is_feature_enabled.return_value = True
+        cost_center = _cost_center()
+        mock_repo.get_active_by_id.return_value = cost_center
+
+        result = CostCenterService.ensure_exists_for_project(MagicMock(), cost_center.id)
+
+        assert result is cost_center

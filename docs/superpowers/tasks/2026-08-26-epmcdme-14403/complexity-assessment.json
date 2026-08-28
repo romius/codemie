@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "task": "Add a configurable chargeback_attribution field to project budgets (Application model, migration, schemas, ProjectService validation against the linked non-deleted cost center), gated behind features:projectChargeback.",
+  "generated": "2026-08-26T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 20,
+  "size": "M",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Touches Application model, ApplicationRepository.update_project, ProjectService (+ new validation helper), CostCenterService, ProjectVisibilityService's enriched dicts, and the projects.py router schemas/handlers — six components across four layers, all extending an established call chain rather than introducing a new subsystem." },
+    { "dimension": "technical_risk", "reason": "Base risk is M: the DB/repository/API path copies the exact chargeback_enabled precedent. Bumped to L because AC8 enumerates missing-cost-center and soft-deleted-cost-center edge cases with zero existing test template covering that defensive pattern, and because customer_config.is_feature_enabled('projectChargeback') has never been consumed in service/router code before — this sub-task is the first caller, with no gating precedent for a field write specifically." },
+    { "dimension": "file_change_estimate", "reason": "~7 modified files (models.py, application_repository.py, project_service.py, projects.py, project_visibility_service.py, test_project_service_chargeback.py, test_projects_router.py) + ~2 new files (migration, new cost-center-validation test) across 4+ directories (core, external/alembic/versions, repository, service/project, rest_api/routers, tests/...) — matches the L band (8-10 modified, 2-4 new, 3+ directories)." },
+    { "dimension": "affected_layers", "reason": "DB-Persistence (schema migration) + Repository + Service + API — four layers including a persistence schema change, the direct definition of the L band for this dimension." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from M to L: AC8's missing/soft-deleted cost-center edge cases have no existing defensive-test template, and no code path currently calls is_feature_enabled('projectChargeback')."
+  ],
+  "split_recommendation": null,
+  "calibration_note": "Nearest bundle example (L, epmcdme-10401-add-provider-with-configuration-ui, total 22) scores component_scope only M(3) despite touching 4 areas (CLI+Registry+Provider+Config), lower than this task's L(4) for 6 components across 4 layers — consistent with this task sitting above that example on component scope even though its total (20) lands one point lower, in the M band. Note also: that example's own dimension scores sum to 16, not its stated total of 22 — an internal inconsistency in the example file, recorded here rather than silently resolved."
+}

@@ -530,6 +530,7 @@ class TestProjectServiceUpdateProject:
             description="new desc",
             cost_center_id=None,
             chargeback_enabled=None,
+            chargeback_attribution=None,
         )
         assert result is updated
 
@@ -618,6 +619,7 @@ class TestProjectServiceUpdateProject:
             description=None,
             cost_center_id="cc-1",
             chargeback_enabled=None,
+            chargeback_attribution=None,
         )
 
     @patch("codemie.service.project.project_service.cost_center_service")
@@ -646,6 +648,7 @@ class TestProjectServiceUpdateProject:
             description=None,
             cost_center_id=None,
             chargeback_enabled=None,
+            chargeback_attribution=None,
         )
 
     @patch("codemie.service.project.project_service.cost_center_service")
@@ -676,6 +679,7 @@ class TestProjectServiceUpdateProject:
             description=None,
             cost_center_id=None,
             chargeback_enabled=None,
+            chargeback_attribution=None,
         )
 
     @patch("codemie.service.project.project_service.cost_center_service")
@@ -705,6 +709,7 @@ class TestProjectServiceUpdateProject:
             description="new description",
             cost_center_id=None,
             chargeback_enabled=None,
+            chargeback_attribution=None,
         )
 
     @patch("codemie.service.project.project_service.cost_center_service")
@@ -737,6 +742,7 @@ class TestProjectServiceUpdateProject:
             description=None,
             cost_center_id=None,
             chargeback_enabled=None,
+            chargeback_attribution=None,
         )
 
     @patch("codemie.service.project.project_service.SettingsService")

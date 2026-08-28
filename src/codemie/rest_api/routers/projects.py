@@ -168,6 +168,7 @@ class ProjectListItem(BaseModel):
     spending: Optional[ProjectSpendingSummary] = None
     budgets: Optional[list[ProjectAssignedBudgetSummary]] = None
     chargeback_enabled: bool = False
+    chargeback_attribution: str = "project"
 
 
 class PaginationInfo(BaseModel):
@@ -226,6 +227,7 @@ class ProjectDetailResponse(BaseModel):
     cost_center_name: Optional[str] = None
     enforce_member_spend_limits: bool = False
     chargeback_enabled: bool = False
+    chargeback_attribution: str = "project"
     members: list[ProjectMember]
     spending: Optional[ProjectSpendingDetail] = None
     spending_widget: Optional[ProjectSpendingWidget] = None
@@ -249,6 +251,7 @@ class ProjectCreateResponse(BaseModel):
     cost_center_name: Optional[str] = None
     enforce_member_spend_limits: bool = False
     chargeback_enabled: bool = False
+    chargeback_attribution: str = "project"
 
 
 class ProjectUpdateRequest(BaseModel):
@@ -260,6 +263,7 @@ class ProjectUpdateRequest(BaseModel):
     clear_cost_center: bool = False
     enforce_member_spend_limits: Optional[bool] = None
     chargeback_enabled: Optional[bool] = None
+    chargeback_attribution: Optional[str] = None
 
     @model_validator(mode="after")
     def validate_non_empty(self):
@@ -270,6 +274,7 @@ class ProjectUpdateRequest(BaseModel):
             and self.cost_center_id is None
             and self.enforce_member_spend_limits is None
             and self.chargeback_enabled is None
+            and self.chargeback_attribution is None
             and not self.clear_cost_center
             and not self.clear_display_name
         ):
@@ -736,6 +741,7 @@ def create_project(payload: ProjectCreateRequest, user: User = Depends(authentic
         cost_center_name=_resolve_cost_center_name(getattr(project, "cost_center_id", None)),
         enforce_member_spend_limits=SettingsService.get_enforce_member_spend_limits(project.name),
         chargeback_enabled=project.chargeback_enabled,
+        chargeback_attribution=project.chargeback_attribution,
     )
 
 
@@ -886,6 +892,7 @@ def _build_project_detail_response(project_detail: dict, project_name: str) -> P
         cost_center_name=project_detail.get("cost_center_name"),
         enforce_member_spend_limits=SettingsService.get_enforce_member_spend_limits(project_name),
         chargeback_enabled=project_detail.get("chargeback_enabled", False),
+        chargeback_attribution=project_detail.get("chargeback_attribution", "project"),
         members=[ProjectMember(**m) for m in project_detail["members"]],
     )
 
@@ -1084,6 +1091,7 @@ def update_project(
         clear_cost_center=payload.clear_cost_center,
         enforce_member_spend_limits=payload.enforce_member_spend_limits,
         chargeback_enabled=payload.chargeback_enabled,
+        chargeback_attribution=payload.chargeback_attribution,
     )
 
     return ProjectCreateResponse(
@@ -1097,6 +1105,7 @@ def update_project(
         cost_center_name=_resolve_cost_center_name(getattr(project, "cost_center_id", None)),
         enforce_member_spend_limits=SettingsService.get_enforce_member_spend_limits(project.name),
         chargeback_enabled=project.chargeback_enabled,
+        chargeback_attribution=project.chargeback_attribution,
     )
 
 

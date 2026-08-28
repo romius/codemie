@@ -392,6 +392,7 @@ class Application(BaseModelWithSQLSupport, Owned, table=True):
     cost_center_id: Optional[uuid.UUID] = SQLField(default=None, foreign_key="cost_centers.id", index=True)
     deleted_at: Optional[datetime] = SQLField(default=None)  # Soft-delete timestamp for project lifecycle
     chargeback_enabled: bool = SQLField(default=False, nullable=False)
+    chargeback_attribution: str = SQLField(default="project", nullable=False)
 
     # Custom PostgreSQL indexes
     # ix_applications_name: GIN trigram index for ILIKE search performance
@@ -400,6 +401,9 @@ class Application(BaseModelWithSQLSupport, Owned, table=True):
     __table_args__ = (
         Index("ix_applications_name", "name", postgresql_using="gin", postgresql_ops={"name": "gin_trgm_ops"}),
         CheckConstraint("project_type IN ('personal', 'shared')", name="ck_applications_project_type"),
+        CheckConstraint(
+            "chargeback_attribution IN ('project', 'cost_center')", name="ck_applications_chargeback_attribution"
+        ),
     )
 
     def save(self, refresh=False, validate=True) -> PostResponse:

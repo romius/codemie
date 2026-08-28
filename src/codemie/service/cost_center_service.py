@@ -22,6 +22,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session
 
 from codemie.configs import config
+from codemie.configs.customer_config import customer_config
 from codemie.configs.logger import logger
 from codemie.core.exceptions import ExtendedHTTPException
 from codemie.core.models import CostCenter
@@ -58,7 +59,18 @@ class CostCenterService:
             raise ExtendedHTTPException(code=403, message="Access denied")
 
     @classmethod
+    def ensure_feature_enabled(cls) -> None:
+        if not customer_config.is_feature_enabled("costCenters"):
+            raise ExtendedHTTPException(
+                code=403,
+                message="Feature not available",
+                details="Cost centers are not enabled for this customer.",
+                help="Contact your system administrator to enable the 'features:costCenters' component.",
+            )
+
+    @classmethod
     def create(cls, session: Session, *, user: User, name: str, description: str | None) -> CostCenter:
+        cls.ensure_feature_enabled()
         cls.ensure_admin(user)
         validated_name = cls.validate_name(name)
         validated_description = cls.validate_description(description)
@@ -85,11 +97,13 @@ class CostCenterService:
 
     @classmethod
     def list_paginated(cls, session: Session, *, user: User, search: str | None, page: int, per_page: int):
+        cls.ensure_feature_enabled()
         cls.ensure_admin(user)
         return cost_center_repository.list_paginated(session, search=search, page=page, per_page=per_page)
 
     @classmethod
     def get_or_404(cls, session: Session, *, user: User, cost_center_id: UUID) -> CostCenter:
+        cls.ensure_feature_enabled()
         cls.ensure_admin(user)
         cost_center = cost_center_repository.get_active_by_id(session, cost_center_id)
         if not cost_center:
@@ -111,6 +125,7 @@ class CostCenterService:
     def ensure_exists_for_project(cls, session: Session, cost_center_id: UUID | None) -> CostCenter | None:
         if cost_center_id is None:
             return None
+        cls.ensure_feature_enabled()
         cost_center = cost_center_repository.get_active_by_id(session, cost_center_id)
         if not cost_center:
             raise ExtendedHTTPException(code=404, message="Selected cost center not found")

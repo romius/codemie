@@ -1,0 +1,112 @@
+{
+  "schema": 1,
+  "branch": "feature/EPMCDME-14387",
+  "head": "14ba2f36a6ab447eb6bfdad964d46f1b86f5ede4",
+  "runner": "poetry",
+  "started_at": "2026-08-26T12:38:07Z",
+  "completed_at": "2026-08-26T12:55:39Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "retry_attempt": 5,
+  "retry_of": "attempt 4 at 2026-08-26T12:17:17Z-12:29:53Z (status BLOCKED, blocked_gate secrets); re-run at explicit user request after committing 14ba2f36a, which added .gitleaks.toml allowlist patterns for gitignored/untracked '.env' and 'htmlcov/.*' and was verified locally beforehand with a clean standalone `make gitleaks`",
+  "gates": [
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 975,
+      "command": "make ruff",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2170,
+      "command": "make build",
+      "exit_code": 0
+    },
+    {
+      "id": "license",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 551,
+      "command": "make license-check",
+      "exit_code": 0,
+      "notes": "Checked 2054 files, 0 missing license headers."
+    },
+    {
+      "id": "secrets",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 17579,
+      "command": "make gitleaks",
+      "exit_code": 0,
+      "notes": "gitleaks: no leaks found. The two prior findings (plain .env local dev API key; htmlcov/ coverage-HTML rendering of a test assertion string) are now covered by the .gitleaks.toml allowlist patterns added in 14ba2f36a. Before running this gate, this task dir's own stale gate-run.json from attempt 4 was deleted, since its notes field quoted a private-key trigger string verbatim and would otherwise have re-tripped gitleaks on itself as an unrelated self-inflicted finding; this run's own notes avoid quoting that literal string for the same reason."
+    },
+    {
+      "id": "secrets-staged",
+      "source": "hook",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "bash scripts/git-hooks/validate_secrets.sh",
+      "exit_code": null,
+      "notes": "git diff --staged is empty in this run (no commit being created), so gitleaks protect --staged would scan nothing. The guide's CI/verify gate (make gitleaks, full working-tree scan) above is the authoritative secret-scan result and passed cleanly."
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 108934,
+      "command": "make test",
+      "exit_code": 0,
+      "notes": "14723 passed, 163 skipped, 0 failed, 189 warnings in 104.49s."
+    },
+    {
+      "id": "coverage",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 195550,
+      "command": "make coverage",
+      "exit_code": 0,
+      "notes": "14723 passed, 163 skipped, 0 failed in 188.54s; pytest-cov wrote real per-file coverage HTML to htmlcov/index.html. Outer Makefile coverage wrapper still emits a cosmetic 'CoverageWarning: No data was collected (no-data-collected)' from double-instrumentation; does not affect the real pytest-cov HTML output. The regenerated htmlcov/ is now covered by the .gitleaks.toml allowlist, so it no longer causes a downstream gitleaks false positive in the 'verify' gate below."
+    },
+    {
+      "id": "static-analysis",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 239897,
+      "command": "make sonar-local",
+      "exit_code": 0,
+      "notes": "SonarQube QUALITY GATE STATUS: PASSED (https://sonar.core.kuberocketci.io/dashboard?id=codemie&branch=feature%2FEPMCDME-14387), merge base 5c3d71a20f4144dedec3264913335b0f22fcd011, SCM revision 14ba2f36a6ab447eb6bfdad964d46f1b86f5ede4."
+    },
+    {
+      "id": "verify",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 126938,
+      "command": "make verify",
+      "exit_code": 0,
+      "notes": "Full prerequisite chain (ruff, license, gitleaks, test) completed successfully: ruff format/check clean, license-check clean, gitleaks reported 'no leaks found' (htmlcov/ and .env now allowlisted, no self-inflicted gate-run.json finding since the stale file was removed before this run), and 14723 tests passed / 163 skipped in 103.06s."
+    },
+    {
+      "id": "test-harness",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 0,
+      "command": "make test-harness",
+      "exit_code": null,
+      "notes": "Skip if: not opening a merge request (local iteration only) -- this run is a gate check, not an MR open."
+    },
+    {
+      "id": "commit-msg",
+      "source": "hook",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "bash scripts/git-hooks/commit_msg.sh <msg-file>",
+      "exit_code": null,
+      "notes": "Enforces 'EPMCDME-<n>:' commit subject prefix; no commit is being created in this gate run, so there is nothing to validate."
+    }
+  ],
+  "failures": {}
+}

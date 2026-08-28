@@ -1,0 +1,49 @@
+{
+  "decision": "request-changes",
+  "rationale": "Two patch findings confirmed against source: clearing a project's cost center without also resetting chargeback_attribution leaves it persisted as cost_center-attributed with no linked cost center, and chargeback_attribution accepts any unvalidated string that only fails at DB flush via an uncaught IntegrityError instead of a clean 400 (also the standards audit's blocking security-patterns row). All four lenses and the standards audit ran with parseable output and every candidate was verified against real source; 3 candidates were dismissed (a migration-backfill concern the spec explicitly rules a non-goal, an import/test-mock concern that checked out clean, and a feature-flag-default mismatch that matches the spec's intended disabled-by-default design) and 0 were deferred.",
+  "confidence": "high",
+  "risk_flags": ["security"],
+  "business_review": [
+    { "kind": "spec", "item": "Migration adds chargeback_attribution to applications, server default 'project', non-null", "status": "pass", "notes": "g2h3i4j5k6l7 migration; matching downgrade" },
+    { "kind": "spec", "item": "down_revision correctly targets current head of chargeback_enabled lineage", "status": "pass", "notes": "down_revision=f1g2h3i4j5k6 verified as a true leaf" },
+    { "kind": "spec", "item": "Application model has chargeback_attribution with check constraint restricting to project/cost_center", "status": "pass", "notes": "models.py field + ck_applications_chargeback_attribution" },
+    { "kind": "spec", "item": "ProjectListItem, ProjectDetailResponse, ProjectCreateResponse, ProjectUpdateRequest expose chargeback_attribution", "status": "pass", "notes": "projects.py schemas updated; validate_non_empty updated" },
+    { "kind": "spec", "item": "update_project -> ApplicationRepository.update_project persists chargeback_attribution; omitting it is a no-op", "status": "pass", "notes": "guarded not-None assignment; covered by test" },
+    { "kind": "spec", "item": "projectChargeback flag gates requests setting chargeback_enabled and/or chargeback_attribution with 403", "status": "pass", "notes": "project_service.py:146-153; covered by test" },
+    { "kind": "spec", "item": "chargeback_attribution=cost_center without a linked, non-deleted cost center is rejected with 400", "status": "pass", "notes": "_validate_chargeback_attribution; covered by two tests" },
+    { "kind": "spec", "item": "chargeback_attribution=project requires no cost center", "status": "pass", "notes": "early return verified; covered by test" },
+    { "kind": "spec", "item": "Tests cover valid project/cost-center attribution, missing/soft-deleted cost center, flag-disabled rejection", "status": "pass", "notes": "test_project_service_chargeback.py covers all five cases" },
+    { "kind": "spec", "item": "Omitting chargeback_attribution leaves existing chargeback/cost-center behavior unchanged", "status": "pass", "notes": "test_project_service_delete_update.py assertions preserve prior kwargs" }
+  ],
+  "standards_review": [
+    { "kind": "commit-format", "status": "pass", "notes": "All 5 commit subjects use the documented EPMCDME-14403: Description format." },
+    { "kind": "code-quality", "status": "pass", "notes": "New code uses modern bool | None / str | None hints consistent with the file; migration file covered by the documented license-header exclusion." },
+    { "kind": "security", "status": "partial", "notes": "chargeback_attribution is a bare str with no allow-list; only the cost_center branch is validated, so other values skip validation and reach the DB CHECK constraint, surfacing as an unhandled 500 since the PATCH handler does not catch IntegrityError." }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/service/project/project_service.py",
+      "line": 206,
+      "title": "Clearing cost center leaves stale cost_center attribution",
+      "problem": "update_project passes the caller-supplied chargeback_attribution parameter straight into _validate_chargeback_attribution without reconciling it against the project's already-persisted value. When clear_cost_center=True is sent without also passing chargeback_attribution=\"project\", a project whose attribution was already \"cost_center\" keeps that value while cost_center_id is set to None.",
+      "impact": "The project ends up persisted with chargeback_attribution=\"cost_center\" and no linked cost center - a cross-field inconsistency the CHECK constraint does not catch (it only restricts the two string values). The same call shape also bypasses the projectChargeback feature-flag gate, since that gate only fires when chargeback_enabled or chargeback_attribution is explicitly set on the request.",
+      "recommendation": "In _validate_chargeback_attribution, check the effective attribution (chargeback_attribution if not None else project.chargeback_attribution) against resolved_cost_center_id instead of only the raw parameter, so a cost-center-clearing update that would leave an existing \"cost_center\" attribution orphaned is rejected."
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/service/project/project_service.py",
+      "line": 302,
+      "title": "Chargeback attribution accepts unvalidated strings",
+      "problem": "ProjectUpdateRequest.chargeback_attribution (projects.py:266) is a bare Optional[str], and _validate_chargeback_attribution (project_service.py:299-312) only branches when the value is exactly \"cost_center\"; any other non-null string (a typo, wrong case, or arbitrary value) skips all application-level validation.",
+      "impact": "The invalid value is forwarded to application_repository.update_project, which unconditionally assigns it to the ORM object; it is rejected only at session.flush() by the new ck_applications_chargeback_attribution CHECK constraint. The PATCH /projects/{projectName} handler has no IntegrityError catch (confirmed: only create_project catches it), so a bad client value surfaces as an unhandled 500 instead of a clean 400 - the same gap the standards audit flags as a partial security-patterns violation.",
+      "recommendation": "Constrain chargeback_attribution to Literal[\"project\", \"cost_center\"] on ProjectUpdateRequest, or explicitly reject any value not in {\"project\", \"cost_center\"} inside _validate_chargeback_attribution with the existing ExtendedHTTPException(code=400, ...) before it reaches the repository."
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "generated": "2026-08-26T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 4, "label": "L" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 22,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 10,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Four real components touched across three layers: Application model + CheckConstraint (core/models.py), ApplicationRepository.update_project (repository), ProjectService.update_project plus a new _validate_chargeback_attribution classmethod and VALID_CHARGEBACK_ATTRIBUTIONS allow-list (service, new abstraction), and ProjectVisibilityService list/detail dict-builders (service) feeding the projects.py router's four Pydantic schemas (API)." },
+    { "dimension": "requirements_clarity", "reason": "Initial implementation pass left two gaps that only surfaced in code review and required an actual fix-up round: CR-001 (clearing cost_center_id without resetting chargeback_attribution orphaned a cost_center-attributed project) and CR-002 (chargeback_attribution accepted any unvalidated string, failing only at the DB CHECK constraint as an unhandled 500). This is the rubric's 'rework risk' signature for L, evidenced by a real second commit round (code-review-check.diff) rather than a hypothetical gap." },
+    { "dimension": "technical_risk", "reason": "Closest existing pattern is the prior chargeback_enabled boolean field/update flow (well-established, low risk on its own), but that pattern did not cover the security-sensitive aspect of the new enum-valued field: ProjectUpdateRequest.chargeback_attribution was a bare str with no allow-list, so any value skipped validation and reached the DB constraint as an unhandled exception. Standards review flagged this as a partial security-patterns violation and it was a real blocking finding (CR-002) resolved via a VALID_CHARGEBACK_ATTRIBUTIONS allow-list added in the fix-up commit — the Step 1 divergence-from-precedent auto-bump applies on real evidence, not speculation." },
+    { "dimension": "file_change_estimate", "reason": "10 unique files touched across the two diffs (9 modified, 1 new): core/models.py, repository/application_repository.py, rest_api/routers/projects.py, service/project/project_service.py, service/project/project_visibility_service.py, one new Alembic migration, and four test files spanning tests/codemie/rest_api/routers and tests/codemie/service/project — 3+ distinct directories, matching the L band (8-10 modified, 3+ directories)." },
+    { "dimension": "affected_layers", "reason": "Three distinct layers with a schema change: DB-Persistence (new column + CheckConstraint + Alembic migration with upgrade/downgrade), Service (ProjectService validation/orchestration, ProjectVisibilityService), and API (projects.py request/response schemas and handlers) — the rubric's defining case for L ('3-4 layers including persistence — schema change or migration')." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk: divergence from the closest precedent (chargeback_enabled) on the security-sensitive aspect (input validation) materialized as a real blocking code-review finding (CR-002, standards_review security=partial) requiring a fix-up commit — bumped from the base well-established-pattern score.",
+    "Requirements Clarity: two edge cases (orphaned cost_center attribution on clear, unvalidated enum value) were missed in the initial pass and required an actual code-review fix-up round before approval — direct evidence of rework risk."
+  ],
+  "split_recommendation": null
+}

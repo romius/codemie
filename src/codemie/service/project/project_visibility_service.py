@@ -117,6 +117,7 @@ class ProjectVisibilityService:
                     "cost_center_id": project.cost_center_id,
                     "cost_center_name": cost_center.name if cost_center else None,
                     "chargeback_enabled": project.chargeback_enabled,
+                    "chargeback_attribution": project.chargeback_attribution,
                 }
             )
 
@@ -194,6 +195,7 @@ class ProjectVisibilityService:
             "cost_center_id": project.cost_center_id,
             "cost_center_name": cost_center.name if cost_center else None,
             "chargeback_enabled": project.chargeback_enabled,
+            "chargeback_attribution": project.chargeback_attribution,
             "members": member_list,
             "is_project_admin": bool(current_membership.is_project_admin) if current_membership else False,
         }
