@@ -158,28 +158,6 @@ model_list:
       base_model: azure_ai/kimi-k2.6
       label: "Kimi K2.7 Code"
 
-  - model_name: gpt-image-1.5
-    litellm_params:
-      model: azure/codemie-gpt-image-1.5-2025-12-16
-      litellm_credential_name: azure_polandcentral_image_credential
-    model_info:
-      id: gpt-image-1-5-2025-12-16-polandcentral-0
-      base_model: azure/gpt-image-1.5-2025-12-16
-      label: "GPT Image 1.5"
-      forbidden_for_web: true
-      supports_image_generation: true
-
-  - model_name: gpt-image-2
-    litellm_params:
-      model: azure/codemie-gpt-image-2-2026-04-21
-      litellm_credential_name: azure_polandcentral_image_credential
-    model_info:
-      id: gpt-image-2-2026-04-21-polandcentral-0
-      base_model: azure/gpt-image-2-2026-04-21
-      label: "GPT Image 2"
-      forbidden_for_web: true
-      supports_image_generation: true
-
   # Google Vertex AI Models
   - model_name: gemini-3.1-flash-image
     litellm_params:
@@ -496,10 +474,4 @@ credential_list:
       tenant_id: os.environ/AZURE_TENANT_ID
       client_id: os.environ/AZURE_CLIENT_ID
       client_secret: os.environ/AZURE_CLIENT_SECRET
-  - credential_name: azure_polandcentral_image_credential
-    credential_info:
-      description: "Production credentials for Azure OpenAI image models in Poland Central"
-    credential_values:
-      api_base: https://codemie-polandcentral-0.openai.azure.com/
-      api_key: os.environ/AZURE_POLANDCENTRAL_IMAGE_API_KEY
-      api_version: "2025-04-01-preview"
+
