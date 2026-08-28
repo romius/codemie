@@ -44,9 +44,18 @@ def get_jira_tool_description(api_version: int = 2):
     - For status updates: get available statuses first, compare with user input
     - File attachments: To attach files to an issue, use POST method with '/rest/api/{version}/issue/{issueIdOrKey}/attachments'
       and include the file name in params as {"file": "filename.ext"} or {"files": ["file1.ext", "file2.ext"]} for multiple files
-    - Image attachments: When fetching a single issue, ALWAYS include "attachment" in the requested fields
+    - Image attachments: When fetching a single issue, always include "attachment" in the requested fields
       (e.g., params={"fields": "key,summary,status,assignee,issuetype,attachment"}).
       Image attachments (PNG, JPEG, GIF, WebP) are automatically downloaded and passed to the AI model for visual analysis.
+    - Attachment transfer (opt-in): The tool never copies attachments across issues or runs image
+      recognition on its own. When the user explicitly asks to copy attachments from an existing ticket
+      into a newly created one, include all three params on the create-issue POST:
+        params={"fields": {...issue fields...}, "source_issue_key": "ORIG-123", "copy_attachments": true}
+      Add "ocr_images": true only when the user explicitly asks to extract text from image attachments;
+      this runs the vision model on every image and posts a single comment with the extracted content on
+      the new issue. Both flags default to false and are stripped from the request before it reaches Jira.
+      Do not add these params speculatively — omit them unless the user's request makes attachment copy
+      (and, separately, image OCR) an explicit part of the ask.
 
     JQL status transitions:
     - Basic: status CHANGED TO "Status" BY "user@example.com" DURING (startOfMonth(-1), endOfMonth(-1))

@@ -351,3 +351,206 @@ class TestGenericJiraIssueTool:
 
         with pytest.raises(AssertionError, match="Access denied"):
             tool._healthcheck()
+
+
+# ── chat_model field ──────────────────────────────────────────────────────────
+
+
+def test_tool_chat_model_defaults_none(jira_config, mock_jira):
+    with patch("codemie_tools.core.project_management.jira.tools.validate_jira_creds"):
+        tool = GenericJiraIssueTool(config=jira_config)
+    assert tool.chat_model is None
+
+
+def test_tool_chat_model_accepts_value(jira_config, mock_jira):
+    from langchain_core.language_models import BaseChatModel
+
+    mock_model = MagicMock(spec=BaseChatModel)
+    with patch("codemie_tools.core.project_management.jira.tools.validate_jira_creds"):
+        tool = GenericJiraIssueTool(config=jira_config)
+        tool.chat_model = mock_model
+    assert tool.chat_model is mock_model
+
+
+# ── _is_issue_create_request ──────────────────────────────────────────────────
+
+
+def test_is_issue_create_request_matches(jira_config, mock_jira):
+    with patch("codemie_tools.core.project_management.jira.tools.validate_jira_creds"):
+        tool = GenericJiraIssueTool(config=jira_config)
+
+    assert tool._is_issue_create_request("/rest/api/2/issue") is True
+    assert tool._is_issue_create_request("/rest/api/3/issue") is True
+    assert tool._is_issue_create_request("/rest/api/2/issue/PROJ-123") is False
+    assert tool._is_issue_create_request("/rest/api/2/search") is False
+
+
+# ── _extract_created_issue_key ────────────────────────────────────────────────
+
+
+def test_extract_created_issue_key_success(jira_config, mock_jira):
+    import json
+
+    with patch("codemie_tools.core.project_management.jira.tools.validate_jira_creds"):
+        tool = GenericJiraIssueTool(config=jira_config)
+
+    response_text = json.dumps({"id": "10001", "key": "BUG-456", "self": "https://jira.example.com/..."})
+    assert tool._extract_created_issue_key(response_text) == "BUG-456"
+
+
+def test_extract_created_issue_key_invalid_json(jira_config, mock_jira):
+    with patch("codemie_tools.core.project_management.jira.tools.validate_jira_creds"):
+        tool = GenericJiraIssueTool(config=jira_config)
+
+    assert tool._extract_created_issue_key("not-json") is None
+
+
+# ── execute() attachment dispatch ─────────────────────────────────────────────
+
+
+def test_execute_post_issue_with_source_key_triggers_copy(jira_config, mock_jira):
+    with patch("codemie_tools.core.project_management.jira.tools.validate_jira_creds"):
+        tool = GenericJiraIssueTool(config=jira_config)
+        tool.jira = mock_jira
+
+    response = MagicMock()
+    response.status_code = 201
+    response.reason = "Created"
+    response.text = '{"id": "10001", "key": "BUG-456"}'
+    mock_jira.request.return_value = response
+
+    # Patch on the class (not instance) because BaseTool is a frozen Pydantic model
+    with patch.object(
+        GenericJiraIssueTool,
+        "copy_attachments_from_issue",
+        return_value=[{"filename": "f.png", "size": 100, "status": "copied", "ocr_text": None}],
+    ) as mock_copy:
+        result = tool.execute(
+            "POST",
+            "/rest/api/2/issue",
+            {
+                "fields": {"summary": "Bug"},
+                "source_issue_key": "SUP-123",
+                "copy_attachments": True,
+            },
+        )
+
+    mock_copy.assert_called_once_with("SUP-123", "BUG-456", run_ocr=False)
+    assert "Attachment transfer: 1/1 copied" in result
+    assert "OCR'd" not in result
+
+
+def test_execute_post_issue_with_ocr_flag_runs_ocr(jira_config, mock_jira):
+    with patch("codemie_tools.core.project_management.jira.tools.validate_jira_creds"):
+        tool = GenericJiraIssueTool(config=jira_config)
+        tool.jira = mock_jira
+
+    response = MagicMock()
+    response.status_code = 201
+    response.reason = "Created"
+    response.text = '{"id": "10001", "key": "BUG-456"}'
+    mock_jira.request.return_value = response
+
+    with patch.object(
+        GenericJiraIssueTool,
+        "copy_attachments_from_issue",
+        return_value=[{"filename": "f.png", "size": 100, "status": "copied", "ocr_text": "text"}],
+    ) as mock_copy:
+        result = tool.execute(
+            "POST",
+            "/rest/api/2/issue",
+            {
+                "fields": {"summary": "Bug"},
+                "source_issue_key": "SUP-123",
+                "copy_attachments": True,
+                "ocr_images": True,
+            },
+        )
+
+    mock_copy.assert_called_once_with("SUP-123", "BUG-456", run_ocr=True)
+    assert "1 image(s) OCR'd" in result
+
+
+def test_execute_post_issue_without_source_key_no_copy(jira_config, mock_jira):
+    with patch("codemie_tools.core.project_management.jira.tools.validate_jira_creds"):
+        tool = GenericJiraIssueTool(config=jira_config)
+        tool.jira = mock_jira
+
+    response = MagicMock()
+    response.status_code = 201
+    response.reason = "Created"
+    response.text = '{"id": "10001", "key": "BUG-456"}'
+    mock_jira.request.return_value = response
+
+    with patch.object(GenericJiraIssueTool, "copy_attachments_from_issue") as mock_copy:
+        tool.execute("POST", "/rest/api/2/issue", {"fields": {"summary": "Bug"}})
+
+    mock_copy.assert_not_called()
+
+
+def test_execute_post_issue_source_key_without_copy_flag_no_copy(jira_config, mock_jira):
+    """source_issue_key alone must not trigger a copy — copy_attachments=True is required."""
+    with patch("codemie_tools.core.project_management.jira.tools.validate_jira_creds"):
+        tool = GenericJiraIssueTool(config=jira_config)
+        tool.jira = mock_jira
+
+    response = MagicMock()
+    response.status_code = 201
+    response.reason = "Created"
+    response.text = '{"id": "10001", "key": "BUG-456"}'
+    mock_jira.request.return_value = response
+
+    with patch.object(GenericJiraIssueTool, "copy_attachments_from_issue") as mock_copy:
+        tool.execute(
+            "POST",
+            "/rest/api/2/issue",
+            {"fields": {"summary": "Bug"}, "source_issue_key": "SUP-123"},
+        )
+
+    mock_copy.assert_not_called()
+
+
+# ── _handle_file_attachments upload path ─────────────────────────────────────
+
+
+def test_handle_file_attachments_single_file(jira_config, mock_jira):
+    with patch("codemie_tools.core.project_management.jira.tools.validate_jira_creds"):
+        tool = GenericJiraIssueTool(config=jira_config)
+        tool.jira = mock_jira
+
+    files = {"report.pdf": (b"pdf-bytes", "application/pdf")}
+    result = tool._handle_file_attachments("/rest/api/2/issue/PROJ-123/attachments", None, files)
+
+    mock_jira.add_attachment_object.assert_called_once()
+    assert "report.pdf" in result
+    assert "PROJ-123" in result
+
+
+def test_handle_file_attachments_multiple_files(jira_config, mock_jira):
+    with patch("codemie_tools.core.project_management.jira.tools.validate_jira_creds"):
+        tool = GenericJiraIssueTool(config=jira_config)
+        tool.jira = mock_jira
+
+    files = {
+        "a.png": (b"bytes-a", "image/png"),
+        "b.txt": (b"bytes-b", "text/plain"),
+    }
+    result = tool._handle_file_attachments("/rest/api/2/issue/PROJ-456/attachments", None, files)
+
+    assert mock_jira.add_attachment_object.call_count == 2
+    assert "a.png" in result
+    assert "b.txt" in result
+
+
+def test_handle_file_attachments_upload_raises(jira_config, mock_jira):
+    from langchain_core.tools import ToolException
+
+    with patch("codemie_tools.core.project_management.jira.tools.validate_jira_creds"):
+        tool = GenericJiraIssueTool(config=jira_config)
+        tool.jira = mock_jira
+
+    mock_jira.add_attachment_object.side_effect = Exception("403 Forbidden")
+    files = {"screen.png": (b"bytes", "image/png")}
+
+    with pytest.raises(ToolException, match="Failed to attach files"):
+        tool._handle_file_attachments("/rest/api/2/issue/PROJ-789/attachments", None, files)

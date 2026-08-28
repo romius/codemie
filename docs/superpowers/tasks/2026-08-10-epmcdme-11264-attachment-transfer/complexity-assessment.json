@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "task": "Automate cross-ticket attachment transfer and OCR-based text extraction when creating Jira bugs from support requests.",
+  "generated": "2026-08-10T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 4, "label": "L" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 22,
+  "size": "L",
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "GenericJiraIssueTool requires 3+ new methods (_download_all_attachments, _copy_attachments_to_issue, _extract_and_append_image_text), JiraConfig needs a structural chat_model field addition, tools_vars.py docstring must be updated, and optionally a new JiraAttachmentContentMixin introduced; the tool is registered in 8+ prebuilt assistant definitions giving any change a wide blast radius across multiple agents."
+    },
+    {
+      "dimension": "requirements_clarity",
+      "reason": "Multiple open design decisions: 'no fidelity loss' directly conflicts with the hard-coded 5 MB per-image cap; 'logged/auditable' is ambiguous between transient logger.info calls and durable SkillEventRepository writes; OCR text injection target (edit bug description vs POST /comment) is unspecified; handling of non-image attachments (PDFs, ZIPs) for the copy pipeline is undefined; separate size/count caps for copy vs display are undecided."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "Cross-ticket attachment download-then-upload is a new data flow with no existing Jira-domain implementation; _handle_file_attachments has zero test coverage making it a fragile foundation; wiring ImageProcessor into GenericJiraIssueTool requires a structural change to JiraConfig (adding chat_model); partial-failure handling per attachment adds error-handling complexity; the Azure DevOps AttachmentContentMixin reference pattern requires adaptation, not direct reuse."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "Changes span Agent-Tool layer (GenericJiraIssueTool new methods + execute dispatch), Utility layer (ImageProcessor wired into Jira tool for first time), Config layer (JiraConfig structural change + module constants promoted), and External layer (new Jira REST API patterns: GET /issue/{key}?fields=attachment, POST /issue/{key}/attachments, POST /issue/{key}/comment); durable audit scope would additionally touch Repository/Service layer."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from L(4) to XL(5): GenericJiraIssueTool is registered in 8+ prebuilt assistant definitions — new behavior affects multiple agents simultaneously",
+    "Requirements Clarity bumped from M(3) to L(4): vague acceptance criteria — 'no fidelity loss' conflicts with the existing 5 MB hard-coded image cap; 'logged/auditable' has no defined implementation scope (transient vs durable)"
+  ],
+  "split_recommendation": null
+}

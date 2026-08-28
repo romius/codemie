@@ -1,0 +1,127 @@
+{
+  "schema": 1,
+  "gate_id": "code-review.final",
+  "run_id": "2026-08-10-epmcdme-11264-attachment-transfer",
+  "decision": "request-changes",
+  "confidence": "high",
+  "rationale": "Three independent lens subagents ran against the full 831-line diff (7 files). All lenses produced usable output. Six blocking findings survived triage: one critical SSRF (unvalidated attachment content_url passed directly to jira.request absolute=True) and five major issues — zero-byte file false failure, no-op guarantee violation when source has no attachments, logger.info audit gap for non-copied files, trailing-slash edge case silently skipping attachment transfer, and Jira wiki-markup injection via unescaped filename/OCR text in the auto-posted comment. Four acceptance criteria pass; AC-4 fails (no-op violated) and AC-6 is partial (incomplete INFO-level audit). Standards gates (ruff, license, commit format) pass; security standard fails on CR-001 and CR-006.",
+  "risk_flags": ["security"],
+  "business_review": [
+    {
+      "id": "AC-1",
+      "description": "All attachments copied to new issue (no MIME filter)",
+      "status": "pass",
+      "notes": "_fetch_all_attachments returns every attachment that has a content URL, with no MIME filtering. IMAGE_MIME_TYPES is used only inside _run_ocr to gate OCR — it never gates the copy."
+    },
+    {
+      "id": "AC-2",
+      "description": "No fidelity loss — default caps are -1 (unlimited)",
+      "status": "pass",
+      "notes": "JIRA_COPY_MAX_ATTACHMENT_BYTES = -1 and JIRA_COPY_MAX_ATTACHMENTS = -1; both guards short-circuit when the value is -1."
+    },
+    {
+      "id": "AC-3",
+      "description": "Image OCR text visible in new issue as a single comment labeled by filename",
+      "status": "pass",
+      "notes": "_append_ocr_comment posts exactly one comment after all attachments are processed, only when ocr_results is non-empty. Note: CR-006 (markup injection) can corrupt the comment body — resolved if CR-006 is fixed."
+    },
+    {
+      "id": "AC-4",
+      "description": "No attachments → issue created normally (no-op)",
+      "status": "fail",
+      "notes": "execute() unconditionally appends 'Attachment transfer: 0/0 copied. 0 image(s) OCR'd.' whenever source_issue_key is present and issue creation succeeds, including when copy_results is empty (source has no attachments, or source-fetch threw). The spec requires the creation result be returned as-is in this case. Fix: guard with 'if copy_results:' before appending the summary."
+    },
+    {
+      "id": "AC-5",
+      "description": "No manual download/upload needed — fully automated",
+      "status": "pass",
+      "notes": "Full pipeline (fetch metadata → binary download → upload → OCR → comment) is triggered automatically inside execute() with no user-facing steps."
+    },
+    {
+      "id": "AC-6",
+      "description": "Logged/auditable: logger.info per file (name, size, status) + summary in tool response",
+      "status": "partial",
+      "notes": "logger.info fires only for 'copied' outcomes. Files with 'failed' or 'skipped' status are logged only at WARNING, leaving INFO-level audit logs blind to all non-happy-path files. The spec requires 'logger.info per file' for all outcomes."
+    }
+  ],
+  "standards_review": [
+    {
+      "standard": "commit-format",
+      "status": "pass",
+      "notes": "All commits follow EPMCDME-NNNNN: Description format per git-workflow guide."
+    },
+    {
+      "standard": "code-quality-ruff",
+      "status": "pass",
+      "notes": "make ruff passed (0 violations). License headers present in all new files. Tests pass 145/145."
+    },
+    {
+      "standard": "security-patterns",
+      "status": "fail",
+      "notes": "Two security violations: CR-001 (SSRF — content_url from Jira API passed to jira.request absolute=True without origin validation) and CR-006 (stored-content injection — filename and OCR text interpolated into Jira comment without escaping). Both are blocking per security-patterns guide."
+    }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/codemie_tools/core/project_management/jira/attachment_mixin.py",
+      "line": 72,
+      "problem": "content_url from the Jira attachment metadata field is passed verbatim to jira.request(path=content_url, absolute=True) with no origin validation.",
+      "impact": "An attacker with write access to the source Jira issue can set the attachment content URL to an arbitrary target (e.g., http://169.254.169.254/latest/meta-data/ on AWS). The CodeMie service then fetches that URL using its Jira session credentials, enabling SSRF against cloud metadata endpoints or other internal services reachable from the CodeMie host but not from the external Jira instance.",
+      "recommendation": "Before using content_url, validate that it starts with the configured Jira base URL: if not content_url.startswith(self.jira.url): log a warning and return (None, 'failed'). This ensures only URLs served by the configured Jira instance are followed."
+    },
+    {
+      "id": "CR-002",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie_tools/core/project_management/jira/attachment_mixin.py",
+      "line": 87,
+      "problem": "The download-failure guard is 'if response.status_code != 200 or not response.content'. In Python, bool(b\"\") is False, so a 200 response with an empty body (legitimate zero-byte file) is treated as a failed download.",
+      "impact": "Any zero-byte attachment on the source issue is silently skipped. A spurious WARNING is logged, the file is never uploaded to the target issue, and the result dict shows status='failed' — silent data loss for empty-file attachments.",
+      "recommendation": "Change to 'if response.status_code != 200' — drop the 'or not response.content' clause entirely. An empty body is valid for a zero-byte file. If detecting a truly absent body is needed, use 'response.content is None'."
+    },
+    {
+      "id": "CR-003",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie_tools/core/project_management/jira/tools.py",
+      "line": 173,
+      "problem": "execute() unconditionally appends the 'Attachment transfer: 0/0 copied. 0 image(s) OCR'd.' string to response_string whenever source_issue_key is present and issue creation succeeds — including when copy_results is [] (source has no attachments or _fetch_all_attachments threw and returned []).",
+      "impact": "Violates AC-4: the spec requires that when the source has no attachments, the issue is 'created normally with no side effects'. The spurious '0/0 copied' message misleads agents and callers parsing the response string. It also fires on source-ticket fetch failures, masking the real outcome.",
+      "recommendation": "Wrap the response_string append in 'if copy_results:'. When the list is empty, return response_string unmodified. The '0/N copied' summary (for the all-failed case where N > 0) is preserved by this guard since copy_results is non-empty in that case."
+    },
+    {
+      "id": "CR-004",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie_tools/core/project_management/jira/attachment_mixin.py",
+      "line": 107,
+      "problem": "logger.info is emitted only when status == 'copied'. Files with status 'failed' or 'skipped' are logged only at WARNING. The spec requires 'logger.info per file (name, size, status)' for all outcomes to satisfy AC-6 (logged/auditable).",
+      "impact": "INFO-level audit consumers (dashboards, oncall tooling, log-based alerts) have no visibility into non-copied attachments. A developer tailing INFO during an incident will see only successful copies and have no indication of which files were skipped or failed — the evidence lives only at WARNING.",
+      "recommendation": "After each _copy_single_attachment call in copy_attachments_from_issue, emit logger.info(\"Attachment %s (%d bytes): %s\", att['filename'], att['size'], status) for all status values. Retain the existing logger.warning lines for the actionable failure details — they carry the error context that INFO should not duplicate."
+    },
+    {
+      "id": "CR-005",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie_tools/core/project_management/jira/tools.py",
+      "line": 188,
+      "problem": "_is_issue_create_request uses re.match(r\"/rest/api/\\d+/issue$\", relative_url). The trailing '$' anchor rejects '/rest/api/2/issue/' (trailing slash), a common URL form produced by agents and REST clients.",
+      "impact": "If an agent passes a trailing slash, the Jira issue is created successfully but attachment transfer is silently skipped — no warning logged, no indication in the response. The user sees the new issue key but attachments are absent with no explanation.",
+      "recommendation": "Change the regex to r\"/rest/api/\\d+/issue/?$\" to tolerate an optional trailing slash. Add a unit test in test_tools.py covering '/rest/api/2/issue/' alongside the existing '/rest/api/2/issue' case."
+    },
+    {
+      "id": "CR-006",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie_tools/core/project_management/jira/attachment_mixin.py",
+      "line": 135,
+      "problem": "In _append_ocr_comment, both item['filename'] and item['ocr_text'] are interpolated directly into the Jira wiki-markup comment body (f\"**{item['filename']}**\\n{item['ocr_text']}\\n\") without any escaping.",
+      "impact": "Filenames containing Jira wiki metacharacters (* { [ | \\ ~) break the bold formatting or trigger Jira macros/user mentions. OCR-extracted text can contain arbitrary content. An attacker who controls attachment filenames on the source issue can inject arbitrary wiki-markup into auto-generated comments on any newly created target issue — a stored-content injection vector. For example, a filename like '{noformat}' or '[~admin]' would trigger Jira features on the target issue.",
+      "recommendation": "Escape filenames before embedding: replace *, {, [, |, \\, ~ with backslash-prefixed equivalents, or render filenames in Jira monospace notation ({{filename}}). Wrap ocr_text in a {noformat} ... {noformat} block to prevent any markup interpretation of OCR content."
+    }
+  ],
+  "deferred_notes": "3 findings deferred (non-blocking): (1) API v2 hardcoded in _fetch_all_attachments and _append_ocr_comment — Atlassian Cloud still supports v2; tech debt for when Atlassian deprecates v2, but not a current bug. (2) IMAGE_MIME_TYPES independently defined in tools.py:45 and attachment_mixin.py:23 — latent divergence risk if one set is updated without the other; refactor to a shared constant. (3) _copy_single_attachment returns content_bytes for all MIME types — minor unnecessary memory retention for non-image files that don't need OCR. 5 findings dismissed (incorrect blind-lens claim about data= sending form-encoded — atlassian-python-api does json.dumps(data) internally, so data=dict IS JSON; config race condition trivial; metadata size pre-check mitigated by post-download check; bulk-create gap not a targeted use case; unlimited defaults are explicit by spec)."
+}

@@ -36,6 +36,7 @@ def mock_jira():
     """Fixture for mocked Jira client."""
     with patch("codemie_tools.core.project_management.jira.tools.Jira") as mock_jira_class:
         mock_jira_instance = MagicMock()
+        mock_jira_instance.url = "https://jira.example.com"
         mock_jira_class.return_value = mock_jira_instance
         yield mock_jira_instance
 

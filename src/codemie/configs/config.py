@@ -138,6 +138,8 @@ class Config(BaseSettings):
     FILES_STORAGE_TYPE: Literal["filesystem", "aws", "azure", "gcp"] = 'filesystem'
     FILES_STORAGE_MAX_UPLOAD_SIZE: int = 100 * 1024 * 1024  # 100 MB
     IMAGE_INDEXING_MAX_SIZE_BYTES: int = 10 * 1024 * 1024  # 10 MB
+    JIRA_COPY_MAX_ATTACHMENT_BYTES: int = -1
+    JIRA_COPY_MAX_ATTACHMENTS: int = -1
     FILES_STORAGE_GCP_REGION: str = "US"
     LLM_REQUEST_ADD_MARKDOWN_PROMPT: bool = True
 

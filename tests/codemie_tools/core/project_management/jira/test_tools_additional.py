@@ -20,6 +20,14 @@ from codemie_tools.core.project_management.jira.models import JiraConfig
 from codemie_tools.core.project_management.jira.tools import GenericJiraIssueTool, JIRA_TEST_URL, JIRA_ERROR_MSG
 
 
+def test_jira_copy_config_defaults():
+    """JIRA copy caps default to -1 (unlimited) per project convention."""
+    from codemie.configs import config
+
+    assert config.JIRA_COPY_MAX_ATTACHMENT_BYTES == -1
+    assert config.JIRA_COPY_MAX_ATTACHMENTS == -1
+
+
 class TestGenericJiraIssueToolAdditional:
     @patch('codemie_tools.core.project_management.jira.tools.validate_jira_creds')
     def test_validate_config_server(self, mock_validate_creds):

@@ -21,8 +21,11 @@ from typing import Type, Optional, Any, Dict, Union
 from atlassian import Jira
 from pydantic import BaseModel, Field
 
+from langchain_core.language_models import BaseChatModel
+
 from codemie_tools.base.codemie_tool import CodeMieTool
 from codemie_tools.base.file_tool_mixin import FileToolMixin
+from codemie_tools.core.project_management.jira.attachment_mixin import JiraAttachmentMixin
 from codemie_tools.core.project_management.jira.models import JiraConfig
 from codemie_tools.core.project_management.jira.tools_vars import (
     GENERIC_JIRA_TOOL,
@@ -106,9 +109,10 @@ class JiraInput(BaseModel):
     )
 
 
-class GenericJiraIssueTool(CodeMieTool, FileToolMixin):
+class GenericJiraIssueTool(CodeMieTool, FileToolMixin, JiraAttachmentMixin):
     config: JiraConfig
     jira: Optional[Jira] = None
+    chat_model: Optional[BaseChatModel] = None
     name: str = GENERIC_JIRA_TOOL.name
     description: str = GENERIC_JIRA_TOOL.description or ""
     args_schema: Type[BaseModel] = JiraInput
@@ -184,6 +188,18 @@ class GenericJiraIssueTool(CodeMieTool, FileToolMixin):
 
         payload_params = parse_payload_params(params)
 
+        # Strip attachment-transfer control params before sending to Jira; copy first to avoid mutating caller's dict.
+        # copy_attachments and ocr_images are explicit opt-ins so the tool never triggers cross-ticket copies
+        # or vision-model calls unless the caller asks for them.
+        source_issue_key: str | None = None
+        copy_attachments = False
+        ocr_images = False
+        if isinstance(payload_params, dict):
+            payload_params = dict(payload_params)
+            source_issue_key = payload_params.pop("source_issue_key", None)
+            copy_attachments = bool(payload_params.pop("copy_attachments", False))
+            ocr_images = bool(payload_params.pop("ocr_images", False))
+
         if method == "GET":
             # Convert fields from list to comma-separated string for GET query params
             payload_params = self._normalize_fields_param(payload_params)
@@ -195,12 +211,41 @@ class GenericJiraIssueTool(CodeMieTool, FileToolMixin):
         response_string = f"HTTP: {method} {relative_url} -> {response.status_code} {response.reason} {response_text}"
         logger.debug(response_string)
 
+        if (
+            method == "POST"
+            and source_issue_key
+            and copy_attachments
+            and response.status_code in (200, 201)
+            and self._is_issue_create_request(relative_url)
+        ):
+            new_issue_key = self._extract_created_issue_key(response_text)
+            if new_issue_key:
+                copy_results = self.copy_attachments_from_issue(source_issue_key, new_issue_key, run_ocr=ocr_images)
+                if copy_results:
+                    copied = sum(1 for r in copy_results if r["status"] == "copied")
+                    ocr_count = sum(1 for r in copy_results if r.get("ocr_text"))
+                    response_string += f"\nAttachment transfer: {copied}/{len(copy_results)} copied."
+                    if ocr_images:
+                        response_string += f" {ocr_count} image(s) OCR'd."
+
         if method == "GET" and self._is_single_issue_request(relative_url):
             image_attachments = self._extract_image_attachments(response)
             if image_attachments:
                 return JiraMultimodalResponse(text=response_string, image_attachments=image_attachments)
 
         return response_string
+
+    def _is_issue_create_request(self, relative_url: str) -> bool:
+        """Check whether the URL targets issue creation (not a sub-resource or search)."""
+        return bool(re.match(r"/rest/api/\d+/issue/?$", relative_url))
+
+    def _extract_created_issue_key(self, response_text: str) -> str | None:
+        """Parse the new issue key from a successful issue-create response body."""
+        try:
+            data = json.loads(response_text)
+            return data.get("key")
+        except (json.JSONDecodeError, TypeError):
+            return None
 
     def _handle_get_request(self, relative_url, payload_params):
         response = self.jira.request(
