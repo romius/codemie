@@ -15,6 +15,7 @@
 from .agent_node import AgentNode
 from .base_node import BaseNode
 from .result_finalizer_node import ResultFinalizerNode
+from .sub_workflow_node import SubWorkflowNode
 from .summarize_conversation_node import SummarizeConversationCommandNode
 from .tool_node import ToolNode
 from .transform_node import TransformNode
@@ -22,6 +23,7 @@ from .transform_node import TransformNode
 __all__ = [
     'BaseNode',
     'AgentNode',
+    'SubWorkflowNode',
     'ToolNode',
     'ResultFinalizerNode',
     'SummarizeConversationCommandNode',

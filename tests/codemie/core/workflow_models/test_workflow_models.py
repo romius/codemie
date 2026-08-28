@@ -326,3 +326,79 @@ class TestWorkflowTool:
         assert tool.trace is True
         assert tool.mcp_server is not None
         assert tool.resolve_dynamic_values_in_response is True
+
+
+class TestWorkflowPoolConfig:
+    def test_default_values(self):
+        from codemie.core.workflow_models import WorkflowPoolConfig
+
+        cfg = WorkflowPoolConfig()
+        assert cfg.enabled is False
+        assert cfg.min_size == 2
+        assert cfg.max_size == 5
+        assert cfg.refill_interval_seconds == 30
+
+    def test_min_size_lower_bound(self):
+        from codemie.core.workflow_models import WorkflowPoolConfig
+
+        with pytest.raises(ValidationError):
+            WorkflowPoolConfig(min_size=0)
+
+    def test_min_size_upper_bound(self):
+        from codemie.core.workflow_models import WorkflowPoolConfig
+
+        with pytest.raises(ValidationError):
+            WorkflowPoolConfig(min_size=21)
+
+    def test_max_size_upper_bound(self):
+        from codemie.core.workflow_models import WorkflowPoolConfig
+
+        with pytest.raises(ValidationError):
+            WorkflowPoolConfig(max_size=51)
+
+    def test_refill_interval_lower_bound(self):
+        from codemie.core.workflow_models import WorkflowPoolConfig
+
+        with pytest.raises(ValidationError):
+            WorkflowPoolConfig(refill_interval_seconds=4)
+
+
+class TestWorkflowStateWorkflowId:
+    def test_workflow_id_is_valid_fourth_discriminant(self):
+        state = WorkflowState(
+            id="s1",
+            workflow_id="wf-123",
+            next=WorkflowNextState(state_id="s2"),
+        )
+        assert state.workflow_id == "wf-123"
+
+    def test_workflow_id_mutual_exclusion_with_assistant_id(self):
+        with pytest.raises(ValidationError):
+            WorkflowState(
+                id="s1",
+                workflow_id="wf-123",
+                assistant_id="asst-1",
+                next=WorkflowNextState(state_id="s2"),
+            )
+
+    def test_workflow_id_mutual_exclusion_with_tool_id(self):
+        with pytest.raises(ValidationError):
+            WorkflowState(
+                id="s1",
+                workflow_id="wf-123",
+                tool_id="tool-1",
+                next=WorkflowNextState(state_id="s2"),
+            )
+
+    def test_workflow_id_mutual_exclusion_with_custom_node_id(self):
+        with pytest.raises(ValidationError):
+            WorkflowState(
+                id="s1",
+                workflow_id="wf-123",
+                custom_node_id="node-1",
+                next=WorkflowNextState(state_id="s2"),
+            )
+
+    def test_no_discriminant_still_raises(self):
+        with pytest.raises(ValidationError):
+            WorkflowState(id="s1", next=WorkflowNextState(state_id="s2"))

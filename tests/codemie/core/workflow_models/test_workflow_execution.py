@@ -260,3 +260,35 @@ class TestWorkflowExecutionStateResponseStateId:
 
         assert response.state_id == "assistant_2"
         assert response.name == "assistant_2 3 of 7"
+
+
+class TestWorkflowExecutionLineageFields:
+    def test_parent_execution_id_defaults_to_none(self):
+        exec_ = WorkflowExecution(
+            workflow_id="wf-1",
+            execution_id="exec-1",
+        )
+        assert exec_.parent_execution_id is None
+
+    def test_active_sub_execution_id_defaults_to_none(self):
+        exec_ = WorkflowExecution(
+            workflow_id="wf-1",
+            execution_id="exec-1",
+        )
+        assert exec_.active_sub_execution_id is None
+
+    def test_parent_execution_id_can_be_set(self):
+        exec_ = WorkflowExecution(
+            workflow_id="wf-1",
+            execution_id="exec-child",
+            parent_execution_id="exec-parent",
+        )
+        assert exec_.parent_execution_id == "exec-parent"
+
+    def test_active_sub_execution_id_can_be_set(self):
+        exec_ = WorkflowExecution(
+            workflow_id="wf-1",
+            execution_id="exec-parent",
+            active_sub_execution_id="exec-child",
+        )
+        assert exec_.active_sub_execution_id == "exec-child"

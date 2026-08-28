@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "task": "Add SubWorkflowNode type with warm pre-instantiation pool, isolated child execution context, interrupt/resume support across parent-child boundary, and UI-configurable pool and nesting depth settings",
+  "generated": "2026-07-29T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 6, "label": "XXL" },
+    "requirements_clarity": { "score": 4, "label": "L" },
+    "technical_risk":       { "score": 6, "label": "XXL" },
+    "file_change_estimate": { "score": 6, "label": "XXL" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 6, "label": "XXL" }
+  },
+  "total": 30,
+  "size": "XL",
+  "routing": "split-required",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "New SubWorkflowNode, greenfield pool manager, background pool-watcher, and substantial modifications to workflow_execution_service.py, checkpoint_saver.py, workflow.py, workflow_config.py, workflow_execution.py — 4+ new abstractions introduced across a redesigned orchestration subsystem; bumped from XL to XXL because base_node.py (base class for all nodes) and checkpoint_saver.py (all workflow state) are core shared utilities"
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "Three novel sub-problems with no codebase precedent: (1) parent-child LangGraph checkpoint coordination with risk of silent data loss on incorrect resume, (2) greenfield pool lifecycle with concurrency hazards — stale instances, double-checkout, pool drain on config change, (3) extended interrupt/resume mechanism originally designed for single-level workflows; bumped from XL to XXL for performance optimization as a primary requirement and mandatory Alembic migrations"
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "Conservative source-file count: 10 modified (workflow.py, checkpoint_saver.py, base_node.py, workflow_execution.py, workflow_config.py, workflow_models.py, workflow_executions.py router, workflow_execution_service.py, workflow_update_output_service.py, config.py) + 4 new (sub_workflow_node.py, pool_manager.py, 2 migration files) + approximately 5 new test files; bumped from XL to XXL after the data migration red flag"
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "All five primary layers are touched: API (workflow_executions.py router — interrupt/resume path), Service (workflow_execution_service.py, workflow_update_output_service.py), Workflow/Orchestration (workflow.py, checkpoint_saver.py, new sub_workflow_node.py), DB-Persistence (two schema migrations, new model columns in workflow_config and workflow_execution), Configuration (config.py global defaults); bumped from XL to XXL for the significant DB schema changes across two tables"
+    },
+    {
+      "dimension": "requirements_clarity",
+      "reason": "High-level requirements are well-specified (isolated context, explicit output only, warm pool with background watcher, UI-configurable pool and nesting depth, before-interrupt support), but multiple architectural decisions remain open: LangGraph checkpoint namespace strategy for parent-child thread hierarchy, pool concurrency model (async locking, starvation handling), background watcher registration lifecycle (FastAPI lifespan vs BackgroundTasks), and whether pool registry requires persistence or is purely in-memory"
+    }
+  ],
+  "red_flags_applied": [
+    "Performance optimization as primary concern (warm pre-instantiation pool is requirement #3): Technical Risk bumped from XL (5) to XXL (6)",
+    "DB schema changed significantly (two migration files required: workflow_config new columns pool_enabled/pool_size/max_nesting_level, workflow_execution new columns parent_execution_id/nesting_depth): Affected Layers bumped from XL (5) to XXL (6); Technical Risk already at XXL (6)",
+    "Data migration required (two Alembic migration files): File Change Estimate bumped from XL (5) to XXL (6); Technical Risk already at XXL (6)",
+    "Touches core shared utilities (base_node.py is the base class for all workflow nodes; checkpoint_saver.py handles all LangGraph state persistence): Component Scope bumped from XL (5) to XXL (6)",
+    "Affects multiple workflows (interrupt/resume mechanism changes propagate to all workflow executions, not only sub-workflow-enabled ones): Component Scope already at XXL (6) — no further bump"
+  ],
+  "split_recommendation": "This XL ticket (30/36) should be decomposed before planning begins. Splitting strategy by dependency order: Story 1 (M) — SubWorkflowNode class: new node type inheriting base_node.py, thin invocation interface delegating to service layer, unit tests validating isolated context (sub-workflow state must not leak into parent). Story 2 (M) — Workflow pool manager and background watcher: greenfield pool lifecycle service (create, checkout, return, refill, drain), async background watcher registered via FastAPI lifespan, in-memory per-workflow registry, concurrency-safe checkout. Story 3 (M) — DB schema and configuration: Alembic migrations for workflow_config (pool_enabled, pool_size, max_nesting_level) and workflow_execution (parent_execution_id, nesting_depth), config.py global defaults, model field additions and API exposure. Story 4 (L) — Interrupt and resume across sub-workflow boundary: checkpoint_saver.py parent-child namespace coordination, workflow_executions.py resume path for sub-workflow suspension points, nesting depth enforcement and circular call guard in workflow_execution_service.py. Story 5 (S) — Output isolation enforcement: workflow_update_output_service.py rule that only the sub-workflow explicit output surfaces to the parent context, integration test for state non-leakage."
+}

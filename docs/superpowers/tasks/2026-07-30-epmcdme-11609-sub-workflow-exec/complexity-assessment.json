@@ -1,0 +1,61 @@
+{
+  "schema": 1,
+  "task": "Implement LangGraph SubWorkflowNode handler, parent suspension/child-resume wiring, selectable sub-workflows API endpoint, ENABLE_SUB_WORKFLOW_NODE feature flag integration, and active_sub_execution_id lifecycle management.",
+  "generated": "2026-07-30T00:00:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 6,
+      "label": "XXL"
+    },
+    "requirements_clarity": {
+      "score": 5,
+      "label": "XL"
+    },
+    "technical_risk": {
+      "score": 5,
+      "label": "XL"
+    },
+    "file_change_estimate": {
+      "score": 4,
+      "label": "L"
+    },
+    "dependencies": {
+      "score": 2,
+      "label": "S"
+    },
+    "affected_layers": {
+      "score": 5,
+      "label": "XL"
+    }
+  },
+  "total": 27,
+  "size": "XL",
+  "routing": "split-required",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Seven components touched across five architectural layers: SubWorkflowNode (new), WorkflowExecutor dispatch (workflow.py), WorkflowService (selectable listing + extended create_workflow_execution + nesting enforcement), WorkflowExecutionService (active_sub_execution_id lifecycle), workflow router (new selectable endpoint), workflow_executions router (resume routing), and validation/resources.py. workflow.py and WorkflowExecutionService are core shared utilities that gate every workflow execution — red flag applied, bumped from XL (5) to XXL (6)."
+    },
+    {
+      "dimension": "requirements_clarity",
+      "reason": "The task is partially clear: SubWorkflowNode lifecycle, interrupt bridge key convention, and output isolation are specified. The critical gap is the child-completion notification mechanism: how the parent executor knows to resume once the child finishes (synchronous block vs. polling loop vs. event/NATS) is explicitly unresolved per the technical analysis. No existing push-notification or polling bridge exists in the codebase. This gap directly determines implementation shape and test strategy — red flag for vague acceptance criteria applied, bumped from L (4) to XL (5)."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "Novel cross-execution lifecycle: the existing interrupt/resume pattern is designed for human-in-the-loop pauses, not programmatic child-completion triggers. BedrockFlowNode is the only structural analogue but does not use LangGraph interrupt/resume. LangGraph checkpoint thread-ID isolation is correctness-critical (sharing a thread_id corrupts both executions). Resume routing that branches on active_sub_execution_id has no precedent and incorrect routing corrupts execution state. All 10 test coverage areas are greenfield — no regression baseline."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "Five distinct architectural layers named in the technical analysis: API/Router (two files), Service/Business-logic (two files), Workflow/Orchestration (executor + new node), Repository/Data-access (first runtime writes to parent_execution_id and active_sub_execution_id), and Validation. No new schema migration needed (Increment 1 migrations cover all columns), but five-layer span with cross-cutting feature-flag guards across all of them."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "Seven production source files modified (workflow.py, nodes/__init__.py, validation/resources.py, workflow_service.py, workflow_execution_service.py, routers/workflow.py, routers/workflow_executions.py) plus one new production file (sub_workflow_node.py). Ten greenfield test coverage gaps require one new test file and ~four to five existing test file modifications, pushing total modified file count to approximately eleven to thirteen across five directories."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from XL (5) to XXL (6): workflow.py WorkflowExecutor and WorkflowExecutionService are core shared utilities touched by the change — red flag: Touches core shared utilities",
+    "Requirements Clarity bumped from L (4) to XL (5): child-completion notification mechanism (synchronous block vs. polling vs. event) is unresolved and is the highest-impact design decision in Increment 2 — red flag: Vague acceptance criteria"
+  ],
+  "split_recommendation": "Score is XL (27/36). Splitting into three focused increments is strongly recommended before planning.\n\nIncrement 2a (estimated M): SubWorkflowNode class + execution path. Implement sub_workflow_node.py subclassing BaseNode, the elif state.workflow_id: dispatch branch in initialize_node, ENABLE_SUB_WORKFLOW_NODE flag guard, nesting depth enforcement in WorkflowService, input_mapping Jinja rendering, and output isolation. Resolve the child-completion notification design decision first (synchronous blocking call is the simplest safe starting point). Cover: test_sub_workflow_node.py (new), dispatch branch test in test_workflow.py, nesting enforcement test in test_workflow_service.py, flag gating test.\n\nIncrement 2b (estimated S): Selectable sub-workflows API endpoint. Add GET /workflows/selectable (or equivalent) to rest_api/routers/workflow.py with a new WorkflowService.list_selectable_workflows() method. Reuse WorkflowConfigIndexService + VisibleToUserModifierPostgres with an additional id != current_workflow_id filter. Cover: test_workflow.py router test, test_workflow_service.py service test.\n\nIncrement 2c (estimated M): Parent suspension and resume routing. Wire active_sub_execution_id lifecycle in WorkflowExecutionService (set on child start, clear on child completion), add active_sub_execution_id detection logic to the PUT .../resume endpoint, and extend WorkflowService.create_workflow_execution with parent_execution_id and active_sub_execution_id kwargs. Cover: test_workflow_execution_service.py lifecycle test, test_resume_workflow_execution.py routing test, test_workflow_service.py lineage-kwargs test."
+}

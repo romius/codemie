@@ -271,6 +271,14 @@ components:
       enabled: false
       name: "Project Chargeback"
       description: "Enable project chargeback status modification"
+  # Keep these UI feature flags aligned with the backend SUBWORKFLOW_ENABLED default (False).
+  # Enabling the UI while the backend gate is off surfaces a feature whose endpoints return 403.
+  - id: "subWorkflowNode"
+    settings:
+      enabled: false
+  - id: "features:subWorkflow"
+    settings:
+      enabled: false
 
 preconfigured_assistants:
   - id: "codemie-onboarding"

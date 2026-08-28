@@ -40,8 +40,10 @@ from codemie.chains.base import (
     Thought,
 )
 from codemie.configs import logger, config
+from codemie.configs.customer_config import customer_config
 from codemie.enterprise.observability import get_observability_provider
 from codemie.core.exceptions import InterruptedException
+from codemie.workflows.exceptions import FeatureDisabledError
 from codemie.core.otel_tracing import get_otel_context_for_thread, propagated_span, record_exception_on_span
 from codemie.core.thought_queue import ThoughtQueue
 from codemie.core.thread import MessageQueue
@@ -83,6 +85,7 @@ from codemie.workflows.constants import (
 from codemie.workflows.checkpoint_saver import CheckpointSaver
 from codemie.workflows.models import AgentMessages
 from codemie.workflows.nodes import BaseNode, AgentNode, ToolNode, ResultFinalizerNode, SummarizeConversationCommandNode
+from codemie.workflows.nodes.node_slot import NodeSlot
 from codemie.workflows.utils import (
     find_custom_node_by_id,
     parse_from_string_representation,
@@ -135,6 +138,7 @@ class WorkflowExecutor:
         disable_cache: Optional[bool] = False,
         tags: Optional[list[str]] = None,
         delete_on_completion: bool = False,
+        compiled_graph: Optional[CompiledStateGraph] = None,
     ):
         """
         Create a workflow executor with the specified configuration.
@@ -192,6 +196,7 @@ class WorkflowExecutor:
                 disable_cache=disable_cache,
                 tags=tags,
                 delete_on_completion=delete_on_completion,
+                compiled_graph=compiled_graph,
             )
 
     @staticmethod
@@ -327,6 +332,7 @@ class WorkflowExecutor:
         disable_cache: Optional[bool] = False,
         tags: Optional[list[str]] = None,
         delete_on_completion: bool = False,
+        compiled_graph: Optional[CompiledStateGraph] = None,
     ):
         self.workflow_config = workflow_config
         self.user_input = user_input
@@ -355,20 +361,99 @@ class WorkflowExecutor:
         # stream_to_client(), which run in a background thread with no inherited contextvars,
         # can attach it and make workflow.execute a child of the HTTP request span.
         self._otel_context = get_otel_context_for_thread()
+        self._compiled_graph = compiled_graph
 
     def _init_workflow(self) -> CompiledStateGraph:
+        compiled = self._compile_graph(self.workflow_config)
+        self._inject_user_context(compiled)
+        return compiled
+
+    def _initialize_node_slots(self, workflow: StateGraph, workflow_config: WorkflowConfig) -> dict[str, NodeSlot]:
+        slots: dict[str, NodeSlot] = {}
+        convergence_nodes = self.find_convergence_nodes(workflow_config)
+
+        for state in workflow_config.states:
+            slot = NodeSlot(state.id)
+            retry_policy = workflow_config.get_effective_retry_policy(state=state)
+            is_convergence = state.id in convergence_nodes
+            workflow.add_node(state.id, slot, retry=retry_policy, defer=is_convergence)
+            slots[state.id] = slot
+
+        summarize_slot = NodeSlot(SUMMARIZE_MEMORY_NODE)
+        workflow.add_node(SUMMARIZE_MEMORY_NODE, summarize_slot)
+        slots[SUMMARIZE_MEMORY_NODE] = summarize_slot
+
+        if workflow_config.enable_summarization_node:
+            finalizer_slot = NodeSlot(RESULT_FINALIZER_NODE)
+            workflow.add_node(RESULT_FINALIZER_NODE, finalizer_slot)
+            slots[RESULT_FINALIZER_NODE] = finalizer_slot
+
+        return slots
+
+    def _compile_graph(self, workflow_config: WorkflowConfig) -> CompiledStateGraph:
         workflow = self.init_state_graph()
-        entry_point = self.get_workflow_entry_point()
+        entry_point = workflow_config.states[0].id
         workflow.set_entry_point(entry_point)
-        self.build_workflow(workflow)
 
-        compile_args = {"debug": config.verbose}
+        slots = self._initialize_node_slots(workflow, workflow_config)
+        self.init_workflow_edges(workflow, workflow_config)
 
-        if self._interrupt_before_states:
-            compile_args["interrupt_before"] = self._interrupt_before_states
+        compile_args: dict = {"debug": config.verbose}
+        interrupt_states = [s.id for s in workflow_config.states if s.interrupt_before]
+        if interrupt_states:
+            compile_args["interrupt_before"] = interrupt_states
             compile_args["checkpointer"] = CheckpointSaver()
 
-        return workflow.compile(**compile_args)
+        compiled = workflow.compile(**compile_args)
+        compiled._node_slots = slots
+        return compiled
+
+    def _inject_user_context(self, compiled_graph: CompiledStateGraph) -> None:
+        slots: dict[str, NodeSlot] = compiled_graph._node_slots
+        map_states = self.find_map_nodes()
+
+        for state in self.workflow_config.states:
+            slot = slots.get(state.id)
+            if slot is None:
+                continue
+            if state.assistant_id:
+                node = self.init_agent_node(state, map_states)
+            elif state.custom_node_id:
+                node = self.init_custom_node(state)
+            elif state.tool_id:
+                node = self.init_tool_node(state, map_states)
+            elif state.workflow_id:
+                node = self.init_sub_workflow_node(state)
+            else:
+                raise ValueError(f"Invalid state configuration: {state}")
+            slot.set_delegate(node)
+
+        summarize_slot = slots.get(SUMMARIZE_MEMORY_NODE)
+        if summarize_slot:
+            summarize_slot.set_delegate(
+                SummarizeConversationCommandNode(
+                    self.callbacks,
+                    self.workflow_execution_service,
+                    self.thought_queue,
+                    self.workflow_config,
+                    node_name=SUMMARIZE_MEMORY_NODE,
+                    execution_id=self.execution_id,
+                )
+            )
+
+        if self.workflow_config.enable_summarization_node:
+            finalizer_slot = slots.get(RESULT_FINALIZER_NODE)
+            if finalizer_slot:
+                finalizer_slot.set_delegate(
+                    ResultFinalizerNode(
+                        self.callbacks,
+                        self.workflow_execution_service,
+                        self.thought_queue,
+                        workflow_config=self.workflow_config,
+                        execution_id=self.execution_id,
+                        node_name=RESULT_FINALIZER_NODE,
+                    )
+                )
 
     def init_state_graph(self) -> StateGraph:
         return StateGraph(AgentMessages)
@@ -524,6 +609,14 @@ class WorkflowExecutor:
             workflow.add_node(state.id, node, retry=retry_policy, defer=is_convergence_node)
         elif state.tool_id:
             node = self.init_tool_node(state, map_states)
+            workflow.add_node(state.id, node, retry=retry_policy, defer=is_convergence_node)
+        elif state.workflow_id:
+            if not customer_config.is_feature_enabled("subWorkflow"):
+                raise FeatureDisabledError(
+                    f"Sub-workflow node '{state.id}' is disabled. "
+                    "Enable the 'features:subWorkflow' flag in customer-config."
+                )
+            node = self.init_sub_workflow_node(state)
             workflow.add_node(state.id, node, retry=retry_policy, defer=is_convergence_node)
         else:
             raise ValueError(f"Invalid state configuration. {state}")
@@ -816,6 +909,19 @@ class WorkflowExecutor:
             file_names=self.file_names,
         )
 
+    def init_sub_workflow_node(self, state: WorkflowState):
+        from codemie.workflows.nodes.sub_workflow_node import SubWorkflowNode
+
+        return SubWorkflowNode(
+            callbacks=self.callbacks,
+            workflow_execution_service=self.workflow_execution_service,
+            thought_queue=self.thought_queue,
+            workflow_state=state,
+            node_name=state.id,
+            execution_id=self.execution_id,
+            workflow_config=self.workflow_config,
+        )
+
     def find_map_nodes(self) -> list[str]:
         """
         Finds and returns the map state ID and task list key from the workflow configuration.
@@ -999,7 +1105,11 @@ class WorkflowExecutor:
     def _run_workflow_execution(self, graph_config: RunnableConfig, chunks_collector: list):
         """Execute the workflow and collect output chunks."""
         inputs = self.on_workflow_start()
-        workflow = self._init_workflow()
+        if self._compiled_graph is not None:
+            self._inject_user_context(self._compiled_graph)
+            workflow = self._compiled_graph
+        else:
+            workflow = self._init_workflow()
         self._inject_resume_input(workflow, graph_config)
         self._process_workflow_chunks(workflow, inputs, graph_config, chunks_collector)
         self._check_for_interruption(workflow, graph_config)

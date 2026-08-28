@@ -88,6 +88,16 @@ class MarketplaceScopeModifier(QueryModifier):
         return query
 
 
+class ExcludeSelfModifier(QueryModifier):
+    """Exclude a specific workflow from results to prevent self-reference."""
+
+    def __init__(self, workflow_id: str):
+        self.workflow_id = workflow_id
+
+    def modify_query(self, query: Select[_T]) -> Select[_T]:
+        return query.where(WorkflowConfig.id != self.workflow_id)
+
+
 class WorkflowConfigIndexService:
     PROJECT_KEY = "project.keyword"
     SORT_FIELD = "update_date"
@@ -103,6 +113,7 @@ class WorkflowConfigIndexService:
         filters: dict[str, Any] | None = None,
         minimal_response: bool = False,
         scope: WorkflowScope | None = None,
+        extra_modifiers: list[QueryModifier] | None = None,
     ) -> WorkflowListResponse:
         if scope == WorkflowScope.MARKETPLACE:
             query_modifiers: list[QueryModifier] = [
@@ -114,6 +125,9 @@ class WorkflowConfigIndexService:
                 VisibleToUserModifierPostgres(user, filter_by_user),
                 ExcludeAutonomousWorkflowsModifier(),
             ]
+
+        if extra_modifiers:
+            query_modifiers.extend(extra_modifiers)
 
         items, total = cls._query_postgres(
             page=page,

@@ -1,0 +1,67 @@
+{
+  "decision": "request-changes",
+  "rationale": "Two major findings: (1) parent_exec.save() is called before workflow_pool.acquire() and create_executor() — if either raises, active_sub_execution_id is already committed pointing at a child that never ran, causing incorrect resume on retry; (2) Phase 1 test does not assert mock_pool.release was called, leaving the pool-release finally-block unverified. Fix: move save inside the try block after create_executor; add mock_pool.release.assert_called_once() to Phase 1. One dismiss: blind-lens claim that the test lacks assertions is incorrect — assert parent_exec_p1.active_sub_execution_id and save.assert_called_once() already exist. Three defers (parent_exec=None path, orphan-on-save-fail, concurrency window) are pre-existing design concerns outside this task's scope.",
+  "findings": [
+    {
+      "id": "CR-001",
+      "file": "src/codemie/workflows/nodes/sub_workflow_node.py",
+      "line": 114,
+      "severity": "major",
+      "triage": "patch",
+      "problem": "parent_exec.save() is called before workflow_pool.acquire() and WorkflowExecutor.create_executor(). If either call raises, active_sub_execution_id is already committed to the DB pointing at a child that never ran. On the next call the resume path detects the stale active_sub_execution_id and tries to resume a child with no checkpoint state.",
+      "impact": "After any acquire() or create_executor() failure, the parent's resume path attempts to resume a never-started child, likely crashing or silently producing incorrect results on retry.",
+      "recommendation": "Move the parent_exec.active_sub_execution_id assignment and parent_exec.save() inside the try block, after create_executor succeeds but before child_executor.stream() is called."
+    },
+    {
+      "id": "CR-002",
+      "file": "tests/codemie/workflows/test_workflow_state_transitions.py",
+      "line": 571,
+      "severity": "major",
+      "triage": "patch",
+      "problem": "Phase 1 patches workflow_pool but never asserts mock_pool.release was called. The finally block around stream() must call release() before InterruptedException propagates. Without this assertion, removing the try/finally (a pool resource leak) would not be caught.",
+      "impact": "A regression that drops workflow_pool.release() from the finally block would go undetected, eventually exhausting the pool under interrupt-heavy workloads.",
+      "recommendation": "Add mock_pool.release.assert_called_once() after the pytest.raises(InterruptedException) block in Phase 1."
+    }
+  ],
+  "business_review": [
+    {
+      "criterion": "active_sub_execution_id set before streaming in create path",
+      "status": "pass",
+      "notes": "Assignment present at lines 114-116 inside if parent_exec: guard, before workflow_pool.acquire()."
+    },
+    {
+      "criterion": "parent_exec.save() called immediately after assignment",
+      "status": "pass",
+      "notes": "Called at line 116, inside the same if block."
+    },
+    {
+      "criterion": "workflow_pool patched in Phase 1 with acquire return value",
+      "status": "pass",
+      "notes": "workflow_pool patched at line 560; mock_pool.acquire.return_value = MagicMock() at line 569."
+    },
+    {
+      "criterion": "find_last_execution_state_output mocked to return 'done' in Phase 2",
+      "status": "pass",
+      "notes": "mock_svc.find_last_execution_state_output.return_value = 'done' at line 600."
+    }
+  ],
+  "standards_review": [
+    {
+      "standard": "git commit format",
+      "status": "pass",
+      "notes": "fix(EPMCDME-11609): matches conventional commits pattern used throughout the branch."
+    },
+    {
+      "standard": "code quality",
+      "status": "pass",
+      "notes": "7-line change follows existing Python patterns in the file; no lint issues introduced."
+    },
+    {
+      "standard": "security",
+      "status": "pass",
+      "notes": "No security concerns in these changes."
+    }
+  ],
+  "risk_flags": [],
+  "confidence": "high"
+}

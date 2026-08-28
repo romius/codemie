@@ -27,6 +27,7 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from starlette.middleware.cors import CORSMiddleware
 from codemie.configs import config
+from codemie.configs.customer_config import customer_config as _customer_config
 from codemie.configs.config import ENV_LOCAL
 from codemie.enterprise.observability import get_observability_provider
 from codemie.enterprise.litellm import (
@@ -388,6 +389,12 @@ def _initialize_optional_features():
 
         results = PlatformIndexingService.sync_all_platform_datasources()
         logger.info(f"Platform datasources synced successfully: {results}")
+
+    if _customer_config.is_feature_enabled("subWorkflow") and config.SUBWORKFLOW_POOL_ENABLED:
+        from codemie.service.workflow_pool import workflow_pool
+
+        workflow_pool.initialize()
+        logger.info("WorkflowPool initialized for sub-workflow pre-compilation")
 
 
 def _check_sharepoint_pkce_redis() -> None:

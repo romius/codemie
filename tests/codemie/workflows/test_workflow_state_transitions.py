@@ -32,7 +32,7 @@ This module tests the following critical functionality:
 """
 
 import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 from langgraph.types import Send
 from langgraph.constants import END
 
@@ -61,7 +61,7 @@ from codemie.core.workflow_models.workflow_models import (
     WorkflowStateSwitchCondition,
 )
 from codemie.workflows.utils import evaluate_next_candidate, get_final_state
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage
 
 
 @pytest.fixture
@@ -521,31 +521,104 @@ def test_tc_wst_009_state_transition_with_end_node(mock_user, mock_thought_queue
     assert final_state_regular == "next_node"
 
 
-def test_tc_wst_010_interrupt_and_resume(mock_user, mock_thought_queue, basic_workflow_config):
+def test_tc_wst_010_sub_workflow_interrupt_and_resume(mock_user, mock_thought_queue, basic_workflow_config):
     """
-    TC_WST_010: Interrupt and Resume
+    TC_WST_010: Sub-workflow cross-boundary interrupt and resume.
 
-    Test context/message preservation across interrupt.
+    Phase 1 (interrupt): child execution finishes with INTERRUPTED status →
+      parent's active_sub_execution_id is set to child execution_id BEFORE stream,
+      InterruptedException is raised so the parent executor can store its checkpoint.
+
+    Phase 2 (resume): active_sub_execution_id is already set →
+      child is RESUMED (resume_execution=True), NOT restarted;
+      create_workflow_execution is NOT called a second time.
     """
-    # Arrange
-    state_before_interrupt = {
-        CONTEXT_STORE_VARIABLE: {"key1": "value1", "key2": "value2"},
-        MESSAGES_VARIABLE: [
-            HumanMessage(content="user input"),
-            AIMessage(content="response 1"),
-            HumanMessage(content="follow up"),
-        ],
-    }
+    from codemie.workflows.nodes.sub_workflow_node import SubWorkflowNode
+    from codemie.core.exceptions import InterruptedException
+    from codemie.core.workflow_models import WorkflowExecutionStatusEnum
 
-    # Simulate interrupt (state is preserved in checkpoint)
-    preserved_state = state_before_interrupt.copy()
+    workflow_execution_service = MagicMock()
+    workflow_execution_service.user = mock_user
+    mock_user.as_user_model.return_value = MagicMock()
 
-    # Act - After resume, state should be identical
-    assert preserved_state[CONTEXT_STORE_VARIABLE] == {"key1": "value1", "key2": "value2"}
-    assert len(preserved_state[MESSAGES_VARIABLE]) == 3
+    wf_state = Mock()
+    wf_state.workflow_id = "child-wf-id"
 
-    # The checkpoint mechanism in LangGraph handles state preservation
-    # We verify that the state structure is maintained correctly
+    node = SubWorkflowNode(
+        callbacks=[],
+        workflow_execution_service=workflow_execution_service,
+        thought_queue=MagicMock(),
+        workflow_state=wf_state,
+        node_name="sub_wf",
+        execution_id="parent-exec-id",
+        workflow_config=basic_workflow_config,
+    )
+
+    state_schema = {CONTEXT_STORE_VARIABLE: {"task": "run child"}}
+
+    child_exec = MagicMock(execution_id="child-exec-id")
+    child_config = MagicMock(max_nesting_level=None)
+    interrupted_child = MagicMock(overall_status=WorkflowExecutionStatusEnum.INTERRUPTED)
+    parent_exec_p1 = MagicMock()
+    parent_exec_p1.active_sub_execution_id = None
+
+    # ── Phase 1: child interrupted ────────────────────────────────────────────
+    with (
+        patch("codemie.workflows.nodes.sub_workflow_node.customer_config") as mock_cfg,
+        patch("codemie.workflows.nodes.sub_workflow_node.WorkflowService") as mock_svc,
+        patch("codemie.workflows.workflow.WorkflowExecutor") as mock_wf_exec,
+        patch("codemie.workflows.nodes.sub_workflow_node.workflow_pool") as mock_pool,
+    ):
+        mock_cfg.is_feature_enabled.return_value = True
+        mock_cfg.SUBWORKFLOW_MAX_NESTING_DEPTH = 3
+        mock_svc.return_value.get_workflow.return_value = child_config
+        mock_svc.get_nesting_depth.return_value = 0
+        mock_svc.create_workflow_execution.return_value = child_exec
+        mock_svc.find_workflow_execution_by_id.side_effect = [parent_exec_p1, interrupted_child]
+        mock_wf_exec.create_executor.return_value = MagicMock()
+        mock_pool.acquire.return_value = MagicMock()
+
+        with pytest.raises(InterruptedException):
+            node.execute(state_schema, {})
+        mock_pool.release.assert_called_once()
+
+    # active_sub_execution_id must be set to child id (set before streaming)
+    assert parent_exec_p1.active_sub_execution_id == "child-exec-id"
+    parent_exec_p1.save.assert_called_once()
+
+    # ── Phase 2: resume — child must be resumed, NOT recreated ───────────────
+    child_exec_record = MagicMock(execution_id="child-exec-id", workflow_id="child-wf-id")
+    succeeded_child = MagicMock(overall_status=WorkflowExecutionStatusEnum.SUCCEEDED, output="done")
+    parent_exec_p2 = MagicMock()
+    parent_exec_p2.active_sub_execution_id = "child-exec-id"
+    parent_exec_p2_final = MagicMock()
+
+    with (
+        patch("codemie.workflows.nodes.sub_workflow_node.customer_config") as mock_cfg,
+        patch("codemie.workflows.nodes.sub_workflow_node.WorkflowService") as mock_svc,
+        patch("codemie.workflows.workflow.WorkflowExecutor") as mock_wf_exec,
+    ):
+        mock_cfg.is_feature_enabled.return_value = True
+        mock_cfg.SUBWORKFLOW_MAX_NESTING_DEPTH = 3
+        mock_svc.return_value.get_workflow.return_value = child_config
+        mock_svc.find_workflow_execution_by_id.side_effect = [
+            parent_exec_p2,  # initial parent fetch → active_sub_execution_id is set
+            child_exec_record,  # fetch child record by active_sub_execution_id
+            succeeded_child,  # post-stream child status check
+            parent_exec_p2_final,  # fetch parent again to clear active_sub_execution_id
+        ]
+        mock_wf_exec.create_executor.return_value = MagicMock()
+        mock_svc.find_last_execution_state_output.return_value = "done"
+
+        result = node.execute(state_schema, {})
+
+    # Child must NOT be recreated on the resume path
+    mock_svc.create_workflow_execution.assert_not_called()
+    # Child executor must be created with resume_execution=True and the correct execution_id
+    create_call_kwargs = mock_wf_exec.create_executor.call_args[1]
+    assert create_call_kwargs.get("resume_execution") is True
+    assert create_call_kwargs.get("execution_id") == "child-exec-id"
+    assert result == "done"
 
 
 @patch('codemie.workflows.workflow.WorkflowExecutionService')
@@ -1089,6 +1162,65 @@ def test_tc_wst_013_diamond_pattern_convergence(mock_user, mock_thought_queue):
     assert len(convergence_nodes) == 1, "Only node_d should be convergence node"
 
 
+# ── Sub-workflow dispatch ─────────────────────────────────────────────────────
+
+
+class TestSubWorkflowDispatch:
+    """initialize_node dispatches workflow_id states to SubWorkflowNode."""
+
+    def _make_executor(self, mock_user, mock_thought_queue, workflow_config):
+        return WorkflowExecutor(
+            workflow_config=workflow_config,
+            user_input="test",
+            user=mock_user,
+            thought_queue=mock_thought_queue,
+        )
+
+    def _make_sub_workflow_state(self):
+        state = Mock()
+        state.id = "sub_wf_node"
+        state.workflow_id = "child-wf-id"
+        state.assistant_id = None
+        state.custom_node_id = None
+        state.tool_id = None
+        return state
+
+    def test_initialize_node_dispatches_workflow_id_when_flag_enabled(
+        self, mock_user, mock_thought_queue, basic_workflow_config
+    ):
+        from codemie.workflows.nodes.sub_workflow_node import SubWorkflowNode
+
+        executor = self._make_executor(mock_user, mock_thought_queue, basic_workflow_config)
+        state = self._make_sub_workflow_state()
+        mock_workflow = Mock()
+        basic_workflow_config.get_effective_retry_policy.return_value = None
+
+        with patch("codemie.workflows.workflow.customer_config") as mock_cfg:
+            mock_cfg.is_feature_enabled.return_value = True
+            mock_cfg.verbose = False
+            executor.initialize_node(state, mock_workflow, basic_workflow_config, [], set())
+
+        mock_workflow.add_node.assert_called_once()
+        _, call_args, _ = mock_workflow.add_node.mock_calls[0]
+        node_id, node_instance = call_args[0], call_args[1]
+        assert node_id == "sub_wf_node"
+        assert isinstance(node_instance, SubWorkflowNode)
+
+    def test_initialize_node_raises_when_flag_disabled(self, mock_user, mock_thought_queue, basic_workflow_config):
+        from codemie.workflows.exceptions import FeatureDisabledError
+
+        executor = self._make_executor(mock_user, mock_thought_queue, basic_workflow_config)
+        state = self._make_sub_workflow_state()
+        mock_workflow = Mock()
+        basic_workflow_config.get_effective_retry_policy.return_value = None
+
+        with patch("codemie.workflows.workflow.customer_config") as mock_cfg:
+            mock_cfg.is_feature_enabled.return_value = False
+            mock_cfg.verbose = False
+            with pytest.raises(FeatureDisabledError):
+                executor.initialize_node(state, mock_workflow, basic_workflow_config, [], set())
+
+
 @patch('codemie.workflows.workflow.WorkflowExecutionService')
 def test_tc_wst_014_handle_single_state_iter_key_lambda_passes_state(
     mock_wf_exec_service, mock_user, mock_thought_queue, basic_workflow_config
@@ -1149,3 +1281,6 @@ def test_tc_wst_014_handle_single_state_iter_key_lambda_passes_state(
     assert (
         received_state_schemas[0] is synthetic_state
     ), "continue_iteration must receive the state dict, not the executor instance"
+
+
+# ── Sub-workflow dispatch ─────────────────────────────────────────────────────

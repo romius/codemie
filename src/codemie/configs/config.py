@@ -169,6 +169,9 @@ class Config(BaseSettings):
     WORKFLOW_MAX_CONCURRENCY: int = 5
     WORKFLOW_DEFAULT_CONCURRENCY: int = 2
 
+    SUBWORKFLOW_MAX_NESTING_DEPTH: int = 1
+    SUBWORKFLOW_POOL_ENABLED: bool = True
+
     DATASOURCE_CONCURRENCY_LIMIT_ENABLED: bool = False
     MAX_CONCURRENT_DATASOURCE_INDEXING: int = 5
     DATASOURCE_QUEUE_TIMEOUT: int = 3600  # seconds; 0 disables the timeout
@@ -542,6 +545,10 @@ class Config(BaseSettings):
     FORWARDED_HEADERS_BLOCKLIST: str = (
         "authorization,cookie,set-cookie,x-api-key,x-auth-token,x-internal-secret,x-internal-token"
     )
+
+    # Sub-workflow pool settings
+    SUBWORKFLOW_POOL_MAX_SIZE: int = 5
+    SUBWORKFLOW_POOL_WARMUP_INTERVAL_SECONDS: int = 60
 
     # AMNA-AIRN feature flags
     AMNA_AIRN_PRECREATE_WORKFLOWS: bool = False

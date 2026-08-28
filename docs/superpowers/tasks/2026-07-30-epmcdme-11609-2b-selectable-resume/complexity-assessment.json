@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "task": "Add GET /workflows/selectable endpoint and interrupt/resume wiring for sub-workflow parent-child boundary (EPMCDME-11609 increments 2b and 2c)",
+  "generated": "2026-07-30T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 20,
+  "size": "L",
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Six distinct components across three layers: routers/workflow.py (new selectable route), routers/workflow_executions.py (resume handler modification), WorkflowConfigIndexService (new ExcludeCurrentWorkflowModifier and active-status modifier), WorkflowExecutionService (child resume_states path), WorkflowExecutor in workflows/workflow.py (child executor routing on resume), plus a new Pydantic response model in rest_api/models/. WorkflowExecutor is a core shared utility that every workflow execution passes through."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "2c introduces a novel parent-child resume routing path with no exact codebase precedent: reading interrupt bridge key __sub_wf_exec_id__<node_name> from LangGraph channel state, constructing a child WorkflowExecutor with resume_execution=True and the child execution_id as thread_id, and calling WorkflowExecutionService.resume_states() on the child before streaming. Child state edge cases (SUCCEEDED, FAILED, ABORTED at resume time) are unspecified in the ticket. Misplacing the detection logic in the resume handler could silently break existing resume behavior for all non-sub-workflow executions."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "Estimated five modified files: routers/workflow.py, routers/workflow_executions.py, service/workflow_config/workflow_config_index_service.py, workflows/workflow.py (WorkflowExecutor), service/workflow_execution/workflow_execution_service.py. Plus three to four new files: ExcludeCurrentWorkflowModifier subclass, new WorkflowSelectableResponse Pydantic model in rest_api/models/, test file for GET /workflows/selectable, and test coverage for parent-child resume routing. Changes span four-plus directories."
+    },
+    {
+      "dimension": "requirements_clarity",
+      "reason": "2b is well-specified via the QueryModifier strategy pattern with three existing examples; the only unresolved detail is confirming the exact active-status field name on WorkflowConfig before authoring the modifier. 2c has documented gaps: edge-case behavior when the child execution is already SUCCEEDED, FAILED, or ABORTED at parent resume time is not defined; the synchronous blocking execution model assumed by Increment 1 must be confirmed still in effect; and the interrupt bridge key naming convention must match exactly between SubWorkflowNode and the new resume handler."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from L (4) to XL (5): WorkflowExecutor in workflows/workflow.py is the central orchestration utility for all workflow executions; modifying its resume path triggers the 'touches core shared utilities' red flag"
+  ],
+  "split_recommendation": null
+}

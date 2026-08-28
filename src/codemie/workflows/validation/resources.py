@@ -35,6 +35,7 @@ from typing import Optional
 
 import yaml
 from codemie.core.workflow_models import WorkflowConfig, WorkflowTool
+from codemie.service.workflow_service import WorkflowService
 from codemie.rest_api.security.user import User
 from codemie.rest_api.models.assistant import Assistant
 from codemie.service.assistant.assistant_integration_validator import AssistantIntegrationValidator
@@ -49,6 +50,7 @@ from codemie.workflows.validation.models import (
     ToolkitType,
 )
 from codemie.workflows.validation.line_lookup import YamlLineFinder, NullYamlLineFinder, extract_line_numbers
+from codemie.configs.customer_config import customer_config
 from codemie.configs.logger import logger
 
 
@@ -75,6 +77,7 @@ class WorkflowConfigResourcesValidationError(Exception):
         toolkits_metadata: list[dict] = None,
         invalid_integration_tools: list[tuple[str, str, str]] = None,
         missing_integration_tools: list[tuple[str, str, str, str]] = None,
+        unavailable_sub_workflows: list[tuple[str, str, str]] = None,
     ):
         self.unavailable_assistants = unavailable_assistants
         self.unavailable_tools = unavailable_tools
@@ -82,6 +85,7 @@ class WorkflowConfigResourcesValidationError(Exception):
         self.invalid_integration_tools = invalid_integration_tools or []
         self.missing_integration_tools = missing_integration_tools or []
         self.unavailable_datasources = unavailable_datasources
+        self.unavailable_sub_workflows = unavailable_sub_workflows or []
         self.workflow_config_dict = workflow_config_dict or {}
         self.line_number_map = line_number_map or {}
         self.toolkits_metadata = toolkits_metadata or []
@@ -692,6 +696,27 @@ def _validate_datasources_availability(workflow_config: WorkflowConfig) -> list[
     return unavailable_datasources
 
 
+def _validate_sub_workflow_availability(workflow_config: WorkflowConfig, user: User) -> list[tuple[str, str, str]]:
+    """Validate sub-workflow references in states; return tuples of (state_id, workflow_id, reason)."""
+    if not customer_config.is_feature_enabled("subWorkflow"):
+        return []
+    unavailable = []
+    for state in workflow_config.states or []:
+        workflow_id = getattr(state, "workflow_id", None)
+        if not workflow_id:
+            continue
+        if workflow_id == str(workflow_config.id):
+            unavailable.append((state.id, workflow_id, "self-reference not allowed"))
+            continue
+        try:
+            sub_wf = WorkflowService().get_workflow(workflow_id, user)
+            if sub_wf is None:
+                unavailable.append((state.id, workflow_id, "not found"))
+        except Exception:
+            unavailable.append((state.id, workflow_id, "not found or access denied"))
+    return unavailable
+
+
 def validate_workflow_config_resources_availability(workflow_config: WorkflowConfig, user: User):
     """
     Validates the availability of resources required by the workflow configuration.
@@ -721,6 +746,7 @@ def validate_workflow_config_resources_availability(workflow_config: WorkflowCon
     ) = _validate_tools_from_assistants_availability(workflow_config, user)
     missing_integration_tools.extend(_validate_referenced_assistants_integrations(workflow_config, user))
     unavailable_datasources = _validate_datasources_availability(workflow_config)
+    unavailable_sub_workflows = _validate_sub_workflow_availability(workflow_config, user)
 
     unavailable_resources = (
         unavailable_assistants,
@@ -729,7 +755,12 @@ def validate_workflow_config_resources_availability(workflow_config: WorkflowCon
         unavailable_datasources,
     )
 
-    if any(unavailable_resources) or invalid_integration_tools or missing_integration_tools:
+    if (
+        any(unavailable_resources)
+        or invalid_integration_tools
+        or missing_integration_tools
+        or unavailable_sub_workflows
+    ):
         # Get toolkits metadata for enriching error messages
         toolkits_metadata = []
         try:
@@ -752,6 +783,7 @@ def validate_workflow_config_resources_availability(workflow_config: WorkflowCon
                 toolkits_metadata,
                 invalid_integration_tools,
                 missing_integration_tools,
+                unavailable_sub_workflows,
             )
 
         try:
@@ -771,4 +803,5 @@ def validate_workflow_config_resources_availability(workflow_config: WorkflowCon
             toolkits_metadata,
             invalid_integration_tools,
             missing_integration_tools,
+            unavailable_sub_workflows,
         )

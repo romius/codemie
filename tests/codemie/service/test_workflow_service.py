@@ -703,6 +703,80 @@ def test_delete_workflow_uses_delete_all_executions(
     mock_delete_config.assert_called_once_with(workflow_config.id)
 
 
+class TestGetNestingDepth:
+    def test_top_level_returns_zero(self):
+        top = MagicMock()
+        top.parent_execution_id = None
+        with patch.object(WorkflowService, 'find_workflow_execution_by_id', return_value=top):
+            assert WorkflowService.get_nesting_depth("exec-0") == 0
+
+    def test_one_parent_returns_one(self):
+        child = MagicMock()
+        child.parent_execution_id = "parent-id"
+        parent = MagicMock()
+        parent.parent_execution_id = None
+
+        def _find(eid):
+            return child if eid == "child-id" else parent
+
+        with patch.object(WorkflowService, 'find_workflow_execution_by_id', side_effect=_find):
+            assert WorkflowService.get_nesting_depth("child-id") == 1
+
+    def test_counts_true_depth_independent_of_global_default(self):
+        # A chain of 3 ancestors must report depth 3 even when the global default is 1;
+        # the per-workflow max_nesting_level (enforced by the caller) may exceed it.
+        chain = {"n4": "n3", "n3": "n2", "n2": "n1", "n1": None}
+
+        def _find(eid):
+            m = MagicMock()
+            m.parent_execution_id = chain.get(eid)
+            return m
+
+        with patch.object(WorkflowService, 'find_workflow_execution_by_id', side_effect=_find):
+            with patch('codemie.service.workflow_service.config') as mock_cfg:
+                mock_cfg.SUBWORKFLOW_MAX_NESTING_DEPTH = 1
+                result = WorkflowService.get_nesting_depth("n4")
+        assert result == 3
+
+    def test_cyclic_lineage_terminates(self):
+        # Corrupted lineage A->B->A must terminate via the visited-set guard, not loop forever.
+        cycle = {"A": "B", "B": "A"}
+
+        def _find(eid):
+            m = MagicMock()
+            m.parent_execution_id = cycle.get(eid)
+            return m
+
+        with patch.object(WorkflowService, 'find_workflow_execution_by_id', side_effect=_find):
+            result = WorkflowService.get_nesting_depth("A")
+        assert result == 2  # counted A->B and B->A, then detected the repeat and stopped
+
+
+def test_create_workflow_execution_sets_lineage_when_parent_given(
+    workflow_config: WorkflowConfig,
+    user_model: UserEntity,
+):
+    parent_exec = MagicMock()
+    parent_exec.active_sub_execution_id = None
+
+    with (
+        patch.object(WorkflowExecution, 'save'),
+        patch.object(WorkflowService, 'find_workflow_execution_by_id', return_value=parent_exec),
+        patch('uuid.uuid4', return_value=UUID('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')),
+        patch.object(WorkflowService, '_augment_user_input_with_history', return_value="input"),
+    ):
+        result = WorkflowService.create_workflow_execution(
+            workflow_config,
+            user_model,
+            "task input",
+            parent_execution_id="parent-exec-id",
+        )
+
+    assert result.parent_execution_id == "parent-exec-id"
+    assert parent_exec.active_sub_execution_id == "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    parent_exec.save.assert_called_once()
+
+
 @pytest.mark.skip(reason="Requires database connection for conversation creation - integration test")
 def test_create_workflow_execution_with_conversation_id(
     workflow_service: WorkflowService,
@@ -968,3 +1042,68 @@ def test_update_workflow_values_start_hint_cleared(
     workflow_service._update_workflow_values(workflow_config, updated_config, user)
 
     assert workflow_config.start_hint == updated_hint
+
+
+# ── WorkflowService execution-state helpers ───────────────────────────────────
+
+
+class TestFindExecutionStateOutput:
+    def test_returns_output_for_valid_state_id(self):
+        mock_state = MagicMock()
+        mock_state.output = "previous node result"
+        with patch("codemie.service.workflow_service.WorkflowExecutionState") as mock_cls:
+            mock_cls.get_by_id.return_value = mock_state
+            result = WorkflowService.find_execution_state_output("state-abc")
+        assert result == "previous node result"
+        mock_cls.get_by_id.assert_called_once_with(id_="state-abc")
+
+    def test_returns_none_when_state_not_found(self):
+        with patch("codemie.service.workflow_service.WorkflowExecutionState") as mock_cls:
+            mock_cls.get_by_id.return_value = None
+            result = WorkflowService.find_execution_state_output("missing-id")
+        assert result is None
+
+    def test_returns_none_on_exception(self):
+        with patch("codemie.service.workflow_service.WorkflowExecutionState") as mock_cls:
+            mock_cls.get_by_id.side_effect = Exception("ES unavailable")
+            result = WorkflowService.find_execution_state_output("err-id")
+        assert result is None
+
+
+class TestFindLastExecutionStateOutput:
+    def test_returns_output_of_last_succeeded_state(self):
+        succeeded = MagicMock()
+        succeeded.status = WorkflowExecutionStatusEnum.SUCCEEDED
+        succeeded.output = "child final answer"
+        with patch("codemie.service.workflow_service.WorkflowExecutionState") as mock_cls:
+            mock_cls.get_all_by_fields.return_value = [succeeded]
+            result = WorkflowService.find_last_execution_state_output("exec-123")
+        assert result == "child final answer"
+        mock_cls.get_all_by_fields.assert_called_once_with(
+            fields={"execution_id.keyword": "exec-123"},
+            order_by="update_date",
+            order_desc=True,
+        )
+
+    def test_skips_non_succeeded_states(self):
+        failed_state = MagicMock()
+        failed_state.status = WorkflowExecutionStatusEnum.FAILED
+        succeeded_state = MagicMock()
+        succeeded_state.status = WorkflowExecutionStatusEnum.SUCCEEDED
+        succeeded_state.output = "real output"
+        with patch("codemie.service.workflow_service.WorkflowExecutionState") as mock_cls:
+            mock_cls.get_all_by_fields.return_value = [failed_state, succeeded_state]
+            result = WorkflowService.find_last_execution_state_output("exec-xyz")
+        assert result == "real output"
+
+    def test_returns_none_when_no_succeeded_state(self):
+        with patch("codemie.service.workflow_service.WorkflowExecutionState") as mock_cls:
+            mock_cls.get_all_by_fields.return_value = []
+            result = WorkflowService.find_last_execution_state_output("exec-empty")
+        assert result is None
+
+    def test_returns_none_on_exception(self):
+        with patch("codemie.service.workflow_service.WorkflowExecutionState") as mock_cls:
+            mock_cls.get_all_by_fields.side_effect = Exception("timeout")
+            result = WorkflowService.find_last_execution_state_output("exec-err")
+        assert result is None

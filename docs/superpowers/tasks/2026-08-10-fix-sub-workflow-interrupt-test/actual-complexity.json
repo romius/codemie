@@ -1,0 +1,69 @@
+{
+  "task": "Fix failing test test_tc_wst_010_sub_workflow_interrupt_and_resume by moving active_sub_execution_id assignment inside the try block and adding missing workflow_pool mock to the test.",
+  "generated": "2026-08-10T00:00:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 2,
+      "label": "S",
+      "affected": "SubWorkflowNode (sub_workflow_node.py), test_workflow_state_transitions (test file)",
+      "layers": "Workflow"
+    },
+    "requirements_clarity": {
+      "score": 1,
+      "label": "XS",
+      "status": "Clear",
+      "gaps": null
+    },
+    "technical_risk": {
+      "score": 2,
+      "label": "S",
+      "risk_factors": "Minor logic reorder inside an existing try block; incorrect placement of active_sub_execution_id assignment could have left stale state on create_executor failure",
+      "mitigation": "Change is a 4-line reorder within the same function; rollback is trivial and the semantic intent is unambiguous"
+    },
+    "file_change_estimate": {
+      "score": 1,
+      "label": "XS",
+      "modified_files": 2,
+      "modified_file_list": [
+        "src/codemie/workflows/nodes/sub_workflow_node.py",
+        "tests/codemie/workflows/test_workflow_state_transitions.py"
+      ],
+      "new_files": 0,
+      "new_file_list": [],
+      "affected_dirs": [
+        "src/codemie/workflows/nodes",
+        "tests/codemie/workflows"
+      ]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 1,
+      "label": "XS",
+      "layers_changed": ["Workflow"],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 8,
+  "size": "XS",
+  "band_range": "6-9",
+  "files_changed": 2,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Two files modified: the production SubWorkflowNode and its paired test. No new components, no layer boundaries crossed beyond the Workflow layer."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "4 lines moved/reordered within an existing try block in sub_workflow_node.py. The fix corrects a potential stale-state bug (active_sub_execution_id set before create_executor could fail) but introduces no new patterns and is trivially reversible. Test side adds missing mock stubs to match the corrected production call order."
+    }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

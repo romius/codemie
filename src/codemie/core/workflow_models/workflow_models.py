@@ -361,6 +361,15 @@ class WorkflowRetryPolicy(BaseModel):
         return custom_retry_on and default_retry_on(exc)
 
 
+class WorkflowPoolConfig(BaseModel):
+    """Per-workflow pre-instantiation pool configuration."""
+
+    enabled: bool = False
+    min_size: int = Field(default=2, ge=1, le=20)
+    max_size: int = Field(default=5, ge=1, le=50)
+    refill_interval_seconds: int = Field(default=30, ge=5)
+
+
 class WorkflowState(BaseModel):
     id: str
     assistant_id: Optional[str] = None
@@ -375,9 +384,12 @@ class WorkflowState(BaseModel):
     tool_args: Optional[dict] = None
     resolve_dynamic_values_in_prompt: bool = False
     result_as_human_message: bool = False
+    workflow_id: Optional[str] = None
 
-    _TYPE_UNDEFINED_ERROR = "One of 'assistant_id', 'custom_node_id' or 'tool_id' must be provided."
-    _TYPE_OVERDEFINED_ERROR = "Only one of 'assistant_id', 'custom_node_id' or 'tool_id' can be provided."
+    _TYPE_UNDEFINED_ERROR = "One of 'assistant_id', 'custom_node_id', 'tool_id', or 'workflow_id' must be provided."
+    _TYPE_OVERDEFINED_ERROR = (
+        "Only one of 'assistant_id', 'custom_node_id', 'tool_id', or 'workflow_id' can be provided."
+    )
 
     @model_validator(mode='before')
     def handle_interrupt_backward_compatibility(cls, values: dict) -> dict:
@@ -398,9 +410,10 @@ class WorkflowState(BaseModel):
 
     @model_validator(mode='after')
     def check_state_type(cls, values: WorkflowState) -> WorkflowState:
-        if not any([values.assistant_id, values.custom_node_id, values.tool_id]):
+        type_fields = [values.assistant_id, values.custom_node_id, values.tool_id, values.workflow_id]
+        if not any(type_fields):
             raise ValueError(cls._TYPE_UNDEFINED_ERROR)
-        if sum(id is not None for id in [values.assistant_id, values.custom_node_id, values.tool_id]) > 1:
+        if sum(f is not None for f in type_fields) > 1:
             raise ValueError(cls._TYPE_OVERDEFINED_ERROR)
         return values
 

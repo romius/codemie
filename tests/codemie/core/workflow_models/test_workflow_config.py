@@ -228,3 +228,59 @@ class TestParseExecutionConfigSkillIds:
 
         assert len(wf.assistants) == 1
         assert wf.assistants[0].skill_ids == []
+
+
+class TestWorkflowConfigPoolFields:
+    def test_parse_execution_config_pool_config(self):
+        import yaml
+
+        yaml_config = yaml.dump(
+            {
+                "pool_config": {
+                    "enabled": True,
+                    "min_size": 3,
+                    "max_size": 10,
+                    "refill_interval_seconds": 60,
+                },
+                "states": [],
+            }
+        )
+        wf = WorkflowConfig(name="Test", description="Test", yaml_config=yaml_config)
+        wf.parse_execution_config()
+        assert wf.pool_config is not None
+        assert wf.pool_config.enabled is True
+        assert wf.pool_config.min_size == 3
+        assert wf.pool_config.max_size == 10
+        assert wf.pool_config.refill_interval_seconds == 60
+
+    def test_parse_execution_config_no_pool_config_defaults_to_none(self):
+        import yaml
+
+        yaml_config = yaml.dump({"states": []})
+        wf = WorkflowConfig(name="Test", description="Test", yaml_config=yaml_config)
+        wf.parse_execution_config()
+        assert wf.pool_config is None
+
+    def test_parse_execution_config_max_nesting_level(self):
+        import yaml
+
+        yaml_config = yaml.dump({"max_nesting_level": 3, "states": []})
+        wf = WorkflowConfig(name="Test", description="Test", yaml_config=yaml_config)
+        wf.parse_execution_config()
+        assert wf.max_nesting_level == 3
+
+    def test_parse_execution_config_no_max_nesting_level_defaults_to_none(self):
+        import yaml
+
+        yaml_config = yaml.dump({"states": []})
+        wf = WorkflowConfig(name="Test", description="Test", yaml_config=yaml_config)
+        wf.parse_execution_config()
+        assert wf.max_nesting_level is None
+
+    def test_pool_config_field_defaults_to_none(self):
+        wf = WorkflowConfig(name="Test", description="Test")
+        assert wf.pool_config is None
+
+    def test_max_nesting_level_defaults_to_none(self):
+        wf = WorkflowConfig(name="Test", description="Test")
+        assert wf.max_nesting_level is None

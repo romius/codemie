@@ -767,3 +767,62 @@ states:
 
     with pytest.raises(WorkflowExecutionConfigSchemaValidationError):
         validate_workflow_execution_config_yaml(yaml_text)
+
+
+def test_workflow_id_state_passes_schema():
+    config = yaml.safe_load("""
+    states:
+      - id: run_sub
+        workflow_id: wf-child-123
+        task: "run sub-workflow"
+        next:
+          state_id: end
+    """)
+    errors = _validate_workflow_execution_config_schema(WORKFLOW_EXECUTION_CONFIG_SCHEMA, config)
+    assert errors == []
+
+
+def test_workflow_id_with_assistant_id_fails_schema():
+    config = yaml.safe_load("""
+    states:
+      - id: bad_state
+        workflow_id: wf-child-123
+        assistant_id: asst-1
+        task: ""
+        next:
+          state_id: end
+    """)
+    errors = _validate_workflow_execution_config_schema(WORKFLOW_EXECUTION_CONFIG_SCHEMA, config)
+    assert len(errors) > 0
+
+
+def test_pool_config_passes_schema():
+    config = yaml.safe_load("""
+    pool_config:
+      enabled: true
+      min_size: 2
+      max_size: 10
+      refill_interval_seconds: 30
+    states:
+      - id: s1
+        assistant_id: asst-1
+        task: ""
+        next:
+          state_id: end
+    """)
+    errors = _validate_workflow_execution_config_schema(WORKFLOW_EXECUTION_CONFIG_SCHEMA, config)
+    assert errors == []
+
+
+def test_max_nesting_level_passes_schema():
+    config = yaml.safe_load("""
+    max_nesting_level: 2
+    states:
+      - id: s1
+        assistant_id: asst-1
+        task: ""
+        next:
+          state_id: end
+    """)
+    errors = _validate_workflow_execution_config_schema(WORKFLOW_EXECUTION_CONFIG_SCHEMA, config)
+    assert errors == []

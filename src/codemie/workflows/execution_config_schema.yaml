@@ -73,6 +73,18 @@ properties:
         minimum: 1
         maximum: 100
 
+  pool_config:
+    type: object
+    properties:
+      enabled: {type: boolean, default: false}
+      min_size: {type: integer, minimum: 1, maximum: 20, default: 2}
+      max_size: {type: integer, minimum: 1, maximum: 50, default: 5}
+      refill_interval_seconds: {type: integer, minimum: 5, default: 30}
+
+  max_nesting_level:
+    type: integer
+    minimum: 1
+
 $defs:
 
   Assistant:
@@ -256,7 +268,9 @@ $defs:
         deprecated: true
         description: "Use interrupt_before instead"
       interrupt_before: {type: boolean, default: false}
+      workflow_id: {type: string}
     oneOf:
       - required: [assistant_id]
       - required: [tool_id]
       - required: [custom_node_id]
+      - required: [workflow_id]

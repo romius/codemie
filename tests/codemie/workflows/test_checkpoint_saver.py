@@ -216,3 +216,54 @@ def test_update_last_unknown_checkpoint_format(mock_get_execution_by_id, instanc
 
     with pytest.raises(ValueError, match="Unknown checkpoint format"):
         instance.update_last_checkpoint(execution_id="execution_id", output="new output", output_key=None)
+
+
+# ── Sub-workflow parent/child checkpoint isolation ────────────────────────────
+
+
+@patch('codemie.core.workflow_models.WorkflowExecution.get_by_execution_id')
+def test_parent_and_child_use_distinct_thread_ids(mock_get_by_id, instance):
+    """Parent and child thread_id values map to separate WorkflowExecution records — no collision."""
+    parent_exec = MagicMock()
+    parent_exec.checkpoints = []
+    child_exec = MagicMock()
+    child_exec.checkpoints = []
+
+    def get_by_id(exec_id):
+        if exec_id == "parent-exec-id":
+            return [parent_exec]
+        if exec_id == "child-exec-id":
+            return [child_exec]
+        return []
+
+    mock_get_by_id.side_effect = get_by_id
+
+    instance.put(config={"configurable": {"thread_id": "parent-exec-id"}}, checkpoint={"ts": "p1"}, metadata={})
+    instance.put(config={"configurable": {"thread_id": "child-exec-id"}}, checkpoint={"ts": "c1"}, metadata={})
+
+    # Each execution holds its own checkpoint — no cross-contamination
+    assert parent_exec.checkpoints[0].timestamp == "p1"
+    assert child_exec.checkpoints[0].timestamp == "c1"
+
+
+@patch('codemie.core.workflow_models.WorkflowExecution.get_by_execution_id')
+def test_child_put_does_not_overwrite_parent_checkpoint(mock_get_by_id, instance):
+    """Storing a child checkpoint must not modify the parent WorkflowExecution row."""
+    parent_exec = MagicMock()
+    parent_exec.checkpoints = []
+    child_exec = MagicMock()
+    child_exec.checkpoints = []
+
+    def get_by_id(exec_id):
+        return [parent_exec] if exec_id == "parent-exec-id" else [child_exec]
+
+    mock_get_by_id.side_effect = get_by_id
+
+    instance.put(config={"configurable": {"thread_id": "parent-exec-id"}}, checkpoint={"ts": "p1"}, metadata={})
+    parent_ts_after_write = parent_exec.checkpoints[0].timestamp
+
+    instance.put(config={"configurable": {"thread_id": "child-exec-id"}}, checkpoint={"ts": "c1"}, metadata={})
+
+    # Parent row must be untouched after the child write
+    assert parent_exec.checkpoints[0].timestamp == parent_ts_after_write
+    assert parent_exec.checkpoints[0].timestamp == "p1"

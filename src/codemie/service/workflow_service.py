@@ -35,6 +35,7 @@ from codemie.core.workflow_models import (
     WorkflowErrorFormat,
     WorkflowExecution,
     WorkflowExecutionResponse,
+    WorkflowExecutionState,
     WorkflowExecutionStatusEnum,
     YamlConfigHistory,
 )
@@ -47,6 +48,7 @@ from codemie.service.monitoring.workflow_monitoring_service import WorkflowMonit
 from codemie.service.workflow_config.workflow_marketplace_service import WorkflowMarketplaceService
 
 MAX_ITEMS_PER_PAGE = 10_000
+_EXECUTION_ID_KEYWORD = "execution_id.keyword"
 
 _marketplace_service = WorkflowMarketplaceService()
 
@@ -173,16 +175,48 @@ class WorkflowService:
             raise e
 
     @staticmethod
+    def _get_or_create_conversation(
+        conversation_id: Optional[str],
+        workflow_config: WorkflowConfig,
+        user: UserEntity,
+    ) -> tuple:
+        from codemie.rest_api.models.conversation import Conversation
+
+        if not conversation_id:
+            conversation_id = str(uuid.uuid4())
+
+        try:
+            conversation = Conversation.get_by_id(conversation_id)
+            logger.debug(f"Using existing conversation {conversation_id} for workflow execution")
+        except Exception:
+            conversation = Conversation(
+                id=conversation_id,
+                conversation_id=conversation_id,
+                conversation_name='',
+                user_id=user.user_id,
+                user_name=user.username,
+                history=[],
+                assistant_ids=[workflow_config.id],
+                initial_assistant_id=workflow_config.id,
+                project=workflow_config.project,
+                is_workflow_conversation=True,
+            )
+            conversation.save(refresh=True)
+            logger.debug(f"Created new conversation {conversation_id} for workflow chat")
+
+        history_index = WorkflowService._next_history_index(conversation.history or [])
+        return conversation_id, conversation, history_index
+
+    @staticmethod
     def create_workflow_execution(
         workflow_config: WorkflowConfig,
         user: UserEntity,
         user_input: Optional[str] = '',
         file_names: Optional[list[str]] = None,
         conversation_id: Optional[str] = None,
+        parent_execution_id: Optional[str] = None,
     ) -> WorkflowExecution:
         try:
-            from codemie.rest_api.models.conversation import Conversation
-
             file_names = file_names or []
             # Only create conversation history for streamable executions (when conversation_id is provided)
             is_chat_execution = conversation_id is not None
@@ -193,32 +227,9 @@ class WorkflowService:
             )
 
             if is_chat_execution:
-                # Generate conversation_id if empty string provided
-                if not conversation_id:
-                    conversation_id = str(uuid.uuid4())
-
-                # Get or create conversation entity
-                try:
-                    conversation = Conversation.get_by_id(conversation_id)
-                    logger.debug(f"Using existing conversation {conversation_id} for workflow execution")
-                except Exception:
-                    # Create new conversation for this workflow chat
-                    conversation = Conversation(
-                        id=conversation_id,
-                        conversation_id=conversation_id,
-                        conversation_name='',  # Will be set from first user message
-                        user_id=user.user_id,
-                        user_name=user.username,
-                        history=[],
-                        assistant_ids=[workflow_config.id],  # Use workflow_id as assistant_id
-                        initial_assistant_id=workflow_config.id,
-                        project=workflow_config.project,
-                        is_workflow_conversation=True,  # Mark as workflow-based conversation
-                    )
-                    conversation.save(refresh=True)
-                    logger.debug(f"Created new conversation {conversation_id} for workflow chat")
-
-                history_index = WorkflowService._next_history_index(conversation.history or [])
+                conversation_id, conversation, history_index = WorkflowService._get_or_create_conversation(
+                    conversation_id, workflow_config, user
+                )
 
             # Create execution
             execution_id = str(uuid.uuid4())
@@ -253,8 +264,15 @@ class WorkflowService:
                 prompt=augmented_input,  # Use augmented input with history for workflow execution
                 file_names=file_names,
                 conversation_id=conversation_id if is_chat_execution else None,
+                parent_execution_id=parent_execution_id,
             )
             execution_config.save(refresh=True)
+
+            if parent_execution_id:
+                parent_exec = WorkflowService.find_workflow_execution_by_id(parent_execution_id)
+                if parent_exec:
+                    parent_exec.active_sub_execution_id = execution_id
+                    parent_exec.save()
 
             # Only add conversation history for chat executions (streamable workflows)
             if is_chat_execution:
@@ -319,6 +337,53 @@ class WorkflowService:
         except Exception as e:
             logger.error(f"Failed to get workflow execution: {e}")
             raise e
+
+    @classmethod
+    def get_nesting_depth(cls, execution_id: str) -> int:
+        """Count how many parent executions sit above ``execution_id``.
+
+        Walks the ``parent_execution_id`` chain and returns the true depth. The
+        functional nesting limit is enforced by the caller (which compares against a
+        per-workflow ``max_nesting_level`` that may exceed the global default), so this
+        must NOT cap on the config value. A ``visited`` set bounds the walk against
+        corrupted/cyclic lineage instead.
+        """
+        depth = 0
+        visited: set[str] = set()
+        current_id = execution_id
+        while current_id and current_id not in visited:
+            visited.add(current_id)
+            execution = cls.find_workflow_execution_by_id(current_id)
+            if not execution or not execution.parent_execution_id:
+                return depth
+            current_id = execution.parent_execution_id
+            depth += 1
+        return depth
+
+    @classmethod
+    def find_execution_state_output(cls, state_id: str) -> Optional[str]:
+        try:
+            state = WorkflowExecutionState.get_by_id(id_=state_id)
+            return state.output if state else None
+        except Exception as e:
+            logger.error(f"Failed to fetch execution state output for state_id={state_id}: {e}")
+            return None
+
+    @classmethod
+    def find_last_execution_state_output(cls, execution_id: str) -> Optional[str]:
+        try:
+            states = WorkflowExecutionState.get_all_by_fields(
+                fields={_EXECUTION_ID_KEYWORD: execution_id},
+                order_by="update_date",
+                order_desc=True,
+            )
+            for state in states:
+                if state.status == WorkflowExecutionStatusEnum.SUCCEEDED:
+                    return state.output
+            return None
+        except Exception as e:
+            logger.error(f"Failed to fetch last execution state output for execution_id={execution_id}: {e}")
+            return None
 
     @classmethod
     def get_recent_workflows_for_user(cls, user: User, limit: int = 3):
@@ -845,3 +910,11 @@ class WorkflowService:
             )
 
         return breakdown
+
+    @classmethod
+    def get_pool_enabled_workflow_configs(cls) -> list[WorkflowConfig]:
+        """Return all WorkflowConfig rows that have pool_config.enabled=True."""
+        with Session(WorkflowConfig.get_engine()) as session:
+            stmt = select(WorkflowConfig).where(WorkflowConfig.pool_config.is_not(None))
+            rows = session.exec(stmt).all()
+            return [r for r in rows if getattr(r.pool_config, "enabled", False)]

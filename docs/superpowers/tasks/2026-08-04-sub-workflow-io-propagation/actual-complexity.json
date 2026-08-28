@@ -1,0 +1,77 @@
+{
+  "task": "Fix sub-workflow node input/output propagation bugs: rewrite _render_input() to use PREVIOUS_EXECUTION_STATE_ID, fix execute() to return last child state output, apply three null-guard fixes from code review (CR-001 parent_exec guard, CR-002 finished_child guard, CR-003 duplicate write removal), and add two WorkflowService helper classmethods.",
+  "generated": "2026-08-05T00:00:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 3,
+      "label": "M",
+      "affected": "SubWorkflowNode, WorkflowService",
+      "layers": "Workflow, Service"
+    },
+    "requirements_clarity": {
+      "score": 2,
+      "label": "S",
+      "status": "Clear",
+      "gaps": null
+    },
+    "technical_risk": {
+      "score": 3,
+      "label": "M",
+      "risk_factors": "Subtle state-key semantics change (PREVIOUS_EXECUTION_STATE_ID replaces context_store emptiness as first-after-START signal), Elasticsearch query ordering by update_date for find_last_execution_state_output on the critical execution path, backward-compatible signature addition to create_workflow_execution",
+      "mitigation": "Well-established WorkflowService classmethod and Elasticsearch query patterns in the codebase; optional parameter addition is backward compatible; 19 node-level tests and 49 service-level tests provide coverage"
+    },
+    "file_change_estimate": {
+      "score": 2,
+      "label": "S",
+      "modified_files": 4,
+      "modified_file_list": [
+        "src/codemie/workflows/nodes/sub_workflow_node.py",
+        "src/codemie/service/workflow_service.py",
+        "tests/codemie/workflows/nodes/test_sub_workflow_node.py",
+        "tests/codemie/service/test_workflow_service.py"
+      ],
+      "new_files": 0,
+      "new_file_list": [],
+      "affected_dirs": [
+        "src/codemie/workflows/nodes",
+        "src/codemie/service",
+        "tests/codemie/workflows/nodes",
+        "tests/codemie/service"
+      ]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 3,
+      "label": "M",
+      "layers_changed": ["Workflow", "Service", "DB-Persistence"],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 14,
+  "size": "S",
+  "band_range": "10-14",
+  "files_changed": 4,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Two components: SubWorkflowNode (_render_input() rewrite + execute() output fix + 3 null guards) and WorkflowService (2 new classmethods find_execution_state_output / find_last_execution_state_output, create_workflow_execution signature extended with parent_execution_id, get_nesting_depth and get_pool_enabled_workflow_configs also added). Coordination required across both but scope is well-bounded."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "PREVIOUS_EXECUTION_STATE_ID detection change is semantically subtle — replaces context_store emptiness as the first-after-START signal. find_last_execution_state_output queries WorkflowExecutionState ordered by update_date descending via Elasticsearch and filters for SUCCEEDED status on the critical execution path. Both patterns follow established WorkflowService classmethod and ES query conventions already present in the codebase."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "Three distinct layers: Workflow layer (SubWorkflowNode execution logic), Service layer (WorkflowService business logic), and DB-Persistence layer (WorkflowExecutionState reads via Elasticsearch in both new classmethods). No schema migration required; all changes are additive read-path additions."
+    }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

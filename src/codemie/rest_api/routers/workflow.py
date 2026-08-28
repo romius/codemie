@@ -23,6 +23,7 @@ from codemie.service.llm_service.utils import set_llm_context
 from codemie.service.workflow_generator_service import WorkflowGeneratorService
 
 from codemie.configs import config, logger
+from codemie.configs.customer_config import customer_config
 from codemie.core.ability import Ability, Action
 from codemie.rest_api.models.assistant import MCPServerDetails
 from codemie.service.mcp.access_control import MCPAccessControlService
@@ -51,7 +52,7 @@ from codemie.rest_api.models.workflow_generator import (
 from codemie.service.monitoring.workflow_monitoring_service import WorkflowMonitoringService
 from codemie.service.guardrail.guardrail_service import GuardrailService
 from codemie.service.workflow_config import WorkflowConfigIndexService
-from codemie.service.workflow_config.workflow_config_index_service import WorkflowScope
+from codemie.service.workflow_config.workflow_config_index_service import ExcludeSelfModifier, WorkflowScope
 from codemie.service.workflow_service import WorkflowService
 from codemie.service.workflow_evaluation_service import WorkflowEvaluationService
 from codemie.workflows.custom_node_info import CustomNodeInfoService
@@ -125,6 +126,38 @@ def get_workflow_users(
     """
     result = WorkflowConfigIndexService.get_users(user=user, scope=scope)
     return result
+
+
+@router.get(
+    "/workflows/sub-workflow-candidates",
+    status_code=status.HTTP_200_OK,
+    response_model=WorkflowListResponse,
+    response_model_by_alias=True,
+)
+def get_sub_workflow_candidates(
+    user: User = Depends(authenticate),
+    exclude_id: Optional[str] = None,
+    page: int = 0,
+    per_page: int = 100,
+):
+    if not customer_config.is_feature_enabled("subWorkflow"):
+        raise ExtendedHTTPException(
+            code=status.HTTP_403_FORBIDDEN,
+            message="Sub-workflow node is disabled",
+            details="Enable the 'features:subWorkflow' flag in customer-config.",
+            help="Contact your administrator to enable the sub-workflow feature.",
+        )
+
+    extra_modifiers = [ExcludeSelfModifier(exclude_id)] if exclude_id else []
+
+    return WorkflowConfigIndexService.run(
+        user=user,
+        filter_by_user=False,
+        page=page,
+        per_page=per_page,
+        minimal_response=True,
+        extra_modifiers=extra_modifiers,
+    )
 
 
 @router.get(

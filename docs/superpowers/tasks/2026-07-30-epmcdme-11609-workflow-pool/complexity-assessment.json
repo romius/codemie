@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "task": "Implement WorkflowPool singleton service with thread-safe compiled-graph pool, split WorkflowExecutor._init_workflow() into _compile_graph() + _inject_user_context(), background warmup watcher, and SubWorkflowNode pool acquire/release integration",
+  "generated": "2026-07-30T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 5, "label": "XL" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 20,
+  "size": "L",
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Four components — WorkflowPool (new singleton service), WorkflowExecutor (core _init_workflow() split), SubWorkflowNode (pool acquire/release on create-path), main.py (startup hook + APScheduler warmup watcher) — across Service, Workflow, and API layers. Red-flag bumped from L to XL because WorkflowExecutor is a core shared utility: its refactor has blast-radius across every non-autonomous workflow execution in the system."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "Two novel LangGraph-specific patterns with no local precedent: (1) splitting CompiledStateGraph build into a user-agnostic _compile_graph() phase and a user-dependent _inject_user_context() phase using NodeSlot placeholders, and (2) resetting CheckpointSaver state on a pooled CompiledStateGraph before reuse — no equivalent pattern exists in the codebase and must be derived from LangGraph internals. Additional risks: thread-safety correctness under concurrent pool acquire/release (no concurrency test infrastructure exists), circular import risk when importing WorkflowPool inside sub_workflow_node.py, and unresolved design question about how to make _compile_graph() callable by WorkflowPool without a full per-execution WorkflowExecutor instantiation."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from L (4) to XL (5): WorkflowExecutor._init_workflow() is a core shared utility used by all non-autonomous workflow executions — structural refactor has wide blast radius across the system"
+  ],
+  "split_recommendation": null
+}

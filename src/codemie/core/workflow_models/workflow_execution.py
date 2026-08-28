@@ -170,6 +170,8 @@ class WorkflowExecution(BaseModelWithSQLSupport, Owned, table=True):
         default_factory=list, sa_column=Column(PydanticListType(GeneratedMessage))
     )
     conversation_id: Optional[str] = SQLField(default=None, index=True)
+    parent_execution_id: Optional[str] = SQLField(default=None, index=True)
+    active_sub_execution_id: Optional[str] = SQLField(default=None, index=True)
     # Custom PostgreSQL indexes
     __table_args__ = (Index('ix_workflow_executions_created_by_user_id', text("(created_by->>'user_id')")),)
 

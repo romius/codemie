@@ -28,6 +28,7 @@ from codemie.workflows.validation.resources import (
     _validate_tools_from_assistants_availability,
     _validate_tools_avaiability,
     _validate_datasources_availability,
+    _validate_sub_workflow_availability,
     validate_workflow_config_resources_availability,
     WorkflowConfigResourcesValidationError,
 )
@@ -278,7 +279,9 @@ def mock_workflow_config():
 @patch("codemie.workflows.validation.resources._is_tool_available", return_value=True)
 @patch("codemie.workflows.validation.resources._is_datasource_available", return_value=True)
 @patch("codemie.workflows.validation.resources._validate_referenced_assistants_integrations", return_value=[])
+@patch("codemie.workflows.validation.resources._validate_sub_workflow_availability", return_value=[])
 def test_validate_workflow_config_resources_availability_all_available(
+    mock_sub_wf_availability,
     mock_ref_integrations,
     mock_is_datasource_available,
     mock_tool_available,
@@ -293,7 +296,9 @@ def test_validate_workflow_config_resources_availability_all_available(
 @patch("codemie.workflows.validation.resources._is_tool_available", return_value=False)
 @patch("codemie.workflows.validation.resources._is_datasource_available", return_value=None)
 @patch("codemie.workflows.validation.resources._validate_referenced_assistants_integrations", return_value=[])
+@patch("codemie.workflows.validation.resources._validate_sub_workflow_availability", return_value=[])
 def test_validate_workflow_config_resources_availability_multiple_unavailable_resources(
+    mock_sub_wf_availability,
     mock_ref_integrations,
     mock_is_datasource_available,
     mock_tool_available,
@@ -858,3 +863,87 @@ def test_workflow_config_resources_validation_error_to_dict_missing_integration_
     details = sorted(e["details"] for e in errors)
     assert "GitHub" in details[0]
     assert "Jira" in details[1]
+
+
+@pytest.fixture
+def mock_workflow_config_with_id():
+    wf = MagicMock()
+    wf.id = "parent-wf-id"
+    return wf
+
+
+def test_validate_sub_workflow_availability_returns_empty_when_flag_disabled(mock_workflow_config_with_id, mock_user):
+    mock_workflow_config_with_id.states = [
+        MagicMock(id="s1", workflow_id="child-wf-id"),
+    ]
+    with patch("codemie.workflows.validation.resources.customer_config") as mock_cfg:
+        mock_cfg.is_feature_enabled.return_value = False
+        result = _validate_sub_workflow_availability(mock_workflow_config_with_id, mock_user)
+    assert result == []
+
+
+def test_validate_sub_workflow_availability_no_workflow_id_states(mock_workflow_config_with_id, mock_user):
+    mock_workflow_config_with_id.states = [
+        MagicMock(id="s1", workflow_id=None, assistant_id="asst-1"),
+    ]
+    result = _validate_sub_workflow_availability(mock_workflow_config_with_id, mock_user)
+    assert result == []
+
+
+def test_validate_sub_workflow_availability_found(mock_workflow_config_with_id, mock_user):
+    mock_workflow_config_with_id.states = [
+        MagicMock(id="s1", workflow_id="child-wf-id"),
+    ]
+    with patch("codemie.workflows.validation.resources.WorkflowService") as mock_service_cls:
+        mock_service = mock_service_cls.return_value
+        mock_service.get_workflow.return_value = MagicMock()
+        result = _validate_sub_workflow_availability(mock_workflow_config_with_id, mock_user)
+    assert result == []
+
+
+def test_validate_sub_workflow_availability_not_found(mock_workflow_config_with_id, mock_user):
+    mock_workflow_config_with_id.states = [
+        MagicMock(id="s1", workflow_id="missing-wf"),
+    ]
+    with (
+        patch("codemie.workflows.validation.resources.customer_config") as mock_cfg,
+        patch("codemie.workflows.validation.resources.WorkflowService") as mock_service_cls,
+    ):
+        mock_cfg.is_feature_enabled.return_value = True
+        mock_service = mock_service_cls.return_value
+        mock_service.get_workflow.return_value = None
+        result = _validate_sub_workflow_availability(mock_workflow_config_with_id, mock_user)
+    assert len(result) == 1
+    state_id, wf_id, reason = result[0]
+    assert state_id == "s1"
+    assert wf_id == "missing-wf"
+    assert "not found" in reason
+
+
+def test_validate_sub_workflow_availability_self_reference(mock_workflow_config_with_id, mock_user):
+    mock_workflow_config_with_id.states = [
+        MagicMock(id="s1", workflow_id="parent-wf-id"),
+    ]
+    with patch("codemie.workflows.validation.resources.customer_config") as mock_cfg:
+        mock_cfg.is_feature_enabled.return_value = True
+        result = _validate_sub_workflow_availability(mock_workflow_config_with_id, mock_user)
+    assert len(result) == 1
+    state_id, wf_id, reason = result[0]
+    assert state_id == "s1"
+    assert "self-reference" in reason
+
+
+def test_validate_sub_workflow_availability_access_denied(mock_workflow_config_with_id, mock_user):
+    mock_workflow_config_with_id.states = [
+        MagicMock(id="s1", workflow_id="restricted-wf"),
+    ]
+    with (
+        patch("codemie.workflows.validation.resources.customer_config") as mock_cfg,
+        patch("codemie.workflows.validation.resources.WorkflowService") as mock_service_cls,
+    ):
+        mock_cfg.is_feature_enabled.return_value = True
+        mock_service = mock_service_cls.return_value
+        mock_service.get_workflow.side_effect = Exception("Access denied")
+        result = _validate_sub_workflow_availability(mock_workflow_config_with_id, mock_user)
+    assert len(result) == 1
+    assert "not found or access denied" in result[0][2]

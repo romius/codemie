@@ -86,3 +86,28 @@ def test_inject_resume_input_merges_json_user_input_into_context_store():
     assert context.get("task") == "do this"
     assert context.get("extra_key") == "value"
     assert state_values[MESSAGES_VARIABLE][0].content == '{"task": "do this", "extra_key": "value"}'
+
+
+def test_inject_resume_input_with_forwarded_context_store_from_sub_workflow():
+    """
+    SubWorkflowNode.execute() resume path passes json.dumps(context_store) as
+    user_input to the child executor. Verify _inject_resume_input correctly
+    merges that JSON payload back into the child workflow's context_store so the
+    child resumes with the forwarded state rather than an empty context.
+    """
+    import json
+
+    forwarded_ctx = {"task": "resume task", "prior_result": "step-1 output"}
+    executor = _make_executor(user_input=json.dumps(forwarded_ctx))
+    mock_workflow = MagicMock()
+    mock_config = MagicMock()
+
+    WorkflowExecutor._inject_resume_input(executor, mock_workflow, mock_config)
+
+    mock_workflow.update_state.assert_called_once()
+    state_values = mock_workflow.update_state.call_args.args[1]
+    context = state_values[CONTEXT_STORE_VARIABLE]
+    assert context.get("task") == "resume task"
+    assert context.get("prior_result") == "step-1 output"
+    # The raw JSON is also injected as the user message so LangGraph can replay it
+    assert state_values[MESSAGES_VARIABLE][0].content == json.dumps(forwarded_ctx)

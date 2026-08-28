@@ -1,0 +1,53 @@
+{
+  "decision": "request-changes",
+  "rationale": "Three major findings: (CR-001) re-fetched parent_exec at the terminal-clear step has no null guard — any ABORTED/FAILED/SUCCEEDED path crashes with AttributeError if find_workflow_execution_by_id returns None; (CR-002) finished_child has no null guard after stream() — same crash surface; (CR-003) active_sub_execution_id is written twice with a stale pre-child parent_exec object from the node overwriting the fresh write that create_workflow_execution already performed, creating a latent stale-overwrite race. All plan requirements are satisfied — the core PREVIOUS_EXECUTION_STATE_ID input routing, find_last_execution_state_output return, and service helpers are correctly implemented. Two additional concerns deferred: update_date ordering for parallel-branch child workflows (sequential workflows unaffected), and the pre-stream exception path leaving active_sub_execution_id set (edge case, pool release is correctly guarded).",
+  "confidence": "medium",
+  "risk_flags": [],
+  "business_review": [
+    {"criterion": "_render_input uses PREVIOUS_EXECUTION_STATE_ID for START detection; None/absent → USER_INPUT; set → find_execution_state_output with USER_INPUT fallback", "status": "PASS", "notes": "Correctly implemented at sub_workflow_node.py lines 162-174."},
+    {"criterion": "execute() returns find_last_execution_state_output(child_execution.execution_id) instead of finished_child.output", "status": "PASS", "notes": "Line 153 uses find_last_execution_state_output. No reference to finished_child.output on success path."},
+    {"criterion": "find_execution_state_output calls get_by_id(id_=state_id) with exception→None fallback", "status": "PASS", "notes": "workflow_service.py lines 347-353 implement exactly."},
+    {"criterion": "find_last_execution_state_output calls get_all_by_fields with correct args; returns first SUCCEEDED output; exception→None fallback", "status": "PASS", "notes": "workflow_service.py lines 355-369 implement exactly."},
+    {"criterion": "input_mapping retains absolute priority in _render_input", "status": "PASS", "notes": "input_mapping branch is first conditional, returns before PREVIOUS_EXECUTION_STATE_ID logic."},
+    {"criterion": "_EXECUTION_ID_KEYWORD defined as private module constant in workflow_service.py", "status": "PASS", "notes": "Line 51 defines _EXECUTION_ID_KEYWORD = 'execution_id.keyword'. Not imported from workflow_execution_service.py."},
+    {"criterion": "No circular-import risk from new module-level imports in sub_workflow_node.py", "status": "PASS", "notes": "WorkflowExecutor remains a local import inside execute(). Module-level imports are safe."},
+    {"criterion": "Pool acquire/release symmetry preserved", "status": "PASS", "notes": "try/finally at lines 120-131 guarantees release matches acquire regardless of exceptions."}
+  ],
+  "standards_review": [
+    {"standard": "git-workflow commit format", "status": "partial", "notes": "Branch commits use conventional-commits format (feat(EPMCDME-11609): ...) whereas the git-workflow guide documents EPMCDME-####: Description. Non-blocking — the ticket ID is present in all commits."},
+    {"standard": "code-quality type annotations", "status": "partial", "notes": "New classmethods use Optional[str] return type annotations; guide prefers str | None unions. Non-blocking style deviation."},
+    {"standard": "security — null safety on DB lookups", "status": "partial", "notes": "Two unguarded dereferences of possibly-None find_workflow_execution_by_id results (parent_exec at line 143, finished_child at line 133). Raised as findings CR-001 and CR-002."}
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "file": "src/codemie/workflows/nodes/sub_workflow_node.py",
+      "line": 143,
+      "severity": "major",
+      "triage": "patch",
+      "problem": "Re-fetched parent_exec at the terminal-clear step has no null guard. find_workflow_execution_by_id returns None when no rows are found.",
+      "impact": "Line 144 `parent_exec.active_sub_execution_id = None` raises AttributeError if the parent row is unavailable (DB downtime, ES refresh lag, concurrent deletion). All terminal paths (SUCCEEDED, ABORTED, FAILED) hit this code; the ABORTED and FAILED exception paths at lines 147-151 are never reached. The parent execution is left IN_PROGRESS with active_sub_execution_id still set.",
+      "recommendation": "Add null guard: `if parent_exec: parent_exec.active_sub_execution_id = None; parent_exec.save()`. The earlier fetch at line 74 already applies this pattern."
+    },
+    {
+      "id": "CR-002",
+      "file": "src/codemie/workflows/nodes/sub_workflow_node.py",
+      "line": 133,
+      "severity": "major",
+      "triage": "patch",
+      "problem": "finished_child is fetched after stream() with no null guard before the .overall_status dereference.",
+      "impact": "If find_workflow_execution_by_id returns None (transient DB error, ES refresh lag after child completes), line 135 raises AttributeError. The workflow runner sees an untyped exception; the parent execution is left IN_PROGRESS with active_sub_execution_id set.",
+      "recommendation": "Add null guard: `if not finished_child: raise SubWorkflowExecutionError(child_execution.execution_id)` before line 135."
+    },
+    {
+      "id": "CR-003",
+      "file": "src/codemie/service/workflow_service.py + src/codemie/workflows/nodes/sub_workflow_node.py",
+      "line": 115,
+      "severity": "major",
+      "triage": "patch",
+      "problem": "active_sub_execution_id is written twice in the create path: once inside create_workflow_execution with a freshly-fetched parent object (service lines 264-267), then again in the node with the stale parent_exec loaded at line 74 — before create_workflow_execution ran. The node's second write uses a detached object whose committed-state baseline predates the child's existence.",
+      "impact": "Both writes set the same value, so correctness is not immediately broken. However if SQLAlchemy dirty tracking on the detached object issues a full-row save, it overwrites any parent field the service updated between line 74 and line 117 (e.g. concurrent status transitions). The ownership is ambiguous and will cause confusion when modifying either code path.",
+      "recommendation": "Remove the duplicate. Preferred option: remove lines 115-117 from the node (create_workflow_execution already guarantees the write before returning) and document that guarantee. Alternative: remove the write from the service and keep only the pre-stream node write with a fresh fetch after create_workflow_execution returns."
+    }
+  ]
+}

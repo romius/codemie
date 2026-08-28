@@ -256,3 +256,40 @@ def test_get_users_no_scope_excludes_global_for_regular_user(mock_session_class,
     actual_query = str(mock_session.exec.call_args[0][0])
     assert "workflows.is_global = false" in actual_query
     assert "is_global = true" not in actual_query
+
+
+@patch('codemie.service.workflow_config.workflow_config_index_service.Session')
+def test_exclude_self_modifier_adds_where_clause(mock_session_class, mock_admin_user):
+    """ExcludeSelfModifier appends WHERE id != <workflow_id> to the query."""
+    from codemie.service.workflow_config.workflow_config_index_service import ExcludeSelfModifier
+
+    mock_session = MagicMock()
+    mock_session_class.return_value.__enter__.return_value = mock_session
+    mock_session.exec.return_value.all.return_value = []
+    mock_session.exec.return_value.one.return_value = 0
+
+    WorkflowConfigIndexService.run(
+        user=mock_admin_user,
+        filter_by_user=False,
+        page=0,
+        per_page=20,
+        extra_modifiers=[ExcludeSelfModifier("wf-abc")],
+    )
+
+    actual_query = str(mock_session.exec.call_args[0][0])
+    assert "workflows.id != :id_1" in actual_query
+
+
+@patch('codemie.service.workflow_config.workflow_config_index_service.Session')
+def test_run_without_extra_modifiers_unchanged(mock_session_class, mock_admin_user):
+    """run() without extra_modifiers produces the same query as before."""
+    mock_session = MagicMock()
+    mock_session_class.return_value.__enter__.return_value = mock_session
+    mock_session.exec.return_value.all.return_value = []
+    mock_session.exec.return_value.one.return_value = 0
+
+    WorkflowConfigIndexService.run(user=mock_admin_user, filter_by_user=False, page=0, per_page=20)
+
+    actual_query = str(mock_session.exec.call_args[0][0])
+    expected_conditions = "WHERE workflows.is_global = false AND workflows.mode = :mode_1 ORDER BY workflows.update_date DESC NULLS LAST\n LIMIT :param_1 OFFSET :param_2"
+    assert actual_query.endswith(expected_conditions)

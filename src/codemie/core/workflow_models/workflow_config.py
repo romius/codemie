@@ -43,6 +43,7 @@ from codemie.core.workflow_models.constants import (
 )
 from codemie.core.workflow_models.workflow_models import (
     CustomWorkflowNode,
+    WorkflowPoolConfig,
     WorkflowState,
     WorkflowTool,
     WorkflowMode,
@@ -111,6 +112,10 @@ class WorkflowConfigBase(CommonBaseModel, Owned):
     is_global: bool = SQLField(default=False)
     categories: list[str] = SQLField(default_factory=list, sa_column=Column(JSONB))
     unique_users_count: int = SQLField(default=0)
+    pool_config: Optional[WorkflowPoolConfig] = SQLField(
+        default=None, sa_column=Column(PydanticType(WorkflowPoolConfig))
+    )
+    max_nesting_level: Optional[int] = SQLField(default=None)
 
     # Custom PostgreSQL indexes
     __table_args__ = (
@@ -251,6 +256,9 @@ class WorkflowConfigBase(CommonBaseModel, Owned):
         self.max_concurrency = yaml_data.get("max_concurrency", None)
         self.verbose = yaml_data.get("verbose", True)
         self.max_iteration_key_output_limit = yaml_data.get("max_iteration_key_output_limit", 200)
+        pool_cfg = yaml_data.get("pool_config")
+        self.pool_config = WorkflowPoolConfig(**pool_cfg) if pool_cfg else None
+        self.max_nesting_level = yaml_data.get("max_nesting_level")
 
     def get_max_concurrency(self):
         """Get the maximum concurrency for the codemie.core.workflow based on the configuration"""
