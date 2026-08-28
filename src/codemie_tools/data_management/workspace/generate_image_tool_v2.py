@@ -43,7 +43,7 @@ _BOUNDING_BOXES = {
     "portrait": (_MIN_DIMENSION, _MAX_DIMENSION),
 }
 _OUTPUT_FORMAT = "png"
-_GEMINI_DEFAULT_IMAGE_SIZE = "1K"
+_GEMINI_DEFAULT_IMAGE_SIZE = "2K"
 _GEMINI_IMAGE_DIMENSIONS = {
     "1:1": {"512": (512, 512), "1K": (1024, 1024), "2K": (2048, 2048), "4K": (4096, 4096)},
     "1:4": {"512": (256, 1024), "1K": (512, 2048), "2K": (1024, 4096), "4K": (2048, 8192)},
@@ -79,12 +79,11 @@ class ImageGenerationPlan:
     canvas_height: int
     target_width: int
     target_height: int
-    preserve_generated_dimensions: bool
 
 
 class GenerateWorkspaceImageToolV2Input(BaseModel):
     image_description: str = Field(
-        description="Detailed image description or detailed user ask for generating an image."
+        description="Detailed image description or detailed user ask for generating an image. Do not include aspect ratio or size here, it should go into 'size' field. "
     )
     size: str = Field(
         description="Requested image size in the format 'widthxheight', for example '1920x1080'. Or you can simple specify aspect ratio like '5:12'"
@@ -114,6 +113,8 @@ class GenerateWorkspaceImageToolV2(BaseWorkspaceTool):
             background=normalized_background,
             target_width=plan.target_width,
             target_height=plan.target_height,
+            canvas_width=plan.canvas_width,
+            canvas_height=plan.canvas_height,
         )
 
         try:
@@ -128,10 +129,7 @@ class GenerateWorkspaceImageToolV2(BaseWorkspaceTool):
             logger.info(f"Image generation validation error for image_generator={image_generator_type}: {exc}")
             raise ValidationException(f"{exc} (image_generator={image_generator_type})") from exc
 
-        if plan.preserve_generated_dimensions:
-            saved_width, saved_height = get_image_dimensions(output_bytes)
-        else:
-            saved_width, saved_height = plan.target_width, plan.target_height
+        saved_width, saved_height = get_image_dimensions(output_bytes)
 
         workspace_id = self._get_workspace_id()
         file_path = build_workspace_image_path()
@@ -181,16 +179,19 @@ def build_image_generation_plan(size: ParsedSizeRequest, image_generator: Any) -
     if is_gemini_image_model(model_id):
         aspect_ratio = find_closest_gemini_aspect_ratio(size.width, size.height)
         image_size = select_gemini_image_size(size=size, aspect_ratio=aspect_ratio)
-        output_width, output_height = _GEMINI_IMAGE_DIMENSIONS[aspect_ratio][image_size]
+        canvas_width, canvas_height = _GEMINI_IMAGE_DIMENSIONS[aspect_ratio][image_size]
+        scale = min(canvas_width / size.width, canvas_height / size.height)
+        target_width = int(round(size.width * scale))
+        target_height = int(round(size.height * scale))
         return ImageGenerationPlan(
             size=None,
             output_format=None,
-            extra_body={"response_format": {"image": {"aspect_ratio": aspect_ratio, "image_size": image_size}}},
-            canvas_width=output_width,
-            canvas_height=output_height,
-            target_width=output_width,
-            target_height=output_height,
-            preserve_generated_dimensions=True,
+            # current configuration of LiteLLM and/or API version don't properly propagate that to Gemini, so it's more for future
+            extra_body={"response_format": {"type": "image", "aspect_ratio": aspect_ratio, "image_size": image_size}},
+            canvas_width=canvas_width,
+            canvas_height=canvas_height,
+            target_width=target_width,
+            target_height=target_height,
         )
 
     canvas_width, canvas_height = get_canvas_dimensions(size.width, size.height)
@@ -203,7 +204,6 @@ def build_image_generation_plan(size: ParsedSizeRequest, image_generator: Any) -
         canvas_height=canvas_height,
         target_width=target_width,
         target_height=target_height,
-        preserve_generated_dimensions=False,
     )
 
 
@@ -221,17 +221,7 @@ def parse_aspect_ratio(aspect_ratio: str) -> float:
 
 
 def select_gemini_image_size(size: ParsedSizeRequest, aspect_ratio: str) -> str:
-    if size.is_ratio:
-        return _GEMINI_DEFAULT_IMAGE_SIZE
-
-    return min(
-        _GEMINI_IMAGE_DIMENSIONS[aspect_ratio],
-        key=lambda image_size: get_gemini_dimension_distance(
-            requested_width=size.width,
-            requested_height=size.height,
-            actual_dimensions=_GEMINI_IMAGE_DIMENSIONS[aspect_ratio][image_size],
-        ),
-    )
+    return _GEMINI_DEFAULT_IMAGE_SIZE
 
 
 def get_gemini_dimension_distance(
@@ -269,28 +259,34 @@ def get_canvas_dimensions(width: float, height: float) -> tuple[int, int]:
     return _BOUNDING_BOXES[classify_orientation(width, height)]
 
 
-def get_orientation_hint(orientation: str, target_width: int, target_height: int) -> str:
+def get_orientation_hint(
+    orientation: str, target_width: int, target_height: int, canvas_width: int, canvas_height: int
+) -> str:
     orientation_hint = ""
 
     if orientation == "landscape":
-        percentage = target_height / _MIN_DIMENSION
-        if percentage < 0.80:
-            percentage -= 0.05  # to not have white/black bars
+        percentage = target_height / canvas_height
+        if percentage < 0.90:
+            percentage -= 0.02  # to not have white/black bars
             orientation_hint = f"Landscape composition, draw in a full-width vertically centered horizontal strip that is {percentage * 100:.2f}% of total height"
 
     if orientation == "portrait":
-        percentage = target_width / _MIN_DIMENSION
-        if percentage < 0.80:
-            percentage -= 0.05  # to not have white/black bars
+        percentage = target_width / canvas_width
+        if percentage < 0.90:
+            percentage -= 0.02  # to not have white/black bars
             orientation_hint = f"Portrait composition, draw in a full-height horizontally centered vertical strip that is {percentage * 100:.2f}% of total width"
 
+    if orientation_hint:
+        orientation_hint = "\n\n" + orientation_hint
     return orientation_hint
 
 
-def build_image_prompt(description: str, background: str, target_width: int, target_height: int) -> str:
+def build_image_prompt(
+    description: str, background: str, target_width: int, target_height: int, canvas_width: int, canvas_height: int
+) -> str:
     orientation = classify_orientation(target_width, target_height)
-    orientation_hint = get_orientation_hint(orientation, target_width, target_height)
-    return f"{description}\n\nAdditional constraints:\n- Composition {orientation}.\n{orientation_hint}"
+    orientation_hint = get_orientation_hint(orientation, target_width, target_height, canvas_width, canvas_height)
+    return f"{description}{orientation_hint}"
 
 
 def normalize_generated_image_bytes(url: str | None, b64_data: str | None) -> bytes:
@@ -334,14 +330,13 @@ def generate_workspace_image_bytes(
     url, b64_data = image_generator.edit(**edit_kwargs)
 
     image_bytes = normalize_generated_image_bytes(url=url, b64_data=b64_data)
-    if plan.preserve_generated_dimensions:
-        return convert_image_to_png(image_bytes)
-    return crop_image_to_dimensions(
-        image_bytes,
-        plan.canvas_width,
-        plan.canvas_height,
-        plan.target_width,
-        plan.target_height,
+    return crop_generated_image_to_target_dimensions(
+        image_generator=image_generator,
+        image_bytes=image_bytes,
+        expected_canvas_width=plan.canvas_width,
+        expected_canvas_height=plan.canvas_height,
+        target_width=plan.target_width,
+        target_height=plan.target_height,
     )
 
 
@@ -365,6 +360,82 @@ def convert_image_to_png(image_bytes: bytes) -> bytes:
 def get_image_dimensions(image_bytes: bytes) -> tuple[int, int]:
     with Image.open(io.BytesIO(image_bytes)) as image:
         return image.size
+
+
+def crop_generated_image_to_target_dimensions(
+    image_generator: Any,
+    image_bytes: bytes,
+    expected_canvas_width: int,
+    expected_canvas_height: int,
+    target_width: int,
+    target_height: int,
+) -> bytes:
+    """
+    Crop the generated image to the requested target dimensions, validating the provider output size
+    and applying a safe fallback if the provider returns unexpected dimensions.
+    """
+
+    try:
+        actual_width, actual_height = get_image_dimensions(image_bytes)
+    except Exception as exc:  # pragma: no cover - PIL errors depend on input bytes
+        raise ValidationException("Image generation produced unreadable image bytes.") from exc
+
+    if (actual_width, actual_height) != (expected_canvas_width, expected_canvas_height):
+        image_generator_type = type(image_generator).__name__
+        model_id = _get_image_generator_model_id(image_generator)
+        logger.warning(
+            "Image generator returned unexpected canvas dimensions; applying fallback crop. "
+            f"expected={expected_canvas_width}x{expected_canvas_height} "
+            f"actual={actual_width}x{actual_height} "
+            f"target={target_width}x{target_height} "
+            f"image_generator={image_generator_type} model_id={model_id}"
+        )
+
+    # Prefer a centered crop when the returned image is at least as large as the target.
+    if actual_width >= target_width and actual_height >= target_height:
+        return crop_image_to_dimensions(
+            image_bytes=image_bytes,
+            canvas_width=actual_width,
+            canvas_height=actual_height,
+            target_width=target_width,
+            target_height=target_height,
+        )
+
+    # Fallback: provider returned something smaller than requested. Do NOT upscale.
+    # Instead, crop the returned image to the requested aspect ratio (centered) and return as-is.
+    requested_aspect_ratio = target_width / target_height
+    return crop_image_to_aspect_ratio(image_bytes=image_bytes, aspect_ratio=requested_aspect_ratio)
+
+
+def crop_image_to_aspect_ratio(image_bytes: bytes, aspect_ratio: float) -> bytes:
+    if aspect_ratio <= 0:
+        raise ValidationException("Invalid aspect ratio for cropping.")
+
+    with Image.open(io.BytesIO(image_bytes)) as image:
+        source_image = image.convert("RGBA") if image.mode in {"RGBA", "LA", "P"} else image.convert("RGB")
+        width, height = source_image.size
+        if width <= 0 or height <= 0:
+            raise ValidationException("Generated image has invalid dimensions.")
+
+        current_ratio = width / height
+        if abs(current_ratio - aspect_ratio) < 1e-6:
+            cropped = source_image
+        elif current_ratio > aspect_ratio:
+            # Too wide: crop left/right.
+            crop_width = int(round(height * aspect_ratio))
+            crop_width = max(1, min(crop_width, width))
+            left = (width - crop_width) // 2
+            cropped = source_image.crop((left, 0, left + crop_width, height))
+        else:
+            # Too tall: crop top/bottom.
+            crop_height = int(round(width / aspect_ratio))
+            crop_height = max(1, min(crop_height, height))
+            top = (height - crop_height) // 2
+            cropped = source_image.crop((0, top, width, top + crop_height))
+
+        output = io.BytesIO()
+        cropped.save(output, format="PNG")
+        return output.getvalue()
 
 
 def create_base_and_mask_images(

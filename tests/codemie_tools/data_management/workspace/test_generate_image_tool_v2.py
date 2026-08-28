@@ -107,6 +107,11 @@ class TestGenerateWorkspaceImageToolV2Helpers(unittest.TestCase):
     def test_find_closest_gemini_aspect_ratio(self):
         self.assertEqual(find_closest_gemini_aspect_ratio(1920, 1080), "16:9")
 
+    def test_find_closest_gemini_aspect_ratio_uses_all_dimensions_keys(self):
+        # Gemini supports all 14 aspect ratios in _GEMINI_IMAGE_DIMENSIONS.
+        # 2400x1000 ≈ 2.4:1 is geometrically closest to 21:9 (≈ 2.33:1), not 16:9 (≈ 1.78:1).
+        self.assertEqual(find_closest_gemini_aspect_ratio(2400, 1000), "21:9")
+
     def test_build_image_generation_plan_for_gemini_exact_size(self):
         generator = MagicMock()
         generator.model_id = "gemini-3.1-flash-image"
@@ -115,11 +120,11 @@ class TestGenerateWorkspaceImageToolV2Helpers(unittest.TestCase):
 
         self.assertIsNone(plan.size)
         self.assertIsNone(plan.output_format)
-        self.assertTrue(plan.preserve_generated_dimensions)
-        self.assertEqual((plan.target_width, plan.target_height), (1376, 768))
+        # Canvas is 2752x1536 (16:9 at 2K); target scales 1920x1080 to fit
+        self.assertEqual((plan.target_width, plan.target_height), (2731, 1536))
         self.assertEqual(
             plan.extra_body,
-            {"response_format": {"image": {"aspect_ratio": "16:9", "image_size": "1K"}}},
+            {"response_format": {"type": "image", "aspect_ratio": "16:9", "image_size": "2K"}},
         )
 
     def test_build_image_generation_plan_for_gemini_ratio_input(self):
@@ -128,10 +133,11 @@ class TestGenerateWorkspaceImageToolV2Helpers(unittest.TestCase):
 
         plan = build_image_generation_plan(parse_size_request("5:12"), generator)
 
-        self.assertEqual((plan.target_width, plan.target_height), (768, 1376))
+        # Canvas is 1536x2752 (9:16 at 2K); target scales 5x12 to fit
+        self.assertEqual((plan.target_width, plan.target_height), (1147, 2752))
         self.assertEqual(
             plan.extra_body,
-            {"response_format": {"image": {"aspect_ratio": "9:16", "image_size": "1K"}}},
+            {"response_format": {"type": "image", "aspect_ratio": "9:16", "image_size": "2K"}},
         )
 
 
@@ -211,14 +217,15 @@ class TestGenerateWorkspaceImageToolV2(unittest.TestCase):
         tool = self._build_tool(image_generator=generator, workspace_service=workspace_service)
         result = json.loads(tool.execute(image_description="A lake", size="1920x1080"))
 
-        self.assertEqual(result["width"], 1376)
+        # Image is cropped from Gemini canvas (1376x768) to target (1366x768)
+        self.assertEqual(result["width"], 1366)
         self.assertEqual(result["height"], 768)
         edit_kwargs = generator.edit.call_args.kwargs
         self.assertNotIn("size", edit_kwargs)
         self.assertNotIn("output_format", edit_kwargs)
         self.assertEqual(
             edit_kwargs["extra_body"],
-            {"response_format": {"image": {"aspect_ratio": "16:9", "image_size": "1K"}}},
+            {"response_format": {"type": "image", "aspect_ratio": "16:9", "image_size": "2K"}},
         )
 
 

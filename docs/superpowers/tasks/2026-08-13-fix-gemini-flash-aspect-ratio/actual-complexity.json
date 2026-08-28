@@ -1,0 +1,66 @@
+{
+  "task": "Fix generate_image_tool_v2.py: restore all 14 Gemini aspect ratios, fix proportional target scaling within canvas, remove preserve_generated_dimensions field, fix get_orientation_hint to use actual canvas dimensions, and update build_image_prompt signature.",
+  "generated": "2026-08-13T00:00:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 2,
+      "label": "S",
+      "affected": "GenerateWorkspaceImageToolV2 tool, build_image_generation_plan, get_orientation_hint, build_image_prompt, ImageGenerationPlan dataclass, _GEMINI_IMAGE_DIMENSIONS constant",
+      "layers": "Agent-Tool"
+    },
+    "requirements_clarity": {
+      "score": 1,
+      "label": "XS",
+      "status": "Clear",
+      "gaps": null
+    },
+    "technical_risk": {
+      "score": 2,
+      "label": "S",
+      "risk_factors": "Behavioural change to image output dimensions for Gemini path; removing a dataclass field may affect any callers that referenced preserve_generated_dimensions",
+      "mitigation": "Field removal is a net simplification; callers use plan.target_width/target_height directly; change is fully self-contained within the tool module"
+    },
+    "file_change_estimate": {
+      "score": 2,
+      "label": "S",
+      "modified_files": 2,
+      "modified_file_list": [
+        "src/codemie_tools/data_management/workspace/generate_image_tool_v2.py",
+        "tests/codemie_tools/data_management/workspace/test_generate_image_tool_v2.py"
+      ],
+      "new_files": 0,
+      "new_file_list": [],
+      "affected_dirs": ["src", "tests"]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 1,
+      "label": "XS",
+      "layers_changed": ["Agent-Tool"],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 9,
+  "size": "XS",
+  "band_range": "6-9",
+  "files_changed": 2,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Five internal functions and one dataclass in a single tool file were fixed; no layer boundaries crossed, no shared contracts changed"
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "Fixes are deletion-heavy (48 deletions vs 35 insertions): restoring a data table, removing a field, correcting arithmetic — all well-understood patterns with low regression surface"
+    }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

@@ -1,0 +1,34 @@
+{
+  "decision": "request-changes",
+  "rationale": "No-spec round (no story/spec artifact): confidence is low. One major patch finding: EC-3 — the hardcoded tuple `_GEMINI_FLASH_SUPPORTED_ASPECT_RATIOS` has no module-level assertion that all five entries exist as keys in `_GEMINI_IMAGE_DIMENSIONS`; line 184 and line 228 blindly index the dict using whatever the function returns, so a future edit that renames or removes a key silently becomes a runtime KeyError. Easy to fix with a one-line assertion. Deferred: EC-1/Blind-3 (Flash restriction applied to all Gemini models via `is_gemini_image_model` — valid future concern when non-Flash variants are added, not a current bug); EC-2 (extreme ratios like 1:8 now silently map to 9:16 — pre-existing limitation, the fix is strictly better than before since a valid API value is returned instead of an invalid one); Blind-2 (dead `21:9` entry in dimension table — harmless). Dismissed: Blind-1 (hardcoded known-valid set in test is the correct behavioural approach). Standards: commit format is partial (WIP commit uses slug prefix; must be a ticket-prefixed squash commit at MR time per git-workflow guide).",
+  "confidence": "low",
+  "risk_flags": [],
+  "business_review": [],
+  "standards_review": [
+    {
+      "standard": "git-workflow commit format",
+      "status": "partial",
+      "notes": "WIP commit uses slug prefix 'fix-gemini-flash-aspect-ratio:' rather than 'EPMCDME-####:'. Project convention requires ticket-prefixed squash commit at MR time — deferred to MR creation."
+    },
+    {
+      "standard": "code-quality",
+      "status": "pass",
+      "notes": "No blocking violations in changed files."
+    },
+    {
+      "standard": "security",
+      "status": "pass",
+      "notes": "No auth, secrets, or injection concerns in this change."
+    }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "major",
+      "triage": "patch",
+      "problem": "No assertion that all entries in `_GEMINI_FLASH_SUPPORTED_ASPECT_RATIOS` exist as keys in `_GEMINI_IMAGE_DIMENSIONS`. Lines 184 and 228 blindly index the dict using whatever `find_closest_gemini_aspect_ratio` returns.",
+      "impact": "A future edit that renames or removes any of the five Flash-supported keys in `_GEMINI_IMAGE_DIMENSIONS` causes a runtime `KeyError` during image generation — only triggered when that ratio is selected, with no early-warning at import or startup time.",
+      "recommendation": "Add a module-level assertion immediately after both constants are defined:\n`assert all(r in _GEMINI_IMAGE_DIMENSIONS for r in _GEMINI_FLASH_SUPPORTED_ASPECT_RATIOS), 'Flash aspect ratios must all have entries in _GEMINI_IMAGE_DIMENSIONS'`"
+    }
+  ]
+}
