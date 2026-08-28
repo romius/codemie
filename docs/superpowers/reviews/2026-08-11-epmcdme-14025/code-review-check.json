@@ -1,0 +1,35 @@
+{
+  "decision": "approve",
+  "confidence": "high",
+  "rationale": "CR-001 (critical) fixed: replaced async_pre_call_hook with async_pre_call_deployment_hook so the hook fires after litellm_params merge (router.py:2433-2439), making store=False from server-side model config visible and actionable. CR-002 (major) fixed: added guard 'if 0 < len(filtered) < len(input_items)' to prevent stripping input to empty list. Code refactored with early returns and comprehensive docstring per reviewer suggestions. All 16 tests pass. CR-003 deferred: id-only reasoning items not present in primary use case (Codex CLI strips rs_* ids before sending).",
+  "finding_status": [
+    {
+      "id": "CR-001",
+      "status": "resolved",
+      "notes": "Fixed by switching from async_pre_call_hook to async_pre_call_deployment_hook. The deployment hook fires inside litellm.completion (utils.py:1811) after the router merges {**litellm_params, **kwargs} (router.py:2433-2439), so store=False from a model entry's litellm_params is now visible in kwargs when the hook runs."
+    },
+    {
+      "id": "CR-002",
+      "status": "resolved",
+      "notes": "Fixed by adding guard: 'if 0 < len(filtered) < len(input_items)'. Only replaces kwargs['input'] if the filtered list is non-empty and shorter than the original. If all items would be stripped, the input is left unchanged, surfacing the original Azure error."
+    },
+    {
+      "id": "CR-003",
+      "status": "deferred",
+      "notes": "Deferred per product decision. Codex CLI sends only encrypted_content (it strips rs_* ids internally), so id-only reasoning items do not appear in the primary use case. Broadening the filter to strip all reasoning items is a follow-up when/if other clients surface this scenario."
+    }
+  ],
+  "business_review": [
+    {"criterion": "Codex CLI multi-turn requests no longer fail with 400 / rs_* not found", "status": "pass"},
+    {"criterion": "Reasoning items with encrypted_content stripped from input when store=False", "status": "pass"},
+    {"criterion": "Input not set to empty list when all items are reasoning items", "status": "pass"},
+    {"criterion": "Two consecutive Codex CLI turns succeed end-to-end", "status": "pass"},
+    {"criterion": "Non-Codex LiteLLM routing unaffected (hook only acts when store=False and reasoning items present)", "status": "pass"}
+  ],
+  "standards_review": [
+    {"standard": "code-quality", "status": "pass", "notes": "Type annotations consistent with surrounding file style. Guard condition on line 74 correctly handles edge cases."},
+    {"standard": "security", "status": "pass", "notes": "No secrets, no auth bypass, no new injection surface."},
+    {"standard": "commit-format", "status": "pass"}
+  ],
+  "risk_flags": []
+}

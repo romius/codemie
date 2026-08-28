@@ -1,0 +1,249 @@
+diff --git a/src/codemie/enterprise/litellm/litellm_custom_callbacks.py b/src/codemie/enterprise/litellm/litellm_custom_callbacks.py
+index b38be8a8e..0b9dafd8a 100644
+--- a/src/codemie/enterprise/litellm/litellm_custom_callbacks.py
++++ b/src/codemie/enterprise/litellm/litellm_custom_callbacks.py
+@@ -12,18 +12,27 @@
+ # See the License for the specific language governing permissions and
+ # limitations under the License.
+ 
+-"""Custom LiteLLM proxy callback: fix streaming cost model name.
+-
+-The proxy's SSE streaming cost injection computes cost from the client-facing alias
+-(``request_data["model"]``, e.g. ``claude-sonnet-5``) instead of the router-resolved
+-deployment (e.g. ``bedrock/us.anthropic.claude-sonnet-5``). For Bedrock models this hits the
+-Anthropic-direct price table and diverges from the dashboard cost (which is computed from the
+-resolved model via ``logging_obj``).
+-
+-This callback runs ``async_post_call_streaming_iterator_hook`` *before* the proxy's cost
+-injection and rewrites ``request_data["model"]`` to the resolved deployment so both paths use
+-the same (correct) pricing. Spend/dashboard logging keys off ``logging_obj``, not
+-``request_data["model"]``, so the change is scoped to the streaming cost calculation.
++"""Custom LiteLLM proxy callbacks.
++
++Fixes bundled here:
++
++1. **Bedrock streaming cost model fix** — ``async_post_call_streaming_iterator_hook``
++   The proxy's SSE streaming cost injection computes cost from the client-facing alias
++   (``request_data["model"]``, e.g. ``claude-sonnet-5``) instead of the router-resolved
++   deployment (e.g. ``bedrock/us.anthropic.claude-sonnet-5``). For Bedrock models this hits the
++   Anthropic-direct price table and diverges from the dashboard cost (which is computed from the
++   resolved model via ``logging_obj``).
++   Rewrites ``request_data["model"]`` to the resolved deployment so both paths use the same
++   (correct) pricing.
++
++2. **Responses API store=False reasoning-item strip** — ``async_pre_call_hook``
++   When a model entry has ``litellm_params.store: false``, LiteLLM injects ``store=False``
++   into every outgoing request.  On turn 2+ the Codex CLI includes reasoning items
++   (``type=reasoning``, ``encrypted_content``) that reference server-side state from turn 1.
++   Azure rejects these with 400 because the items were never persisted (``store=False`` on
++   turn 1 prevented storage).  This hook strips such reasoning items from the input before
++   the request reaches Azure, making the turn stateless and consistent with the
++   ``store=False`` semantics.
+ """
+ 
+ from typing import Any, AsyncGenerator, Optional
+@@ -33,7 +42,38 @@ from litellm.proxy._types import UserAPIKeyAuth
+ 
+ 
+ class BedrockCostModelFixLogger(CustomLogger):
+-    """Point streaming cost injection at the router-resolved deployment model."""
++    """Proxy callback: Bedrock cost fix + Responses API store=False guard."""
++
++    # ------------------------------------------------------------------ #
++    # pre-call: strip reasoning items when store=False                    #
++    # ------------------------------------------------------------------ #
++
++    async def async_pre_call_hook(
++        self,
++        user_api_key_dict: UserAPIKeyAuth,
++        cache: Any,
++        data: dict,
++        call_type: str,
++    ) -> dict:
++        if data.get("store") is False:
++            input_items = data.get("input")
++            if isinstance(input_items, list):
++                filtered = [
++                    item
++                    for item in input_items
++                    if not (
++                        isinstance(item, dict)
++                        and item.get("type") == "reasoning"
++                        and item.get("encrypted_content")
++                    )
++                ]
++                if len(filtered) < len(input_items):
++                    data["input"] = filtered
++        return data
++
++    # ------------------------------------------------------------------ #
++    # post-call streaming: fix Bedrock cost model name                    #
++    # ------------------------------------------------------------------ #
+ 
+     @staticmethod
+     def _resolved_deployment(request_data: dict) -> Optional[str]:
+diff --git a/tests/enterprise/litellm/test_litellm_custom_callbacks.py b/tests/enterprise/litellm/test_litellm_custom_callbacks.py
+new file mode 100644
+index 000000000..351ffb38b
+--- /dev/null
++++ b/tests/enterprise/litellm/test_litellm_custom_callbacks.py
+@@ -0,0 +1,159 @@
++# Copyright 2026 EPAM Systems, Inc. ("EPAM")
++#
++# Licensed under the Apache License, Version 2.0 (the "License");
++# you may not use this file except in compliance with the License.
++# You may obtain a copy of the License at
++#
++#     http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing, software
++# distributed under the License is distributed on an "AS IS" BASIS,
++# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++# See the License for the specific language governing permissions and
++# limitations under the License.
++
++"""Tests for BedrockCostModelFixLogger (litellm_custom_callbacks)."""
++
++import pytest
++from unittest.mock import MagicMock
++
++
++def _make_reasoning_item(encrypted_content="ZmFrZQ==", rs_id="rs_abc123"):
++    return {"type": "reasoning", "id": rs_id, "encrypted_content": encrypted_content}
++
++
++def _make_user_item(content="follow up"):
++    return {"role": "user", "content": content}
++
++
++@pytest.fixture()
++def handler():
++    from codemie.enterprise.litellm.litellm_custom_callbacks import BedrockCostModelFixLogger
++
++    return BedrockCostModelFixLogger()
++
++
++@pytest.fixture()
++def auth():
++    return MagicMock()
++
++
++@pytest.fixture()
++def cache():
++    return MagicMock()
++
++
++class TestAsyncPreCallHookStoreFalse:
++    """async_pre_call_hook strips reasoning items when store=False."""
++
++    @pytest.mark.asyncio
++    async def test_strips_reasoning_items_when_store_false(self, handler, auth, cache):
++        data = {
++            "store": False,
++            "input": [_make_reasoning_item(), _make_user_item()],
++        }
++        result = await handler.async_pre_call_hook(auth, cache, data, "responses")
++
++        assert result["input"] == [_make_user_item()]
++
++    @pytest.mark.asyncio
++    async def test_strips_multiple_reasoning_items(self, handler, auth, cache):
++        data = {
++            "store": False,
++            "input": [
++                _make_reasoning_item(rs_id="rs_1"),
++                _make_user_item("first"),
++                _make_reasoning_item(rs_id="rs_2"),
++                _make_user_item("second"),
++            ],
++        }
++        result = await handler.async_pre_call_hook(auth, cache, data, "responses")
++
++        assert result["input"] == [_make_user_item("first"), _make_user_item("second")]
++
++    @pytest.mark.asyncio
++    async def test_preserves_reasoning_items_without_encrypted_content(self, handler, auth, cache):
++        """Items typed as reasoning but lacking encrypted_content are not stripped."""
++        bare_reasoning = {"type": "reasoning", "id": "rs_bare"}
++        data = {
++            "store": False,
++            "input": [bare_reasoning, _make_user_item()],
++        }
++        result = await handler.async_pre_call_hook(auth, cache, data, "responses")
++
++        assert bare_reasoning in result["input"]
++
++    @pytest.mark.asyncio
++    async def test_noop_when_store_true(self, handler, auth, cache):
++        original_input = [_make_reasoning_item(), _make_user_item()]
++        data = {"store": True, "input": list(original_input)}
++        result = await handler.async_pre_call_hook(auth, cache, data, "responses")
++
++        assert result["input"] == original_input
++
++    @pytest.mark.asyncio
++    async def test_noop_when_store_absent(self, handler, auth, cache):
++        original_input = [_make_reasoning_item(), _make_user_item()]
++        data = {"input": list(original_input)}
++        result = await handler.async_pre_call_hook(auth, cache, data, "responses")
++
++        assert result["input"] == original_input
++
++    @pytest.mark.asyncio
++    async def test_noop_when_input_absent(self, handler, auth, cache):
++        data = {"store": False}
++        result = await handler.async_pre_call_hook(auth, cache, data, "responses")
++
++        assert "input" not in result
++
++    @pytest.mark.asyncio
++    async def test_noop_when_input_empty(self, handler, auth, cache):
++        data = {"store": False, "input": []}
++        result = await handler.async_pre_call_hook(auth, cache, data, "responses")
++
++        assert result["input"] == []
++
++    @pytest.mark.asyncio
++    async def test_noop_when_no_reasoning_items_present(self, handler, auth, cache):
++        user_items = [_make_user_item("hello"), _make_user_item("world")]
++        data = {"store": False, "input": list(user_items)}
++        result = await handler.async_pre_call_hook(auth, cache, data, "responses")
++
++        assert result["input"] == user_items
++
++    @pytest.mark.asyncio
++    async def test_call_type_completion_also_strips(self, handler, auth, cache):
++        """Hook is call-type-agnostic: stripping applies regardless of call_type."""
++        data = {
++            "store": False,
++            "input": [_make_reasoning_item(), _make_user_item()],
++        }
++        result = await handler.async_pre_call_hook(auth, cache, data, "completion")
++
++        assert result["input"] == [_make_user_item()]
++
++
++class TestResolvedDeployment:
++    """_resolved_deployment extracts the router-resolved model from metadata."""
++
++    def test_reads_from_litellm_metadata(self, handler):
++        request_data = {"litellm_metadata": {"deployment": "bedrock/us.anthropic.claude-sonnet-5"}}
++        assert handler._resolved_deployment(request_data) == "bedrock/us.anthropic.claude-sonnet-5"
++
++    def test_reads_from_metadata_fallback(self, handler):
++        request_data = {"metadata": {"deployment": "bedrock/eu.anthropic.claude-sonnet-5"}}
++        assert handler._resolved_deployment(request_data) == "bedrock/eu.anthropic.claude-sonnet-5"
++
++    def test_prefers_litellm_metadata_over_metadata(self, handler):
++        request_data = {
++            "litellm_metadata": {"deployment": "bedrock/first"},
++            "metadata": {"deployment": "bedrock/second"},
++        }
++        assert handler._resolved_deployment(request_data) == "bedrock/first"
++
++    def test_returns_none_when_absent(self, handler):
++        assert handler._resolved_deployment({}) is None
++
++    def test_returns_none_when_deployment_empty_string(self, handler):
++        request_data = {"litellm_metadata": {"deployment": ""}}
++        assert handler._resolved_deployment(request_data) is None

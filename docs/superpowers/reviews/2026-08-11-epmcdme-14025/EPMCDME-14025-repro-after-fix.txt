@@ -1,0 +1,16 @@
+EPMCDME-14025 — Summary
+
+Root cause confirmed and fixed.
+
+What was wrong
+
+LiteLLM had store: false in litellm_params for the gpt-5.6-terra-2026-07-09 model. On turn 1, Azure returned a reasoning item with encrypted_content. On turn 2, the Codex CLI included that reasoning item in the request — LiteLLM injected store: false again — Azure rejected it with 400 invalid_request_error: Item not found / not persisted.
+
+Fix
+
+async_pre_call_deployment_hook in litellm_custom_callbacks.py now strips reasoning items with encrypted_content from the input when store: false is set, before the request reaches Azure. This makes the second (and subsequent) turns safe regardless of whether the model config has store: false.
+
+Verification
+
+- Reproduced the exact Azure 400 error using a local mock Responses API server + LiteLLM with store: false in the model config
+- After the fix was active in the container: two-turn codemie-codex session completed without error

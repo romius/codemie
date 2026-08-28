@@ -1,0 +1,59 @@
+{
+  "decision": "request-changes",
+  "confidence": "low",
+  "rationale": "One critical and two major findings block approval. CR-001 is the primary blocker: the async_pre_call_hook checks data.get('store') is False, but LiteLLM merges litellm_params (including store: false from the model entry) at route_request time — after async_pre_call_hook fires. The hook therefore never sees store=False from server-side model config, which is the documented primary trigger. The fix is only effective when the client explicitly sends store: false in the request body, leaving the original production scenario (model entry with litellm_params.store: false) unresolved. CR-002 is a secondary correctness issue: when all input items are reasoning items and get stripped, data['input'] becomes [], which Azure Responses API rejects with 400. CR-003 requires a product decision: id-only reasoning items ({type:reasoning, id:rs_xxx} without encrypted_content) are intentionally preserved by the filter, but it is unverified whether Azure also rejects these when store=False. No spec was supplied; confidence is low. One dismiss: TestResolvedDeployment 'stub' finding from blind lens was a false positive caused by abbreviated diff representation — actual tests have full assertions.",
+  "risk_flags": ["breaking-change"],
+  "business_review": [],
+  "standards_review": [
+    {
+      "standard": "commit-format",
+      "status": "na",
+      "notes": "No commits on this branch yet; format cannot be checked."
+    },
+    {
+      "standard": "code-quality",
+      "status": "partial",
+      "notes": "async_pre_call_hook uses bare dict annotations (data: dict, -> dict) rather than dict[str, Any]. Consistent with pre-existing style in the same file; not blocking."
+    },
+    {
+      "standard": "security",
+      "status": "pass",
+      "notes": "No secrets, no auth bypass, no injection surface introduced."
+    }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "title": "store from server-side litellm_params never reaches data at hook time",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/codemie/enterprise/litellm/litellm_custom_callbacks.py",
+      "line": 58,
+      "problem": "data.get('store') is False only when the client explicitly sends store: false in the request body. When store: false is in litellm_params for a model entry (the documented primary trigger), LiteLLM merges that value at route_request time (common_request_processing.py:1179) — after async_pre_call_hook fires (line 943). The hook therefore never sees store=False from server-side model config.",
+      "impact": "The fix is inoperative for the primary documented use case. Turn-2+ Codex CLI requests still reach Azure with store=False (injected by the router) AND the encrypted_content reasoning items, causing the same 400 errors the hook was meant to prevent.",
+      "recommendation": "Move the stripping logic to a hook that fires after deployment selection (e.g. async_pre_call_hook_with_deployment if available in the installed LiteLLM version), or read the model's litellm_params from the deployment object rather than from data. A simpler alternative: strip encrypted_content reasoning items unconditionally whenever they appear in input, since they are always server-state-dependent and harmless to remove on models where store=true (they are still forwarded when present and the model was configured to store). Verify this approach against Azure behavior first."
+    },
+    {
+      "id": "CR-002",
+      "title": "No guard when stripping reduces input to empty list",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/enterprise/litellm/litellm_custom_callbacks.py",
+      "line": 71,
+      "problem": "If every item in input is a reasoning item with encrypted_content, filtered becomes [] and data['input'] is set to []. The Azure Responses API rejects requests with an empty input array with a 400 error.",
+      "impact": "A session where the Codex CLI sends only reasoning items (e.g. session replay or multi-agent use) would change the error from '400: referenced item not found' to '400: input must not be empty', introducing a harder-to-diagnose failure mode caused by the hook itself.",
+      "recommendation": "Add a guard: only replace data['input'] if len(filtered) > 0. When filtered would be empty, leave data['input'] unchanged (surface the original 400) or log a warning and skip. Add a test case for the all-reasoning-items edge case."
+    },
+    {
+      "id": "CR-003",
+      "title": "Id-only reasoning items not stripped — Azure behavior unverified",
+      "severity": "major",
+      "triage": "decision_needed",
+      "file": "src/codemie/enterprise/litellm/litellm_custom_callbacks.py",
+      "line": 66,
+      "problem": "The filter requires both type=='reasoning' AND encrypted_content being truthy. Reasoning items that reference prior state only by ID — {'type':'reasoning','id':'rs_xxx'} without encrypted_content — pass through. It is unverified whether Azure also rejects these items with 400 when store=False.",
+      "impact": "If Azure rejects id-only reasoning items when store=False, the fix is incomplete: some turn-2+ requests will still fail after the hook runs, with non-obvious failure because other reasoning items were stripped but these were not.",
+      "recommendation": "Verify empirically: send an id-only reasoning item to Azure against a store=False model entry and check whether it returns 400. If it does, broaden the filter to strip all reasoning items regardless of encrypted_content: not (isinstance(item, dict) and item.get('type') == 'reasoning'). The test test_preserves_reasoning_items_without_encrypted_content should then be updated with a comment citing the Azure API behavior."
+    }
+  ]
+}
