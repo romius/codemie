@@ -169,6 +169,20 @@ class CreateCommentInput(BaseModel):
     text: str = Field(description="The text content of the comment to create")
 
 
+class RemoveWorkItemRelationInput(BaseModel):
+    work_item_id: int = Field(description="ID of the work item to remove a relation from")
+    relation_index: int = Field(
+        ge=0,
+        description="0-based index of the relation to remove. "
+        "Use get_work_item with expand=Relations to discover the correct index.",
+    )
+
+
+class MoveWorkItemInput(BaseModel):
+    work_item_id: int = Field(description="ID of the child work item to move to a new parent")
+    new_parent_id: int = Field(description="ID of the new parent work item")
+
+
 class GetWorkItemAttachmentContentInput(BaseModel):
     """Input model for retrieving the content of a work item attachment.
 

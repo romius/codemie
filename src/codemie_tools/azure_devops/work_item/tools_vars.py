@@ -271,6 +271,61 @@ CREATE_COMMENT_TOOL = ToolMetadata(
     config_class=AzureDevOpsWorkItemConfig,
 )
 
+REMOVE_WORK_ITEM_RELATION_TOOL = ToolMetadata(
+    name="remove_work_item_relation",
+    description="""
+        Remove a specific relation from an Azure DevOps work item by its index.
+
+        Use get_work_item with expand=Relations first to discover the correct relation index
+        from the work item's relations array (0-based).
+
+        Arguments:
+        - work_item_id (int): ID of the work item to remove a relation from
+        - relation_index (int): 0-based index of the relation in the work item's relations array
+        """,
+    label="Remove Work Item Relation",
+    user_description="""
+        Removes a specific relation entry from an Azure DevOps work item by its index position.
+        Use get_work_item with expand=Relations first to identify the correct relation index.
+        Before using it, you need to provide:
+        1. Azure DevOps organization URL
+        2. Project name
+        3. Personal Access Token with appropriate permissions
+        """.strip(),
+    config_class=AzureDevOpsWorkItemConfig,
+)
+
+MOVE_WORK_ITEM_TOOL = ToolMetadata(
+    name="move_work_item",
+    description="""
+        Move an Azure DevOps work item to a new parent by updating the hierarchy relation.
+
+        This tool handles the full reparenting flow atomically:
+        1. Fetches the child work item's current relations.
+        2. Removes the existing Parent (System.LinkTypes.Hierarchy-Reverse) relation if present.
+        3. Adds the new Parent relation pointing to new_parent_id.
+        4. Verifies the final hierarchy.
+
+        If the work item has no current parent, only step 3 is performed.
+        Prevents error TF201036 (cannot add a second Parent link).
+
+        Arguments:
+        - work_item_id (int): ID of the child work item to move
+        - new_parent_id (int): ID of the new parent work item
+        """,
+    label="Move Work Item",
+    user_description="""
+        Moves an Azure DevOps work item to a new parent by atomically removing the existing
+        parent relation and adding the new one. Works for any work item type that participates
+        in the parent-child hierarchy (User Story, Task, Feature, Epic, etc.).
+        Before using it, you need to provide:
+        1. Azure DevOps organization URL
+        2. Project name
+        3. Personal Access Token with appropriate permissions
+        """.strip(),
+    config_class=AzureDevOpsWorkItemConfig,
+)
+
 GET_WORK_ITEM_ATTACHMENT_CONTENT_TOOL = ToolMetadata(
     name="get_work_item_attachment_content",
     description="""

@@ -1,0 +1,72 @@
+{
+  "decision": "approve",
+  "rationale": "Both new tools follow the established ADO Work Item toolkit conventions exactly. RemoveWorkItemRelationTool is a minimal primitive — single JSON Patch remove op, wrapped in the standard try/except/ToolException pattern. MoveWorkItemTool correctly handles three scenarios (existing parent, no parent, None relations) via a conditional remove step batched with the add op in one update_work_item call. The endswith(f'/{new_parent_id}') verification check correctly avoids the substring false-positive (e.g. ID 100 matching .../workItems/1009). _HIERARCHY_REVERSE moved to module top as a proper constant. ToolException re-raised without wrapping to avoid double-wrapping the verification failure message. 12 new unit tests cover all code paths including the false-positive guard and verification failure. Toolkit count updated 9 → 11 with explicit name assertions. make ruff passes. Harness sanity-api: 186 passed, 4 skipped, 0 failed with -n 1 (previous -n 8 failures were rate-limiting artefacts, not code regressions). No findings.",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    {
+      "criterion": "move_work_item succeeds for a work item that already has a parent — no TF201036",
+      "status": "pass",
+      "notes": "Tool fetches current relations, records the Hierarchy-Reverse index, batches remove + add in one update_work_item call. TF201036 cannot occur because the old parent is removed in the same patch that adds the new one."
+    },
+    {
+      "criterion": "move_work_item succeeds for a work item with no current parent",
+      "status": "pass",
+      "notes": "Remove op is only appended when a Hierarchy-Reverse relation is found. No-parent case produces an add-only patch. Covered by test_move_work_item_no_existing_parent and test_move_work_item_none_relations."
+    },
+    {
+      "criterion": "remove_work_item_relation removes the relation at the given index",
+      "status": "pass",
+      "notes": "Single {'op': 'remove', 'path': f'/relations/{relation_index}'} patch sent to update_work_item. Index 0 explicitly tested in test_remove_work_item_relation_index_zero."
+    },
+    {
+      "criterion": "Reparenting is atomic — single API round-trip",
+      "status": "pass",
+      "notes": "Both remove and add ops batched into one update_work_item(document=[...]) call. Verified by mock assertion checking call_args in TestMoveWorkItemTool."
+    },
+    {
+      "criterion": "Post-move verification uses exact URL match, not substring",
+      "status": "pass",
+      "notes": "rel.url.endswith(f'/{new_parent_id}') prevents false-positive on substring matches. test_move_work_item_url_substring_false_positive verifies that URL .../workItems/1009 does NOT satisfy endswith('/100')."
+    },
+    {
+      "criterion": "All 11 tool names registered in the toolkit",
+      "status": "pass",
+      "notes": "test_toolkit.py asserts len == 11 and checks all 11 names by string, including the two new ones."
+    },
+    {
+      "criterion": "Error handling follows existing toolkit convention",
+      "status": "pass",
+      "notes": "Both tools wrap execute in try/except Exception, log with logger.error, raise ToolException. MoveWorkItemTool re-raises ToolException directly to avoid wrapping the verification failure message."
+    },
+    {
+      "criterion": "No changes to existing tools or API contracts",
+      "status": "pass",
+      "notes": "All changes are additive. No existing tool classes, routes, or response models modified."
+    }
+  ],
+  "standards_review": [
+    {
+      "standard": "Commit format (EPMCDME-####: Description)",
+      "status": "pass",
+      "notes": "Commit follows EPMCDME-13967: prefix with descriptive message, matching the documented convention."
+    },
+    {
+      "standard": "Code quality (Ruff)",
+      "status": "pass",
+      "notes": "make ruff passes cleanly; no lint or format violations."
+    },
+    {
+      "standard": "Testing patterns",
+      "status": "pass",
+      "notes": "12 new unit tests: 3 for RemoveWorkItemRelationTool, 9 for MoveWorkItemTool. All branches covered including error paths, edge cases (None relations, index 0), and the URL false-positive guard."
+    },
+    {
+      "standard": "Security",
+      "status": "pass",
+      "notes": "No new security surface. Token and organization URL sourced from AzureDevOpsWorkItemConfig, consistent with all other tools in the toolkit."
+    }
+  ],
+  "findings": [],
+  "finding_status": {}
+}

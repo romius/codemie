@@ -33,6 +33,8 @@ from codemie_tools.azure_devops.work_item.models import (
     GetWorkItemInput,
     LinkWorkItemsInput,
     GetRelationTypesInput,
+    RemoveWorkItemRelationInput,
+    MoveWorkItemInput,
     GetCommentsInput,
     CreateCommentInput,
     GetWorkItemAttachmentContentInput,
@@ -44,6 +46,8 @@ from codemie_tools.azure_devops.work_item.tools_vars import (
     GET_WORK_ITEM_TOOL,
     LINK_WORK_ITEMS_TOOL,
     GET_RELATION_TYPES_TOOL,
+    REMOVE_WORK_ITEM_RELATION_TOOL,
+    MOVE_WORK_ITEM_TOOL,
     GET_COMMENTS_TOOL,
     CREATE_COMMENT_TOOL,
     GET_WORK_ITEM_ATTACHMENT_CONTENT_TOOL,
@@ -52,6 +56,8 @@ from codemie_tools.base.codemie_tool import CodeMieTool, logger
 from codemie_tools.base.file_tool_mixin import FileToolMixin
 from codemie_tools.azure_devops.attachment_mixin import AzureDevOpsAttachmentMixin
 from codemie_tools.azure_devops.attachment_content_mixin import AttachmentContentMixin
+
+_HIERARCHY_REVERSE = "System.LinkTypes.Hierarchy-Reverse"
 
 # Ensure Azure DevOps cache directory is set
 if not os.environ.get("AZURE_DEVOPS_CACHE_DIR", None):
@@ -496,6 +502,71 @@ class GetRelationTypesTool(BaseAzureDevOpsWorkItemTool):
         except Exception as e:
             logger.error(f"Error getting relation types: {e}")
             raise ToolException(f"Error getting relation types: {str(e)}")
+
+
+class RemoveWorkItemRelationTool(BaseAzureDevOpsWorkItemTool):
+    """Tool to remove a specific relation from an Azure DevOps work item by its index."""
+
+    name: str = REMOVE_WORK_ITEM_RELATION_TOOL.name
+    description: str = REMOVE_WORK_ITEM_RELATION_TOOL.description
+    args_schema: Type[BaseModel] = RemoveWorkItemRelationInput
+
+    def execute(self, work_item_id: int, relation_index: int):
+        """Remove the relation at the given 0-based index from the work item."""
+        try:
+            self._client.update_work_item(
+                document=[{"op": "remove", "path": f"/relations/{relation_index}"}],
+                id=work_item_id,
+            )
+            return f"Relation at index {relation_index} removed from work item {work_item_id}"
+        except Exception as e:
+            logger.error(f"Error removing relation from work item {work_item_id}: {e}")
+            raise ToolException(f"Error removing work item relation: {str(e)}")
+
+
+class MoveWorkItemTool(BaseAzureDevOpsWorkItemTool):
+    """Tool to move an Azure DevOps work item to a new parent by updating the hierarchy relation."""
+
+    name: str = MOVE_WORK_ITEM_TOOL.name
+    description: str = MOVE_WORK_ITEM_TOOL.description
+    args_schema: Type[BaseModel] = MoveWorkItemInput
+
+    def execute(self, work_item_id: int, new_parent_id: int):
+        """Remove the existing parent relation (if any) and add the new parent relation atomically."""
+        try:
+            work_item = self._client.get_work_item(id=work_item_id, project=self.config.project, expand="Relations")
+
+            patch_ops = []
+            if work_item.relations:
+                for idx, rel in enumerate(work_item.relations):
+                    if rel.rel == _HIERARCHY_REVERSE:
+                        patch_ops.append({"op": "remove", "path": f"/relations/{idx}"})
+                        break
+
+            patch_ops.append(
+                {
+                    "op": "add",
+                    "path": "/relations/-",
+                    "value": {
+                        "rel": _HIERARCHY_REVERSE,
+                        "url": f"{self.config.organization_url}/_apis/wit/workItems/{new_parent_id}",
+                    },
+                }
+            )
+
+            updated = self._client.update_work_item(document=patch_ops, id=work_item_id, expand="Relations")
+            if updated.relations:
+                for rel in updated.relations:
+                    if rel.rel == _HIERARCHY_REVERSE and rel.url.endswith(f"/{new_parent_id}"):
+                        return f"Work item {work_item_id} successfully moved to parent {new_parent_id}"
+            raise ToolException(
+                f"Move completed but verification failed: parent {new_parent_id} not found in relations of work item {work_item_id}"
+            )
+        except ToolException:
+            raise
+        except Exception as e:
+            logger.error(f"Error moving work item {work_item_id} to parent {new_parent_id}: {e}")
+            raise ToolException(f"Error moving work item: {str(e)}")
 
 
 class GetCommentsTool(BaseAzureDevOpsWorkItemTool):

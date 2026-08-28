@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "task": "Add remove_work_item_relation and move_work_item tools to the ADO Work Item toolkit to enable reparenting work items without hitting TF201036.",
+  "generated": "2026-08-18T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 2, "label": "S" },
+    "requirements_clarity": { "score": 1, "label": "XS" },
+    "technical_risk":       { "score": 2, "label": "S" },
+    "file_change_estimate": { "score": 2, "label": "S" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 1, "label": "XS" }
+  },
+  "total": 9,
+  "size": "S",
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Two new tool classes (RemoveWorkItemRelationTool, MoveWorkItemTool), two input models, two ToolMetadata constants, and toolkit registration. All within the existing ADO Work Item toolkit boundary — no cross-component changes."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "Six files changed: models.py, tools_vars.py, tools.py, toolkit.py (source), test_tools.py, test_toolkit.py (tests). 365 lines added total."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "The atomic patch pattern (remove + add in one update_work_item call) is consistent with the existing link_work_items implementation. The endswith URL check prevents the subtle substring false-positive. ADO errors propagate as ToolException strings, matching the existing error handling convention."
+    }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

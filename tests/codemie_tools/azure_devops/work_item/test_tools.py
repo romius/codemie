@@ -25,8 +25,11 @@ from codemie_tools.azure_devops.work_item.tools import (
     UpdateWorkItemTool,
     GetWorkItemTool,
     GetRelationTypesTool,
+    RemoveWorkItemRelationTool,
+    MoveWorkItemTool,
     CreateCommentTool,
     GetWorkItemAttachmentContentTool,
+    _HIERARCHY_REVERSE,
 )
 
 
@@ -439,3 +442,221 @@ class TestGetWorkItemAttachmentContentTool:
             "note",
         }
         assert result["attachment_note"] is None
+
+
+def _make_hierarchy_relation(rel_type: str, url: str):
+    """Build a mock work item relation object (not as_dict-based)."""
+    rel = Mock()
+    rel.rel = rel_type
+    rel.url = url
+    return rel
+
+
+class TestRemoveWorkItemRelationTool:
+    @pytest.fixture
+    def tool(self, mock_config, mock_client):
+        t = RemoveWorkItemRelationTool(config=mock_config)
+        t._client = mock_client
+        return t
+
+    def test_remove_relation_success(self, tool, mock_client):
+        result = tool.execute(work_item_id=100, relation_index=2)
+
+        assert "100" in result
+        assert "2" in result
+        mock_client.update_work_item.assert_called_once_with(
+            document=[{"op": "remove", "path": "/relations/2"}],
+            id=100,
+        )
+
+    def test_remove_relation_index_zero(self, tool, mock_client):
+        result = tool.execute(work_item_id=42, relation_index=0)
+
+        mock_client.update_work_item.assert_called_once_with(
+            document=[{"op": "remove", "path": "/relations/0"}],
+            id=42,
+        )
+        assert "0" in result
+
+    def test_remove_relation_api_error_raises_tool_exception(self, tool, mock_client):
+        from langchain_core.tools import ToolException
+
+        mock_client.update_work_item.side_effect = Exception("ADO API error")
+
+        with pytest.raises(ToolException, match="Error removing work item relation"):
+            tool.execute(work_item_id=100, relation_index=1)
+
+
+class TestMoveWorkItemTool:
+    ORG_URL = "https://dev.azure.com/org"
+
+    @pytest.fixture
+    def tool(self, mock_client):
+        config = AzureDevOpsWorkItemConfig(organization_url=self.ORG_URL, project="test-project", token="fake-token")
+        t = MoveWorkItemTool(config=config)
+        t._client = mock_client
+        return t
+
+    def _work_item_with_relations(self, relations):
+        wi = Mock()
+        wi.relations = relations
+        return wi
+
+    def test_move_with_existing_parent_removes_old_and_adds_new(self, tool, mock_client):
+        """Patch document must include remove op for old parent then add op for new parent."""
+        old_parent_rel = _make_hierarchy_relation(
+            _HIERARCHY_REVERSE,
+            f"{self.ORG_URL}/_apis/wit/workItems/1005",
+        )
+        initial_wi = self._work_item_with_relations([old_parent_rel])
+
+        new_parent_rel = _make_hierarchy_relation(
+            _HIERARCHY_REVERSE,
+            f"{self.ORG_URL}/_apis/wit/workItems/1009",
+        )
+        updated_wi = self._work_item_with_relations([new_parent_rel])
+
+        mock_client.get_work_item.return_value = initial_wi
+        mock_client.update_work_item.return_value = updated_wi
+
+        result = tool.execute(work_item_id=1139, new_parent_id=1009)
+
+        assert "1139" in result
+        assert "1009" in result
+
+        patch_doc = mock_client.update_work_item.call_args.kwargs["document"]
+        assert patch_doc[0] == {"op": "remove", "path": "/relations/0"}
+        assert patch_doc[1]["op"] == "add"
+        assert patch_doc[1]["value"]["rel"] == _HIERARCHY_REVERSE
+        assert "1009" in patch_doc[1]["value"]["url"]
+
+    def test_move_without_existing_parent_only_adds_new(self, tool, mock_client):
+        """When work item has no parent, patch document must contain only the add op."""
+        unrelated_rel = _make_hierarchy_relation("System.LinkTypes.Related", f"{self.ORG_URL}/_apis/wit/workItems/999")
+        initial_wi = self._work_item_with_relations([unrelated_rel])
+
+        new_parent_rel = _make_hierarchy_relation(
+            _HIERARCHY_REVERSE,
+            f"{self.ORG_URL}/_apis/wit/workItems/1009",
+        )
+        updated_wi = self._work_item_with_relations([new_parent_rel])
+
+        mock_client.get_work_item.return_value = initial_wi
+        mock_client.update_work_item.return_value = updated_wi
+
+        tool.execute(work_item_id=1139, new_parent_id=1009)
+
+        patch_doc = mock_client.update_work_item.call_args.kwargs["document"]
+        assert len(patch_doc) == 1
+        assert patch_doc[0]["op"] == "add"
+
+    def test_move_work_item_with_no_relations_at_all(self, tool, mock_client):
+        """work_item.relations == None — no remove op, only add."""
+        initial_wi = self._work_item_with_relations(None)
+
+        new_parent_rel = _make_hierarchy_relation(
+            _HIERARCHY_REVERSE,
+            f"{self.ORG_URL}/_apis/wit/workItems/1009",
+        )
+        updated_wi = self._work_item_with_relations([new_parent_rel])
+
+        mock_client.get_work_item.return_value = initial_wi
+        mock_client.update_work_item.return_value = updated_wi
+
+        tool.execute(work_item_id=1139, new_parent_id=1009)
+
+        patch_doc = mock_client.update_work_item.call_args.kwargs["document"]
+        assert len(patch_doc) == 1
+        assert patch_doc[0]["op"] == "add"
+
+    def test_move_parent_at_non_zero_index(self, tool, mock_client):
+        """Parent relation at index 1 must produce remove path /relations/1."""
+        attachment_rel = _make_hierarchy_relation("AttachedFile", "https://example.com/att")
+        parent_rel = _make_hierarchy_relation(
+            _HIERARCHY_REVERSE,
+            f"{self.ORG_URL}/_apis/wit/workItems/1005",
+        )
+        initial_wi = self._work_item_with_relations([attachment_rel, parent_rel])
+
+        new_parent_rel = _make_hierarchy_relation(
+            _HIERARCHY_REVERSE,
+            f"{self.ORG_URL}/_apis/wit/workItems/1009",
+        )
+        updated_wi = self._work_item_with_relations([attachment_rel, new_parent_rel])
+
+        mock_client.get_work_item.return_value = initial_wi
+        mock_client.update_work_item.return_value = updated_wi
+
+        tool.execute(work_item_id=1139, new_parent_id=1009)
+
+        patch_doc = mock_client.update_work_item.call_args.kwargs["document"]
+        assert patch_doc[0] == {"op": "remove", "path": "/relations/1"}
+
+    def test_move_url_uses_endswith_not_substring_match(self, tool, mock_client):
+        """Verification must not confuse parent 100 with parent 1009 (substring false positive)."""
+        initial_wi = self._work_item_with_relations(None)
+
+        # Verification: rel points to 1009, new_parent_id is 100 — should NOT match
+        wrong_rel = _make_hierarchy_relation(
+            _HIERARCHY_REVERSE,
+            f"{self.ORG_URL}/_apis/wit/workItems/1009",
+        )
+        updated_wi = self._work_item_with_relations([wrong_rel])
+
+        mock_client.get_work_item.return_value = initial_wi
+        mock_client.update_work_item.return_value = updated_wi
+
+        from langchain_core.tools import ToolException
+
+        with pytest.raises(ToolException, match="verification failed"):
+            tool.execute(work_item_id=1139, new_parent_id=100)
+
+    def test_move_verification_failure_raises_tool_exception(self, tool, mock_client):
+        """If updated relations don't contain the new parent, ToolException is raised."""
+        initial_wi = self._work_item_with_relations(None)
+        # Verification returns item with no relations at all
+        updated_wi = self._work_item_with_relations(None)
+
+        mock_client.get_work_item.return_value = initial_wi
+        mock_client.update_work_item.return_value = updated_wi
+
+        from langchain_core.tools import ToolException
+
+        with pytest.raises(ToolException, match="verification failed"):
+            tool.execute(work_item_id=1139, new_parent_id=1009)
+
+    def test_move_get_work_item_api_error_raises_tool_exception(self, tool, mock_client):
+        mock_client.get_work_item.side_effect = Exception("Connection refused")
+
+        from langchain_core.tools import ToolException
+
+        with pytest.raises(ToolException, match="Error moving work item"):
+            tool.execute(work_item_id=1139, new_parent_id=1009)
+
+    def test_move_update_work_item_api_error_raises_tool_exception(self, tool, mock_client):
+        initial_wi = self._work_item_with_relations(None)
+        mock_client.get_work_item.return_value = initial_wi
+        mock_client.update_work_item.side_effect = Exception("TF201036: cannot add Child link")
+
+        from langchain_core.tools import ToolException
+
+        with pytest.raises(ToolException, match="Error moving work item"):
+            tool.execute(work_item_id=1139, new_parent_id=1009)
+
+    def test_move_new_parent_url_is_correct(self, tool, mock_client):
+        """The new parent relation URL must point to the correct organization URL and ID."""
+        initial_wi = self._work_item_with_relations(None)
+        new_parent_rel = _make_hierarchy_relation(
+            _HIERARCHY_REVERSE,
+            f"{self.ORG_URL}/_apis/wit/workItems/1009",
+        )
+        updated_wi = self._work_item_with_relations([new_parent_rel])
+        mock_client.get_work_item.return_value = initial_wi
+        mock_client.update_work_item.return_value = updated_wi
+
+        tool.execute(work_item_id=1139, new_parent_id=1009)
+
+        patch_doc = mock_client.update_work_item.call_args.kwargs["document"]
+        add_op = patch_doc[-1]
+        assert add_op["value"]["url"] == f"{self.ORG_URL}/_apis/wit/workItems/1009"
+        assert add_op["value"]["rel"] == _HIERARCHY_REVERSE
