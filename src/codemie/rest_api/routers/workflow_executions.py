@@ -766,12 +766,15 @@ def delete_conversation_by_id(
         raise_access_denied("view")
 
     if execution.conversation_id:
-        raise ExtendedHTTPException(
-            code=status.HTTP_400_BAD_REQUEST,
-            message="Cannot delete workflow execution",
-            details="This workflow execution is part of a conversation and cannot be deleted. ",
-            help="",
-        )
+        from codemie.rest_api.models.conversation import Conversation
+
+        if Conversation.exists(execution.conversation_id):
+            raise ExtendedHTTPException(
+                code=status.HTTP_400_BAD_REQUEST,
+                message="Cannot delete workflow execution",
+                details="This workflow execution is part of a conversation and cannot be deleted. ",
+                help="",
+            )
 
     WorkflowService().delete_workflow_execution(execution.id)
 

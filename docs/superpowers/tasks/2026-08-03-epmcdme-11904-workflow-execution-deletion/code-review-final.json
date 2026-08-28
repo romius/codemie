@@ -1,0 +1,68 @@
+{
+  "decision": "request-changes",
+  "rationale": "All spec criteria are satisfied and all three review lenses ran successfully. One major finding: delete_all_executions_by_workflow_id now issues N+1 Conversation.exists() queries — one new DB roundtrip per execution with a conversation_id — rather than a single batched IN query. For workflows with many executions this can saturate the connection pool. The fix is a small targeted change. No security, breaking-change, or public-API concerns found. Commit format and code quality gates pass.",
+  "findings": [
+    {
+      "id": "CR-001",
+      "title": "N+1 DB queries in delete_all_executions_by_workflow_id",
+      "severity": "major",
+      "triage": "patch",
+      "problem": "delete_all_executions_by_workflow_id now calls Conversation.exists() once per execution that has a non-null conversation_id. Each call opens a new SQLAlchemy Session and issues a separate SELECT against the conversations table.",
+      "impact": "The DELETE /workflows/{workflow_id}/executions endpoint and the workflow deletion path call this method without a user filter. A workflow with hundreds of executions (common for automated or scheduled workflows) will fire hundreds of individual Conversation.exists() queries, each acquiring a DB connection. Under load this can saturate the connection pool and cause latency spikes.",
+      "recommendation": "Batch the existence check: collect all non-null conversation_ids from the fetched executions, issue a single SELECT id FROM conversations WHERE id IN (...), build a set of existing ids, then filter the deletion loop from that set. This reduces N+1 to 2 queries regardless of execution count.",
+      "file": "src/codemie/service/workflow_service.py",
+      "line": 55
+    }
+  ],
+  "business_review": [
+    {
+      "criterion": "R1 — Conversation.exists() PK-only select",
+      "status": "pass",
+      "notes": "PK-only SELECT via select(cls.id).where(cls.id == id_). Does not call materialize_workflow_conversation. Uses Session(cls.get_engine()) pattern correctly."
+    },
+    {
+      "criterion": "R2 — Router guard update (workflow_executions.py)",
+      "status": "pass",
+      "notes": "Raises HTTP 400 only when Conversation.exists() is True. Deferred import present. Error message and HTTP status unchanged."
+    },
+    {
+      "criterion": "R3 — Service bulk-delete update (workflow_service.py)",
+      "status": "pass",
+      "notes": "Condition is `if execution.conversation_id is None or not Conversation.exists(...)`. Import inside method body. Orphaned executions now included in deletion."
+    },
+    {
+      "criterion": "R4 — Workflow executor auto-delete update (workflow.py)",
+      "status": "pass",
+      "notes": "Skip only when exists() is True; INFO log + proceed when False. Deferred import present. All three branches handled correctly."
+    },
+    {
+      "criterion": "R5 — Tests (all 8 cases)",
+      "status": "pass",
+      "notes": "All 8 named test cases present with correct patch targets and assertions."
+    },
+    {
+      "criterion": "R6 — Out-of-scope items NOT implemented",
+      "status": "pass",
+      "notes": "No FK constraint changes, no ES cleanup, no admin bulk-migration in diff."
+    }
+  ],
+  "standards_review": [
+    {
+      "standard": "Commit format",
+      "status": "pass",
+      "notes": "All 5 commits use EPMCDME-11904: Description format matching the documented EPMCDME-####: Description convention."
+    },
+    {
+      "standard": "Code quality (Ruff/types)",
+      "status": "pass",
+      "notes": "exists() is type-annotated (id_: str) -> bool. Linter formatting commit present. No new untyped public functions."
+    },
+    {
+      "standard": "Security",
+      "status": "pass",
+      "notes": "Parameterized SQLModel query in exists(). conversation_id is an internal UUID from the DB record, not user-controlled input. No secrets logged. Auth guards unchanged."
+    }
+  ],
+  "risk_flags": [],
+  "confidence": "medium"
+}

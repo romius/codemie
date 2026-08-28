@@ -546,6 +546,7 @@ async def test_request_workflow_execution_output_changes_error(
     assert response.json()["error"]["message"] == "Workflow Output Change Request Error"
 
 
+@patch("codemie.rest_api.models.conversation.Conversation.exists", return_value=True)
 @patch("codemie.rest_api.routers.workflow_executions.Ability")
 @patch("codemie.rest_api.security.authentication.authenticate")
 @patch("codemie.rest_api.routers.workflow_executions.WorkflowService")
@@ -554,9 +555,10 @@ async def test_delete_workflow_execution_with_chat_id_fails(
     mock_workflow_service,
     mock_authentication,
     mock_ability,
+    mock_exists,
     request_headers,
 ):
-    """Test that deleting a workflow execution with conversation_id is blocked"""
+    """Test that deleting a workflow execution is blocked when conversation still exists"""
     mock_authentication.return_value = USER
     mock_ability.return_value.can.return_value = True
 
@@ -575,6 +577,40 @@ async def test_delete_workflow_execution_with_chat_id_fails(
     assert response.status_code == 400
     assert response.json()["error"]["message"] == "Cannot delete workflow execution"
     assert "conversation" in response.json()["error"]["details"].lower()
+
+
+@patch("codemie.rest_api.models.conversation.Conversation.exists", return_value=False)
+@patch("codemie.rest_api.routers.workflow_executions.Ability")
+@patch("codemie.rest_api.security.authentication.authenticate")
+@patch("codemie.rest_api.routers.workflow_executions.WorkflowService")
+@pytest.mark.asyncio
+async def test_delete_workflow_execution_orphaned_chat_succeeds(
+    mock_workflow_service,
+    mock_authentication,
+    mock_ability,
+    mock_exists,
+    request_headers,
+):
+    """Test that deleting a workflow execution succeeds when conversation no longer exists"""
+    mock_authentication.return_value = USER
+    mock_ability.return_value.can.return_value = True
+
+    execution_with_deleted_chat = WorkflowExecution(
+        workflow_id=WORKFLOW_ID, execution_id=EXECUTION_ID, conversation_id="deleted-chat-id"
+    )
+    mock_workflow_service.return_value.find_workflow_execution_by_id.return_value = execution_with_deleted_chat
+    mock_workflow_service.return_value.delete_workflow_execution.return_value = None
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+        response = await ac.delete(
+            f"{WORKFLOW_EXECUTIONS_URL}/{EXECUTION_ID}",
+            headers=request_headers,
+        )
+
+    assert response.status_code == 200
+    assert response.json()["message"] == "Execution removed"
+    mock_workflow_service.return_value.delete_workflow_execution.assert_called_once()
 
 
 @patch("codemie.rest_api.routers.workflow_executions.Ability")

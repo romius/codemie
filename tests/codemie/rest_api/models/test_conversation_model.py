@@ -206,3 +206,44 @@ def test_conversation_search_by_name_and_user_empty_results(mock_get_session):
     )
 
     assert len(results) == 0
+
+
+def test_conversation_exists_returns_true_when_found():
+    mock_session = MagicMock()
+    mock_session.__enter__ = MagicMock(return_value=mock_session)
+    mock_session.__exit__ = MagicMock(return_value=False)
+    mock_session.exec.return_value.first.return_value = "conv-id"
+
+    with patch("codemie.rest_api.models.conversation.Session", return_value=mock_session):
+        result = Conversation.exists("existing-id")
+
+    assert result is True
+
+
+def test_conversation_exists_returns_false_when_not_found():
+    mock_session = MagicMock()
+    mock_session.__enter__ = MagicMock(return_value=mock_session)
+    mock_session.__exit__ = MagicMock(return_value=False)
+    mock_session.exec.return_value.first.return_value = None
+
+    with patch("codemie.rest_api.models.conversation.Session", return_value=mock_session):
+        result = Conversation.exists("nonexistent-id")
+
+    assert result is False
+
+
+def test_get_existing_ids_returns_matching_set():
+    mock_session = MagicMock()
+    mock_session.__enter__ = MagicMock(return_value=mock_session)
+    mock_session.__exit__ = MagicMock(return_value=False)
+    mock_session.exec.return_value.all.return_value = ["id-1", "id-2"]
+
+    with patch("codemie.rest_api.models.conversation.Session", return_value=mock_session):
+        result = Conversation.get_existing_ids(["id-1", "id-2", "id-3"])
+
+    assert result == {"id-1", "id-2"}
+
+
+def test_get_existing_ids_returns_empty_set_for_empty_input():
+    result = Conversation.get_existing_ids([])
+    assert result == set()

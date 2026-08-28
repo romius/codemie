@@ -1153,13 +1153,20 @@ class WorkflowExecutor:
                 )
                 return
 
-            # Skip if execution is part of a conversation (would leave dangling refs)
+            # Skip auto-delete only if the linked conversation still exists
             if execution.conversation_id:
-                logger.warning(
-                    f"Skipping auto-delete for execution {self.execution_id}: "
-                    f"linked to conversation {execution.conversation_id}"
+                from codemie.rest_api.models.conversation import Conversation
+
+                if Conversation.exists(execution.conversation_id):
+                    logger.warning(
+                        f"Skipping auto-delete for execution {self.execution_id}: "
+                        f"linked to conversation {execution.conversation_id}"
+                    )
+                    return
+                logger.info(
+                    f"Conversation {execution.conversation_id} no longer exists; "
+                    f"proceeding with auto-delete for execution {self.execution_id}"
                 )
-                return
 
             # Langfuse trace safety: By this point (finally block of _execute_workflow_stream),
             # all LangGraph callbacks have fired and any Langfuse trace is already formed

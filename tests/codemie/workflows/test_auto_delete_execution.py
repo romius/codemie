@@ -162,10 +162,11 @@ class TestAutoDeleteExecution:
 
         mock_delete.assert_not_called()
 
+    @patch('codemie.rest_api.models.conversation.Conversation.exists', return_value=True)
     @patch('codemie.workflows.workflow.WorkflowExecution.delete')
     @patch('codemie.workflows.workflow.WorkflowService.find_workflow_execution_by_id')
-    def test_skip_auto_delete_with_conversation_id(self, mock_find, mock_delete, executor):
-        """Auto-delete does NOT trigger when execution has a conversation_id."""
+    def test_skip_auto_delete_with_conversation_id(self, mock_find, mock_delete, mock_exists, executor):
+        """Auto-delete does NOT trigger when execution has a conversation_id that still exists."""
         execution = MagicMock()
         execution.id = "pk-id"
         execution.overall_status = WorkflowExecutionStatusEnum.SUCCEEDED
@@ -175,6 +176,21 @@ class TestAutoDeleteExecution:
         executor._auto_delete_execution()
 
         mock_delete.assert_not_called()
+
+    @patch('codemie.rest_api.models.conversation.Conversation.exists', return_value=False)
+    @patch('codemie.workflows.workflow.WorkflowExecution.delete')
+    @patch('codemie.workflows.workflow.WorkflowService.find_workflow_execution_by_id')
+    def test_auto_delete_proceeds_when_conversation_deleted(self, mock_find, mock_delete, mock_exists, executor):
+        """Auto-delete fires when execution has a conversation_id whose conversation is gone."""
+        execution = MagicMock()
+        execution.id = "pk-id"
+        execution.overall_status = WorkflowExecutionStatusEnum.SUCCEEDED
+        execution.conversation_id = "deleted-conv-789"
+        mock_find.return_value = execution
+
+        executor._auto_delete_execution()
+
+        mock_delete.assert_called_once_with("pk-id")
 
     @patch('codemie.workflows.workflow.WorkflowExecution.delete')
     @patch('codemie.workflows.workflow.WorkflowService.find_workflow_execution_by_id')

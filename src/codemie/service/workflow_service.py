@@ -501,10 +501,14 @@ class WorkflowService:
             raise e
 
     def delete_all_executions_by_workflow_id(self, workflow_id: str, user=None):
+        from codemie.rest_api.models.conversation import Conversation
+
         try:
             workflow_executions = self.get_workflow_executions(workflow_id, user)
+            conversation_ids = [e.conversation_id for e in workflow_executions if e.conversation_id is not None]
+            existing_conversation_ids = Conversation.get_existing_ids(conversation_ids)
             for execution in workflow_executions:
-                if execution.conversation_id is None:
+                if execution.conversation_id is None or execution.conversation_id not in existing_conversation_ids:
                     self.delete_workflow_execution(execution.id)
         except Exception as e:
             logger.error(f"Failed to delete all workflow executions for workflow_id {workflow_id}: {e}")

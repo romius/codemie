@@ -606,7 +606,7 @@ def test_delete_all_executions_preserves_chat_executions(
     workflow_execution_with_chat: WorkflowExecution,
     workflow_execution_without_chat: WorkflowExecution,
 ):
-    """Test that executions with conversation_id are NOT deleted when deleting all executions"""
+    """Test that executions are not deleted when their conversation still exists"""
     service = WorkflowService()
 
     with (
@@ -616,13 +616,14 @@ def test_delete_all_executions_preserves_chat_executions(
             return_value=[workflow_execution_with_chat, workflow_execution_without_chat],
         ),
         patch.object(WorkflowService, 'delete_workflow_execution') as mock_delete,
+        patch(
+            "codemie.rest_api.models.conversation.Conversation.get_existing_ids",
+            return_value={"conversation_456"},
+        ),
     ):
         service.delete_all_executions_by_workflow_id("workflow_123")
 
-    # Should only delete execution without conversation_id
     mock_delete.assert_called_once_with(workflow_execution_without_chat.id)
-
-    # Should NOT delete execution with conversation_id
     assert mock_delete.call_count == 1
 
 
@@ -644,17 +645,44 @@ def test_delete_all_executions_deletes_non_chat_executions(
 def test_delete_all_executions_with_only_chat_executions(
     workflow_execution_with_chat: WorkflowExecution,
 ):
-    """Test that no deletions occur when all executions have conversation_id"""
+    """Test that no deletions occur when all executions have an existing conversation"""
     service = WorkflowService()
 
     with (
         patch.object(WorkflowService, 'get_workflow_executions', return_value=[workflow_execution_with_chat]),
         patch.object(WorkflowService, 'delete_workflow_execution') as mock_delete,
+        patch(
+            "codemie.rest_api.models.conversation.Conversation.get_existing_ids",
+            return_value={"conversation_456"},
+        ),
     ):
         service.delete_all_executions_by_workflow_id("workflow_123")
 
-    # Should not delete any executions
     mock_delete.assert_not_called()
+
+
+def test_delete_all_executions_includes_orphaned_executions(
+    workflow_execution_with_chat: WorkflowExecution,
+    workflow_execution_without_chat: WorkflowExecution,
+):
+    """Test that executions with a deleted conversation are included in bulk delete"""
+    service = WorkflowService()
+
+    with (
+        patch.object(
+            WorkflowService,
+            'get_workflow_executions',
+            return_value=[workflow_execution_with_chat, workflow_execution_without_chat],
+        ),
+        patch.object(WorkflowService, 'delete_workflow_execution') as mock_delete,
+        patch(
+            "codemie.rest_api.models.conversation.Conversation.get_existing_ids",
+            return_value=set(),
+        ),
+    ):
+        service.delete_all_executions_by_workflow_id("workflow_123")
+
+    assert mock_delete.call_count == 2
 
 
 def test_delete_workflow_uses_delete_all_executions(

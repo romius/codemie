@@ -456,6 +456,20 @@ class Conversation(BaseModelWithSQLSupport, Owned, table=True):
             conversation.history = result.history
         return conversation
 
+    @classmethod
+    def exists(cls, id_: str) -> bool:
+        with Session(cls.get_engine()) as session:
+            statement = select(cls.id).where(cls.id == id_)
+            return session.exec(statement).first() is not None
+
+    @classmethod
+    def get_existing_ids(cls, ids: list[str]) -> set[str]:
+        if not ids:
+            return set()
+        with Session(cls.get_engine()) as session:
+            statement = select(cls.id).where(cls.id.in_(ids))
+            return set(session.exec(statement).all())
+
     @staticmethod
     def _build_filter_sql(filters: dict, allowed_columns: set) -> tuple[str, dict]:
         clauses = ""
