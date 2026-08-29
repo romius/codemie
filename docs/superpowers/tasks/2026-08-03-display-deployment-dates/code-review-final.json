@@ -1,0 +1,109 @@
+{
+  "decision": "request-changes",
+  "rationale": "Three lenses ran against the implementation diff (src/ + tests/). Two blocking findings: (1) GET /v1/info can 500 when the DB is unavailable because get_deployed_at has no try/except while startup treats the same failure as non-fatal; (2) docstring/success log still claim (APP_VERSION, ENV) after the environment column was intentionally removed. Deferred 3 (first-deploy-only semantics by design, IntegrityError return-None at startup unused, Optional vs server_default pattern). Dismissed 4 false positives (lifespan call site present, downgrade present, broad except matches local pattern, duplicate-index style).",
+  "confidence": "high",
+  "risk_flags": ["public-api"],
+  "business_review": [
+    {
+      "kind": "spec",
+      "item": "Store deployment date (plan originally scoped to version+environment)",
+      "status": "pass",
+      "notes": "Intentionally simplified to version-only unique (commit removed environment). Records first APP_VERSION start; user-facing goal met. Stale ENV wording tracked as CR-002."
+    },
+    {
+      "kind": "spec",
+      "item": "Timestamp recorded automatically on service startup (first start of version)",
+      "status": "pass",
+      "notes": "_initialize_deployment_version() in lifespan(); record_if_absent() inserts when absent."
+    },
+    {
+      "kind": "spec",
+      "item": "deployed_at returned in GET /v1/info response",
+      "status": "pass",
+      "notes": "InfoResponse.deployed_at + app_info() population; router tests cover value and null."
+    },
+    {
+      "kind": "spec",
+      "item": "Race condition handling (concurrent startup via IntegrityError)",
+      "status": "pass",
+      "notes": "IntegrityError catch + rollback; unique on version; unit test present."
+    },
+    {
+      "kind": "spec",
+      "item": "Non-fatal startup failure",
+      "status": "pass",
+      "notes": "try/except Exception in _initialize_deployment_version. Note CR-001: /v1/info path is not similarly non-fatal."
+    },
+    {
+      "kind": "spec",
+      "item": "alembic/env.py import for new model",
+      "status": "pass",
+      "notes": "DeploymentVersion imported in env.py."
+    },
+    {
+      "kind": "spec",
+      "item": "deployed_at serializes as deployedAt (camelCase)",
+      "status": "pass",
+      "notes": "ConfiguredModel alias_generator; unit + router tests assert deployedAt."
+    },
+    {
+      "kind": "spec",
+      "item": "Migration creates deployment_versions with deployed_at server default now()",
+      "status": "pass",
+      "notes": "3b1f28a9315a; TIMESTAMP(timezone=True) server_default=now()."
+    },
+    {
+      "kind": "spec",
+      "item": "Backward compatible — deployed_at optional in API",
+      "status": "pass",
+      "notes": "Optional[datetime] = None; additive field."
+    },
+    {
+      "kind": "spec",
+      "item": "down_revision chains correctly",
+      "status": "pass",
+      "notes": "down_revision=9b9b4c585e54 (updated from plan's older head)."
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "pass",
+      "notes": "Branch commits use EPMCDME-10701: Description."
+    },
+    {
+      "kind": "code-quality",
+      "status": "pass",
+      "notes": "Apache 2.0 headers on new modules; ruff format applied; ABC+SQL repo pattern matches activity repository."
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "No secrets logged; public /v1/info additive field only; version string from config."
+    }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/service/deployment/deployment_version_service.py",
+      "line": 55,
+      "title": "GET /v1/info can 500 when DB is unavailable",
+      "problem": "get_deployed_at() has no try/except. Startup treats DB failure as non-fatal (deployed_at stays null), but app_info() calls get_deployed_at() unguarded, so the same outage returns HTTP 500 on /v1/info.",
+      "impact": "Breaks the non-fatal contract advertised for this feature and can fail a previously resilient public info endpoint when Postgres is down or the table is missing.",
+      "recommendation": "Wrap get_deployed_at (or the router call) in try/except, log a warning, and return None so /v1/info still returns 200 with deployedAt: null."
+    },
+    {
+      "id": "CR-002",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/rest_api/main.py",
+      "line": 371,
+      "title": "Docstring and log still claim ENV scoping after environment column removal",
+      "problem": "_initialize_deployment_version docstring and success log refer to (APP_VERSION, ENV) / env={config.ENV!r}, but DeploymentVersion and the migration unique only on version with no environment column.",
+      "impact": "Operators are misled about multi-env / shared-DB behavior: the same APP_VERSION across environments sharing one DB collapses to a single deployed_at row.",
+      "recommendation": "Update docstring and log to version-only wording (drop ENV), or restore environment column + unique(version, environment) if env scoping is still required."
+    }
+  ]
+}

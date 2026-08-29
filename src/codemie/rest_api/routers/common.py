@@ -1,4 +1,4 @@
-# Copyright 2026 EPAM Systems, Inc. (“EPAM”)
+# Copyright 2026 EPAM Systems, Inc. ("EPAM")
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Depends, status
 
 from codemie.configs import config
 from codemie.core.constants import APP_DESCRIPTION
-from codemie.core.models import InfoResponse
+from codemie.core.models import DeploymentVersionItem, DeploymentVersionsResponse, InfoResponse
+from codemie.rest_api.security.authentication import authenticate
+from codemie.rest_api.security.user import User
 
 router = APIRouter(
     tags=["Common"],
@@ -31,6 +33,20 @@ def app_info():
         message="Codemie",
         version=config.APP_VERSION,
         description=APP_DESCRIPTION,
+    )
+
+
+@router.get(
+    "/deployment-versions",
+    status_code=status.HTTP_200_OK,
+    response_model=DeploymentVersionsResponse,
+)
+def list_deployment_versions(user: User = Depends(authenticate)):
+    from codemie.service.deployment.deployment_version_service import deployment_version_service
+
+    records = deployment_version_service.list_deployments()
+    return DeploymentVersionsResponse(
+        deployments=[DeploymentVersionItem(version=r.version, deployed_at=r.deployed_at) for r in records]
     )
 
 

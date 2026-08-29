@@ -410,6 +410,21 @@ def _check_sharepoint_pkce_redis() -> None:
         logger.warning(f"SharePoint PKCE: Redis unavailable at startup, PKCE flow will fail: {exc}")
 
 
+def _initialize_deployment_version() -> None:
+    """Record first-start timestamp for APP_VERSION if not already stored.
+
+    Non-fatal: a warning is logged and the application continues if the DB is
+    unavailable at startup. Environment is implied by which database is configured.
+    """
+    try:
+        from codemie.service.deployment.deployment_version_service import deployment_version_service
+
+        deployment_version_service.record_if_absent()
+        logger.info(f"Deployment version recorded: version={config.APP_VERSION!r}")
+    except Exception as exc:
+        logger.warning(f"Failed to record deployment version at startup: {exc}")
+
+
 def _setup_conversation_analysis_scheduler(app: FastAPI):
     """Setup conversation analysis scheduler if enabled."""
     if not config.CONVERSATION_ANALYSIS_ENABLED:
@@ -772,6 +787,7 @@ async def lifespan(app: FastAPI):
     assert_oauth_state_signing_secret_configured()
     assert_token_vault_available()
     warn_insecure_oauth_storage_for_enabled_providers()
+    _initialize_deployment_version()
 
     # Start background tasks
     tasks = []

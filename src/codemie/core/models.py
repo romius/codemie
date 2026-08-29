@@ -774,6 +774,15 @@ class InfoResponse(BaseResponse):
     description: str
 
 
+class DeploymentVersionItem(ConfiguredModel):
+    version: str
+    deployed_at: datetime
+
+
+class DeploymentVersionsResponse(ConfiguredModel):
+    deployments: list[DeploymentVersionItem]
+
+
 class ProjectInfoResponse(BaseModel):
     """Project access information in user responses"""
 

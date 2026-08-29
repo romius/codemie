@@ -114,6 +114,7 @@ from codemie.rest_api.models.mcp_config import MCPConfig
 from codemie.rest_api.models.dynamic_config import DynamicConfig
 from codemie.rest_api.models.agent_workspace import AgentWorkspace, AgentWorkspaceFile
 from codemie.rest_api.a2a.types import Task
+from codemie.rest_api.models.deployment_version import DeploymentVersion
 
 target_metadata = SQLModel.metadata
 
