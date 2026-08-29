@@ -79,6 +79,7 @@ from codemie.service.monitoring.llm_proxy_monitoring_service import LLMProxyMoni
 
 from .client import get_llm_proxy_client
 from .budget_categories import BudgetCategory
+from .constants import LITELLM_CUSTOMER_ID_HEADER
 from .credentials import ResolvedLiteLLMUserCredentials, resolve_litellm_user_credentials
 from .dependencies import (
     get_category_budget_id,
@@ -95,7 +96,6 @@ from codemie.repository.project_budget_repository import project_budget_assignme
 from ..loader import inject_user_into_body, parse_usage_from_response
 
 
-LITELLM_CUSTOMER_ID_HEADER = "x-litellm-customer-id"
 CODEMIE_CACHE_HIT_HEADER = "x-codemie-litellm-cache-hit"
 LITELLM_CACHE_KEY_HEADER = "x-litellm-cache-key"
 UNKNOWN = "unknown"
@@ -655,26 +655,22 @@ async def _create_body_stream_with_optional_injection(
             project_member_tracking_enabled=True,
             resolved_project_budget=True,
         )
-        project_runtime_username = project_runtime.body_overrides.get("user")
+        project_runtime_customer_id = project_runtime.headers.get(LITELLM_CUSTOMER_ID_HEADER)
         if selection.mode == RuntimeBudgetMode.PROJECT_BUDGET_WITH_MEMBER_TRACKING:
-            if not isinstance(project_runtime_username, str) or not project_runtime_username:
+            if not isinstance(project_runtime_customer_id, str) or not project_runtime_customer_id:
                 raise RuntimeError(
-                    f"Project member runtime selected but provider returned no runtime user for {project_name!r}"
+                    f"Project member runtime selected but provider returned no customer header for {project_name!r}"
                 )
-            username = project_runtime_username
+            username = project_runtime_customer_id
             logger.debug(
                 f"budget_event=runtime_mode_selected component=proxy_router user_id={user.id!r} "
                 f"username={user.username!r} project_name={project_name!r} "
                 f"budget_category={category.value!r} model={llm_model!r} "
-                f"mode={selection.mode.value!r} provider_member_ref={project_runtime_username!r} "
-                f"litellm_customer_key={project_runtime_username!r}"
+                f"mode={selection.mode.value!r} provider_member_ref={project_runtime_customer_id!r} "
+                f"litellm_customer_key={project_runtime_customer_id!r}"
             )
             request_info["litellm_customer_id"] = username
-            return _inject_user_into_request_body_from_bytes(
-                body_bytes=body_bytes,
-                user_id=username,
-                request_info=request_info,
-            )
+            return _stream_body_bytes(body_bytes)
 
         logger.debug(
             f"budget_event=runtime_mode_selected component=proxy_router user_id={user.id!r} "
@@ -777,7 +773,7 @@ async def _resolve_project_budget_runtime(user: User, category: BudgetCategory, 
         f"base_url_present={provider_result.base_url is not None} headers_applied={bool(provider_result.headers)} "
         f"body_overrides_applied={bool(provider_result.body_overrides)} "
         f"provider_header_names={sorted(provider_result.headers.keys())!r} "
-        f"litellm_customer_key={provider_result.body_overrides.get('user')!r}"
+        f"litellm_customer_key={provider_result.headers.get(LITELLM_CUSTOMER_ID_HEADER)!r}"
     )
 
     return provider_result
