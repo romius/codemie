@@ -30,6 +30,7 @@ class ActivityDomain:
     USER_MANAGEMENT = "user_management"
     BUDGET_MANAGEMENT = "budget_management"
     PROJECT_MANAGEMENT = "project_management"
+    CUSTOMER_CONFIG = "customer_config"
 
 
 class ActivityEntityType:
@@ -39,12 +40,18 @@ class ActivityEntityType:
     PROJECT_BUDGET_GROUP = "project_budget_group"
     USER_BUDGET_ASSIGNMENT = "user_budget_assignment"
     PROJECT_BUDGET_ASSIGNMENT = "project_budget_assignment"
+    CUSTOMER_CONFIG_SETTING = "customer_config_setting"
 
 
 class ProjectManagementEvent:
     PROJECT_CREATED = "project.created"
     PROJECT_UPDATED = "project.updated"
     PROJECT_DELETED = "project.deleted"
+
+
+class CustomerConfigEvent:
+    SETTING_UPDATED = "customer_config.setting.updated"
+    SETTING_RESET = "customer_config.setting.reset"
 
 
 class UserManagementEvent:

@@ -38,6 +38,11 @@ BEARER_AUTHORIZATION_HEADER = "Authorization"
 ACCESS_DENIED_MESSAGE = "Access denied"
 _ADMIN_OR_PROJECT_ADMIN_REQUIRED = "This action requires administrator or project administrator privileges."
 _CONTACT_ADMIN_HELP = "If you believe you should have access, please contact your system administrator."
+_ADMIN_OR_MAINTAINER_REQUIRED = "This action requires administrator or maintainer privileges."
+_ELEVATED_ACCESS_HELP = (
+    "If you believe you should have elevated access, please contact your"
+    " system administrator or check your account settings."
+)
 BIND_KEY_HEADER = "X-Bind-Key"
 
 user_id_header = APIKeyHeader(name=USER_ID_HEADER, auto_error=False, scheme_name=USER_ID_HEADER)
@@ -171,10 +176,32 @@ async def admin_access_only(request: Request):
         raise ExtendedHTTPException(
             code=status.HTTP_403_FORBIDDEN,
             message=ACCESS_DENIED_MESSAGE,
-            details="This action requires administrator or maintainer privileges.",
-            help="If you believe you should have elevated access, please contact your"
-            " system administrator or check your account settings.",
+            details=_ADMIN_OR_MAINTAINER_REQUIRED,
+            help=_ELEVATED_ACCESS_HELP,
         )
+
+
+def _deny_unless_admin_or_maintainer(request: Request, domain: str) -> None:
+    """Raise 403 unless the caller holds global elevated permissions."""
+    if request.state.user.is_admin_or_maintainer:
+        return
+
+    logger.warning(f"access_denied_admin: actor_user_id={request.state.user.id}, domain={domain}")
+    raise ExtendedHTTPException(
+        code=status.HTTP_403_FORBIDDEN,
+        message=ACCESS_DENIED_MESSAGE,
+        details=_ADMIN_OR_MAINTAINER_REQUIRED,
+        help=_ELEVATED_ACCESS_HELP,
+    )
+
+
+async def require_customer_config_write(request: Request):
+    """Guards writes to dynamic customer configuration.
+
+    Single substitution point for the future RBAC permission: today it resolves to
+    admin-or-maintainer, so a project admin does not qualify.
+    """
+    _deny_unless_admin_or_maintainer(request, "customer_config")
 
 
 async def admin_or_maintainer_access_only(request: Request):
@@ -184,9 +211,8 @@ async def admin_or_maintainer_access_only(request: Request):
         raise ExtendedHTTPException(
             code=status.HTTP_403_FORBIDDEN,
             message=ACCESS_DENIED_MESSAGE,
-            details="This action requires administrator or maintainer privileges.",
-            help="If you believe you should have elevated access, please contact your"
-            " system administrator or check your account settings.",
+            details=_ADMIN_OR_MAINTAINER_REQUIRED,
+            help=_ELEVATED_ACCESS_HELP,
         )
 
 

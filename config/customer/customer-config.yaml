@@ -252,6 +252,11 @@ components:
       enabled: true
       value: 60
 
+  - id: "chatDisclaimer"
+    settings:
+      enabled: false
+      text: ""
+
   - id: "bannerMessage"
     settings:
       enabled: false

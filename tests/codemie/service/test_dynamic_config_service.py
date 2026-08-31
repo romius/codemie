@@ -989,3 +989,74 @@ def test_get_bool_value_safe_returns_boolean(mock_get_typed_value_safe):
 
     assert result is True
     mock_get_typed_value_safe.assert_called_once_with("FEATURE_X_ENABLED", bool, default=False)
+
+
+# --- Generic prefix listing and async delete ---
+
+
+@pytest.mark.asyncio
+@patch("codemie.service.dynamic_config_service.get_async_session")
+async def test_alist_by_key_prefix_returns_matching_rows(mock_get_async_session, sample_config):
+    """Async prefix listing hands back whatever the prefix query matched"""
+    mock_session = MagicMock()
+    mock_get_async_session.return_value.__aenter__.return_value = mock_session
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.all.return_value = [sample_config]
+    mock_session.execute = AsyncMock(return_value=mock_result)
+
+    result = await DynamicConfigService.alist_by_key_prefix("CUSTOMER_CONFIG__")
+
+    assert result == [sample_config]
+    mock_session.execute.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@patch("codemie.service.dynamic_config_service.get_async_session")
+async def test_alist_by_key_prefix_returns_empty_list_when_nothing_matches(mock_get_async_session):
+    """Async prefix listing returns an empty list rather than raising"""
+    mock_session = MagicMock()
+    mock_get_async_session.return_value.__aenter__.return_value = mock_session
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.all.return_value = []
+    mock_session.execute = AsyncMock(return_value=mock_result)
+
+    result = await DynamicConfigService.alist_by_key_prefix("CUSTOMER_CONFIG__")
+
+    assert result == []
+
+
+@pytest.mark.asyncio
+@patch("codemie.service.dynamic_config_service.get_async_session")
+async def test_adelete_removes_existing_row(mock_get_async_session, sample_config):
+    """Async delete reports that a row existed and removes it"""
+    mock_session = MagicMock()
+    mock_get_async_session.return_value.__aenter__.return_value = mock_session
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.first.return_value = sample_config
+    mock_session.execute = AsyncMock(return_value=mock_result)
+    mock_session.delete = AsyncMock()
+    mock_session.commit = AsyncMock()
+
+    deleted = await DynamicConfigService.adelete("MAX_RETRIES")
+
+    assert deleted is True
+    mock_session.delete.assert_awaited_once_with(sample_config)
+    mock_session.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@patch("codemie.service.dynamic_config_service.get_async_session")
+async def test_adelete_is_idempotent_for_missing_key(mock_get_async_session):
+    """Async delete of an absent key reports no row instead of raising 404"""
+    mock_session = MagicMock()
+    mock_get_async_session.return_value.__aenter__.return_value = mock_session
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.first.return_value = None
+    mock_session.execute = AsyncMock(return_value=mock_result)
+    mock_session.delete = AsyncMock()
+    mock_session.commit = AsyncMock()
+
+    deleted = await DynamicConfigService.adelete("MISSING_KEY")
+
+    assert deleted is False
+    mock_session.delete.assert_not_awaited()

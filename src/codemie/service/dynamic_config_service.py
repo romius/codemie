@@ -464,6 +464,57 @@ class DynamicConfigService:
             logger.info(f"Config deleted: {key=}, config_id={config.id}")
 
     @classmethod
+    async def alist_by_key_prefix(cls, prefix: str) -> List[DynamicConfig]:
+        """
+        List configs whose key starts with the given prefix.
+
+        The prefix is supplied by the caller, so this stays a generic key-space query:
+        the service does not know what any prefix means.
+
+        Args:
+            prefix: Key prefix to match
+
+        Returns:
+            List of matching DynamicConfig entries, empty when nothing matches
+        """
+        logger.debug(f"Listing configs by prefix (async): {prefix=}")
+
+        async with get_async_session() as session:
+            statement = select(DynamicConfig).where(DynamicConfig.key.startswith(prefix))
+            result = await session.execute(statement)
+            return list(result.scalars().all())
+
+    @classmethod
+    async def adelete(cls, key: str) -> bool:
+        """
+        Async delete of a config by key.
+
+        Authorisation belongs to the router dependency, so this method performs no admin
+        check. Deleting an absent key is a no-op rather than a 404, which keeps reset
+        idempotent.
+
+        Args:
+            key: Config key
+
+        Returns:
+            True if a row existed and was deleted, False otherwise
+        """
+        logger.info(f"Deleting config (async): {key=}")
+
+        async with get_async_session() as session:
+            result = await session.execute(cls._select_by_key(key))
+            config = result.scalars().first()
+
+            if config is None:
+                logger.debug(f"Config not found for deletion, nothing to do: {key=}")
+                return False
+
+            await session.delete(config)
+            await session.commit()
+            logger.info(f"Config deleted (async): {key=}, config_id={config.id}")
+            return True
+
+    @classmethod
     def list_all(cls) -> List[DynamicConfig]:
         """
         List all dynamic configs ordered by key.

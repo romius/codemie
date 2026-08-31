@@ -776,6 +776,7 @@ class Config(BaseSettings):
 
     # Chat Contextual Naming Configuration
     CHAT_CONTEXTUAL_NAMING_ENABLED: bool = False
+    CUSTOMER_CONFIG_CACHE_TTL_SECONDS: int = 60
     CHAT_CONTEXTUAL_NAMING_LLM_MODEL: str = "gpt-5-nano-2025-08-07"
 
     # Leaderboard Configuration

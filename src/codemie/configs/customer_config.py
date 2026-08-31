@@ -180,6 +180,10 @@ class CustomerConfig(BaseModel):
 
         return runtime_config
 
+    def get_runtime_components(self) -> List[Component]:
+        """Runtime-computed components, which are never overridable from YAML or the database."""
+        return self._get_runtime_config()
+
     def get_enabled_components(self) -> List[Component]:
         """Get enabled components including runtime-computed config"""
         runtime_config_ids = set(CONFIG_IDS.values())
