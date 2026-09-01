@@ -14,6 +14,7 @@
 
 import pytest
 import json
+import threading
 from unittest.mock import MagicMock, patch
 
 from codemie.core.workflow_models import WorkflowConfig, WorkflowState, WorkflowExecutionStatusEnum
@@ -66,14 +67,22 @@ def _make_state(state_id, status):
 
 class TestInterruptPredecessorState:
     @patch("codemie.service.workflow_execution.workflow_execution_service.WorkflowExecutionState.get_all_by_fields")
-    def test_marks_predecessor_as_interrupted(self, mock_get_states, service):
+    def test_does_not_mark_predecessor_as_interrupted(self, mock_get_states, service):
+        """Predecessor stays SUCCEEDED — only a pending transition row is written."""
         state_a = _make_state("state_a", WorkflowExecutionStatusEnum.SUCCEEDED)
+        state_a.id = "state_a_exec_1"
         mock_get_states.return_value = [state_a]
 
-        service._interrupt_predecessor_state("state_b")
+        with patch.object(service, "record_transition") as mock_record:
+            service._interrupt_predecessor_state("state_b", checkpoint_state={"next": ["state_b"]})
 
-        assert state_a.status == WorkflowExecutionStatusEnum.INTERRUPTED
-        state_a.save.assert_called_once()
+        assert state_a.status == WorkflowExecutionStatusEnum.SUCCEEDED
+        state_a.save.assert_not_called()
+        mock_record.assert_called_once_with(
+            from_state_id="state_a_exec_1",
+            to_state_id=None,
+            workflow_context={"next": ["state_b"]},
+        )
 
     @patch("codemie.service.workflow_execution.workflow_execution_service.WorkflowExecutionState.get_all_by_fields")
     def test_does_not_mark_non_predecessor(self, mock_get_states, service):
@@ -96,21 +105,23 @@ class TestInterruptPredecessorState:
         state_a.save.assert_called_once()
 
     @patch("codemie.service.workflow_execution.workflow_execution_service.WorkflowExecutionState.get_all_by_fields")
-    def test_marks_only_last_iteration_in_loop(self, mock_get_states, service):
-        # Simulate 3 iterations of state_a; results returned newest-first (order_by update_date desc)
-        iter_3 = _make_state("state_a", WorkflowExecutionStatusEnum.SUCCEEDED)  # most recent
+    def test_records_transition_only_for_last_iteration(self, mock_get_states, service):
+        iter_3 = _make_state("state_a", WorkflowExecutionStatusEnum.SUCCEEDED)
+        iter_3.id = "state_a_iter_3"
         iter_2 = _make_state("state_a", WorkflowExecutionStatusEnum.SUCCEEDED)
-        iter_1 = _make_state("state_a", WorkflowExecutionStatusEnum.SUCCEEDED)
-        mock_get_states.return_value = [iter_3, iter_2, iter_1]
+        iter_2.id = "state_a_iter_2"
+        mock_get_states.return_value = [iter_3, iter_2]  # newest-first
 
-        service._interrupt_predecessor_state("state_b")
+        with patch.object(service, "record_transition") as mock_record:
+            service._interrupt_predecessor_state("state_b", checkpoint_state={})
 
-        assert iter_3.status == WorkflowExecutionStatusEnum.INTERRUPTED
-        iter_3.save.assert_called_once()
+        mock_record.assert_called_once_with(
+            from_state_id="state_a_iter_3",
+            to_state_id=None,
+            workflow_context={},
+        )
         assert iter_2.status == WorkflowExecutionStatusEnum.SUCCEEDED
         iter_2.save.assert_not_called()
-        assert iter_1.status == WorkflowExecutionStatusEnum.SUCCEEDED
-        iter_1.save.assert_not_called()
 
     @patch("codemie.service.workflow_execution.workflow_execution_service.WorkflowExecutionState.get_all_by_fields")
     def test_queries_with_order_by_update_date_desc(self, mock_get_states, service):
@@ -126,7 +137,7 @@ class TestInterruptPredecessorState:
 
     @patch("codemie.service.workflow_execution.workflow_execution_service.WorkflowExecutionState.get_all_by_fields")
     def test_save_failure_is_reraised(self, mock_get_states, service):
-        state_a = _make_state("state_a", WorkflowExecutionStatusEnum.SUCCEEDED)
+        state_a = _make_state("state_a", WorkflowExecutionStatusEnum.IN_PROGRESS)
         state_a.save.side_effect = OSError("db down")
         mock_get_states.return_value = [state_a]
 
@@ -138,6 +149,21 @@ class TestInterruptPredecessorState:
         mock_get_states.side_effect = OSError("index unavailable")
 
         assert service._interrupt_predecessor_state("state_b") is None
+
+    @patch("codemie.service.workflow_execution.workflow_execution_service.WorkflowExecutionState.get_all_by_fields")
+    def test_records_empty_context_when_checkpoint_state_is_none(self, mock_get_states, service):
+        state_a = _make_state("state_a", WorkflowExecutionStatusEnum.SUCCEEDED)
+        state_a.id = "state_a_exec_1"
+        mock_get_states.return_value = [state_a]
+
+        with patch.object(service, "record_transition") as mock_record:
+            service._interrupt_predecessor_state("state_b", checkpoint_state=None)
+
+        mock_record.assert_called_once_with(
+            from_state_id="state_a_exec_1",
+            to_state_id=None,
+            workflow_context={},
+        )
 
 
 class TestInterrupt:
@@ -173,6 +199,32 @@ class TestInterrupt:
             service.interrupt("state_b")
 
         mock_event.assert_called_once_with("state_b", "pred-1")
+
+
+class TestTransitionViewerReportsFalseTerminalOnInterrupt:
+    """EPMCDME-13566: after the fix, _interrupt_predecessor_state records a pending
+    transition row so the viewer can find it instead of returning 404."""
+
+    @patch("codemie.service.workflow_execution.workflow_execution_service.WorkflowExecutionState.get_all_by_fields")
+    def test_pending_transition_row_is_recorded_after_interrupt(self, mock_get_states, service, workflow_config):
+        checkpoint = {"next": ["state_b"], "messages": []}
+
+        state_a_execution_id = "state_a_exec_1"
+        state_a = _make_state("state_a", WorkflowExecutionStatusEnum.SUCCEEDED)
+        state_a.id = state_a_execution_id
+        mock_get_states.return_value = [state_a]
+
+        with patch.object(service, "record_transition") as mock_record:
+            predecessor_id = service._interrupt_predecessor_state("state_b", checkpoint_state=checkpoint)
+
+        assert predecessor_id == state_a_execution_id
+        assert state_a.status == WorkflowExecutionStatusEnum.SUCCEEDED
+        assert workflow_config.states[0].next.state_id == "state_b"
+        mock_record.assert_called_once_with(
+            from_state_id=state_a_execution_id,
+            to_state_id=None,
+            workflow_context=checkpoint,
+        )
 
 
 class TestResumeStates:
@@ -369,6 +421,7 @@ class TestSendInterruptedEvent:
                 "codemie.service.workflow_execution.workflow_execution_service.WorkflowExecutionState.get_by_id",
                 return_value=None,
             ),
+            patch.object(service, "record_transition"),
         ):
             service.interrupt("state_b")
 
@@ -512,3 +565,41 @@ class TestFail:
         interrupted.save.assert_called_once()
         assert succeeded.status == WorkflowExecutionStatusEnum.SUCCEEDED
         succeeded.save.assert_not_called()
+
+
+class TestInterruptPropagatesCheckpointState:
+    @patch("codemie.service.workflow_execution.workflow_execution_service.WorkflowExecutionState.get_all_by_fields")
+    @patch("codemie.service.workflow_execution.workflow_execution_service.request_summary_manager")
+    def test_interrupt_passes_checkpoint_state_to_predecessor_method(self, mock_summary, mock_get_states, service):
+        service.workflow_execution = MagicMock()
+        mock_summary.get_summary.return_value = MagicMock(tokens_usage=None)
+        predecessor = _make_state("state_a", WorkflowExecutionStatusEnum.SUCCEEDED)
+        predecessor.id = "pred-uuid"
+        mock_get_states.return_value = [predecessor]
+
+        checkpoint = {"next": ["state_b"], "messages": []}
+        service.thought_queue = None
+
+        with (
+            patch.object(service, "_interrupt_predecessor_state", wraps=service._interrupt_predecessor_state) as spy,
+            patch.object(service, "record_transition"),
+        ):
+            service.interrupt("state_b", checkpoint_state=checkpoint)
+
+        spy.assert_called_once_with("state_b", checkpoint)
+
+
+class TestWorkflowExecutionLockReentrant:
+    def test_record_transition_does_not_deadlock_inside_lock(self, service):
+        """record_transition must complete when called while workflow_execution_lock is already held."""
+        completed = []
+
+        def acquire_and_call():
+            with service.workflow_execution_lock:
+                service.record_transition(from_state_id=None, to_state_id=None, workflow_context={})
+            completed.append(True)
+
+        t = threading.Thread(target=acquire_and_call, daemon=True)
+        t.start()
+        t.join(timeout=2.0)
+        assert len(completed) == 1, "record_transition deadlocked when called inside workflow_execution_lock"

@@ -1,0 +1,65 @@
+{
+  "decision": "request-changes",
+  "rationale": "Critical deadlock introduced in the interrupt path: interrupt() holds workflow_execution_lock (non-reentrant threading.Lock, line 137) and the new record_transition() call inside _interrupt_predecessor_state() re-acquires the same lock (line 368), causing every workflow interrupt to hang permanently. A serialization failure in _check_for_interruption also silently converts a clean pause into a task exception. A test-class name mismatch against the spec AC is also flagged. 10 noise findings dismissed; 6 pre-existing edge cases deferred (not introduced by this change).",
+  "confidence": "high",
+  "risk_flags": ["breaking-change"],
+  "business_review": [
+    {"kind": "spec", "item": "InterruptedException adds checkpoint_state: Optional[dict] = None stored as self.checkpoint_state", "status": "pass", "notes": "exceptions.py: parameter added and stored"},
+    {"kind": "spec", "item": "workflow.py imports serialize_state and check_state_size from codemie.workflows.utils", "status": "pass", "notes": "workflow.py diff +91-92"},
+    {"kind": "spec", "item": "_check_for_interruption builds/serializes checkpoint with key-exclusion pattern, passes to InterruptedException", "status": "pass", "notes": "checkpoint_values comprehension excludes PREVIOUS_EXECUTION_STATE_NAMES/ID; check_state_size(serialize_state(...)) called"},
+    {"kind": "spec", "item": "_execute_workflow_stream except clause extracts e.checkpoint_state and passes to _handle_interrupt", "status": "pass", "notes": "workflow.py diff line +878: e.checkpoint_state forwarded"},
+    {"kind": "spec", "item": "_handle_interrupt accepts checkpoint_state=None and forwards to interrupt()", "status": "pass", "notes": "workflow.py diff: signature updated, interrupt(interrupted_state, checkpoint_state) called"},
+    {"kind": "spec", "item": "interrupt() accepts checkpoint_state=None and passes to _interrupt_predecessor_state()", "status": "pass", "notes": "workflow_execution_service.py: signature and call updated"},
+    {"kind": "spec", "item": "_interrupt_predecessor_state() calls record_transition with from_state_id, to_state_id=None, workflow_context=checkpoint_state or {} without mutating status", "status": "pass", "notes": "status mutation and state.save() removed; record_transition called with correct args"},
+    {"kind": "spec", "item": "record_transition() signature: to_state_id: str changed to to_state_id: Optional[str]", "status": "pass", "notes": "workflow_execution_service.py diff line +348"},
+    {"kind": "story-ac", "item": "predecessor stays SUCCEEDED after interrupt; viewer shows outgoing transition with next=[assistant_2] in workflow_context", "status": "pass", "notes": "predecessor status no longer mutated; record_transition stores checkpoint as workflow_context"},
+    {"kind": "story-ac", "item": "interrupt_before behaviour unchanged — workflow still pauses correctly", "status": "pass", "notes": "InterruptedException still raised in _check_for_interruption; only the observability layer changes"},
+    {"kind": "story-ac", "item": "No regression for intentionally-terminal states (leads_to() returns empty)", "status": "pass", "notes": "predecessor_ids logic and early-return in _interrupt_predecessor_state unchanged"},
+    {"kind": "spec", "item": "Edge case: checkpoint_state=None causes record_transition called with workflow_context={}", "status": "pass", "notes": "checkpoint_state or {} fallback present"},
+    {"kind": "spec", "item": "Edge case: checkpoint state too large handled by check_state_size before passing to InterruptedException", "status": "pass", "notes": "check_state_size called before raising"},
+    {"kind": "spec", "item": "TestInterruptPredecessorState test renamed/flipped to assert SUCCEEDED, record_transition called with correct args", "status": "pass", "notes": "test_does_not_mark_predecessor_as_interrupted updated with correct assertions and mock_record.assert_called_once_with"},
+    {"kind": "spec", "item": "TestTransitionViewerReportsFalseTerminalOnInterrupt updated/created to assert transition IS found after fix", "status": "partial", "notes": "TestTransitionViewerNoLongerFalseTerminalOnInterrupt created instead; functionally equivalent but spec-named class absent from repo"},
+    {"kind": "story-ac", "item": "TestInterruptPredecessorState and TestTransitionViewerReportsFalseTerminalOnInterrupt pass against fixed behaviour", "status": "partial", "notes": "TestInterruptPredecessorState updated and passes; spec-named TestTransitionViewerReportsFalseTerminalOnInterrupt absent"},
+    {"kind": "spec", "item": "New test: interrupt() propagates checkpoint_state through to recorded transition workflow_context", "status": "pass", "notes": "TestInterruptPropagatesCheckpointState::test_interrupt_passes_checkpoint_state_to_predecessor_method added with spy verification"}
+  ],
+  "standards_review": [
+    {"kind": "commit-format", "status": "pass", "notes": "Both commits use EPMCDME-13566: <description> format, conforming to documented EPMCDME-####: Description convention"},
+    {"kind": "code-quality", "status": "partial", "notes": "New signatures use Optional[dict] (typing.Optional style) rather than dict | None per code-quality guide preference; follows existing file style and Ruff will flag if configured"},
+    {"kind": "security", "status": "pass", "notes": "No auth, secrets, injection, or unsafe I/O changes; checkpoint serialization mirrors existing BaseNode pattern"}
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/codemie/service/workflow_execution/workflow_execution_service.py",
+      "line": 368,
+      "title": "record_transition re-acquires non-reentrant lock",
+      "problem": "interrupt() acquires self.workflow_execution_lock (threading.Lock, non-reentrant) at line 137. The new _interrupt_predecessor_state() call chain reaches record_transition() which re-acquires the same lock at line 368. threading.Lock is not reentrant, so the second acquisition blocks forever.",
+      "impact": "Every workflow interrupt hangs permanently — the interrupt-before feature is broken for all workflows after this change.",
+      "recommendation": "Extract the WorkflowExecutionTransition creation and .save() inside record_transition into a private _record_transition_unlocked() helper that assumes the lock is already held, and call it directly from _interrupt_predecessor_state. Alternatively, change workflow_execution_lock to threading.RLock() to allow reentrant acquisition by the same thread."
+    },
+    {
+      "id": "CR-002",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/workflows/workflow.py",
+      "line": 1006,
+      "title": "Serialization failure converts interrupt into task exception",
+      "problem": "In _check_for_interruption, if serialize_state(checkpoint_values) or check_state_size(...) raises an exception, it propagates out of _check_for_interruption. The caller's except chain catches Exception generically before InterruptedException, so the interrupt is silently converted to a workflow task failure with no recovery.",
+      "impact": "A non-serializable value in workflow state (e.g. a non-JSON-serializable LangGraph message type) turns a clean interrupt-before pause into a failed workflow execution, losing user context.",
+      "recommendation": "Wrap the serialize_state/check_state_size block in try/except Exception and fall back to raising InterruptedException(last_message, interrupted_state, None) on failure, preserving interrupt semantics while degrading gracefully without checkpoint data."
+    },
+    {
+      "id": "CR-003",
+      "severity": "major",
+      "triage": "patch",
+      "file": "tests/codemie/service/workflow_execution/test_workflow_execution_service.py",
+      "title": "Spec-named test class absent from repository",
+      "problem": "The spec's acceptance criteria require TestTransitionViewerReportsFalseTerminalOnInterrupt to exist and pass. The diff creates TestTransitionViewerNoLongerFalseTerminalOnInterrupt instead. The spec-named class does not exist anywhere in the repository.",
+      "impact": "The AC is technically unmet; auditing against the spec by class name fails.",
+      "recommendation": "Rename TestTransitionViewerNoLongerFalseTerminalOnInterrupt to TestTransitionViewerReportsFalseTerminalOnInterrupt to satisfy the spec's explicit AC naming requirement."
+    }
+  ],
+  "finding_status": []
+}

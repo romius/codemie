@@ -1283,4 +1283,34 @@ def test_tc_wst_014_handle_single_state_iter_key_lambda_passes_state(
     ), "continue_iteration must receive the state dict, not the executor instance"
 
 
+class TestCheckForInterruptionSerializationFallback:
+    def test_serialization_failure_still_raises_interrupted_exception(self):
+        """When serialize_state raises, _check_for_interruption must still raise InterruptedException with checkpoint_state=None."""
+        from unittest.mock import PropertyMock
+        from codemie.core.exceptions import InterruptedException
+
+        executor = WorkflowExecutor.__new__(WorkflowExecutor)
+        executor.execution_id = "exec-123"
+
+        mock_message = MagicMock()
+        mock_message.content = "hello"
+        mock_workflow_state = MagicMock()
+        mock_workflow_state.next = ["state_b"]
+        mock_workflow_state.values = {"messages": [mock_message]}
+        mock_workflow = MagicMock()
+        mock_workflow.get_state.return_value = mock_workflow_state
+
+        with (
+            patch.object(
+                WorkflowExecutor, "_interrupt_before_states", new_callable=PropertyMock, return_value=["state_b"]
+            ),
+            patch("codemie.workflows.workflow.serialize_state", side_effect=RuntimeError("not serializable")),
+        ):
+            with pytest.raises(InterruptedException) as exc_info:
+                executor._check_for_interruption(mock_workflow, MagicMock())
+
+        assert exc_info.value.checkpoint_state is None
+        assert exc_info.value.interrupted_state == "state_b"
+
+
 # ── Sub-workflow dispatch ─────────────────────────────────────────────────────

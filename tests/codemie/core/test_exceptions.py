@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from codemie.core.exceptions import ExtendedHTTPException
+from codemie.core.exceptions import ExtendedHTTPException, InterruptedException
 
 
 def test_init_extended_http_exception():
@@ -27,3 +27,19 @@ def test_init_extended_http_exception():
     assert exception.message == "Invalid input"
     assert exception.details == "The 'email' field must be a valid email address."
     assert exception.help == "Please check the format of your email and try again."
+
+
+def test_interrupted_exception_stores_checkpoint_state():
+    exc = InterruptedException(
+        message="workflow paused",
+        interrupted_state="state_b",
+        checkpoint_state={"next": ["state_b"], "messages": []},
+    )
+    assert exc.message == "workflow paused"
+    assert exc.interrupted_state == "state_b"
+    assert exc.checkpoint_state == {"next": ["state_b"], "messages": []}
+
+
+def test_interrupted_exception_checkpoint_state_defaults_to_none():
+    exc = InterruptedException(message="workflow paused", interrupted_state="state_b")
+    assert exc.checkpoint_state is None

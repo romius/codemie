@@ -94,6 +94,8 @@ from codemie.workflows.utils import (
     evaluate_conditional_route as evaluate,
     initialize_assistant,
     get_context_store_from_state_schema,
+    serialize_state,
+    check_state_size,
 )
 from codemie.workflows.validation import (
     WorkflowExecutionParsingError,
@@ -1009,7 +1011,7 @@ class WorkflowExecutor:
                     self._run_workflow_execution(graph_config, chunks_collector)
                     workflow_succeeded = True
                 except InterruptedException as e:
-                    self._handle_interrupt(str(e.message), e.interrupted_state, chunks_collector)
+                    self._handle_interrupt(str(e.message), e.interrupted_state, chunks_collector, e.checkpoint_state)
                 except Exception as e:
                     record_exception_on_span(e)
                     self._handle_task_exception(e, chunks_collector)
@@ -1143,7 +1145,19 @@ class WorkflowExecutor:
         if state.next:
             last_message = state.values['messages'][-1].content
             interrupted_state = next((s for s in state.next if s in self._interrupt_before_states), state.next[0])
-            raise InterruptedException(last_message, interrupted_state)
+            checkpoint_values = {
+                k: v
+                for k, v in state.values.items()
+                if k not in (PREVIOUS_EXECUTION_STATE_NAMES, PREVIOUS_EXECUTION_STATE_ID)
+            }
+            try:
+                serialized_checkpoint = check_state_size(
+                    serialize_state(checkpoint_values),
+                    self.execution_id or "",
+                )
+            except Exception:
+                serialized_checkpoint = None
+            raise InterruptedException(last_message, interrupted_state, serialized_checkpoint)
 
     def stream(self):
         """Execute workflow in background mode with ThoughtConsumer for database persistence"""
@@ -1206,9 +1220,15 @@ class WorkflowExecutor:
         """Returns array of states to wait for user confirmation"""
         return [state.id for state in self.workflow_config.states if state.interrupt_before]
 
-    def _handle_interrupt(self, message: str, interrupted_state: str, chunks_collector: List[str]) -> None:
+    def _handle_interrupt(
+        self,
+        message: str,
+        interrupted_state: str,
+        chunks_collector: List[str],
+        checkpoint_state: Optional[dict] = None,
+    ) -> None:
         """Handle when workflow was interrupted by user"""
-        self.workflow_execution_service.interrupt(interrupted_state)
+        self.workflow_execution_service.interrupt(interrupted_state, checkpoint_state)
 
         chunks_collector.append(self.INTERRUPT_CONFIRMATION_MSG)
         chunks_collector.append(message)

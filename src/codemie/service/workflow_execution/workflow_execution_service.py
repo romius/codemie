@@ -45,7 +45,7 @@ class WorkflowExecutionService:
         self.workflow_config = workflow_config
         self.user = user
         self.workflow_execution_id = workflow_execution_id
-        self.workflow_execution_lock = threading.Lock()
+        self.workflow_execution_lock = threading.RLock()
         self.thought_queue = thought_queue  # For streaming state events
         self.workflow_execution = None
         self._refresh_workflow_execution()
@@ -149,7 +149,7 @@ class WorkflowExecutionService:
         )
         request_summary_manager.clear_summary(self.workflow_execution_id)
 
-    def interrupt(self, interrupted_state: str):
+    def interrupt(self, interrupted_state: str, checkpoint_state: Optional[dict] = None):
         with self.workflow_execution_lock:
             self._refresh_workflow_execution()
             if not self.workflow_execution:
@@ -170,7 +170,7 @@ class WorkflowExecutionService:
 
             predecessor_execution_id = None
             if interrupted_state:
-                predecessor_execution_id = self._interrupt_predecessor_state(interrupted_state)
+                predecessor_execution_id = self._interrupt_predecessor_state(interrupted_state, checkpoint_state)
 
             self._send_interrupted_event(interrupted_state, predecessor_execution_id)
 
@@ -373,7 +373,7 @@ class WorkflowExecutionService:
     def record_transition(
         self,
         from_state_id: Optional[str],
-        to_state_id: str,
+        to_state_id: Optional[str],
         workflow_context: dict,
     ) -> Optional[str]:
         """Record a workflow node transition with context snapshot.
@@ -511,12 +511,22 @@ class WorkflowExecutionService:
             f"thoughts count: {len(thoughts)}"
         )
 
-    def _interrupt_predecessor_state(self, interrupted_state_id: str) -> Optional[str]:
-        """Marks states that transition directly into the interrupted state as INTERRUPTED.
+    def _interrupt_predecessor_state(
+        self, interrupted_state_id: str, checkpoint_state: Optional[dict] = None
+    ) -> Optional[str]:
+        """Handles the state that precedes the interrupted state.
+
+        A predecessor that already SUCCEEDED keeps that status — marking it INTERRUPTED
+        would misreport a step that completed correctly. Instead a pending transition row
+        is recorded so the transition viewer can resolve the edge without returning 404
+        (EPMCDME-13566). A predecessor still IN_PROGRESS when the interrupt lands never
+        finished, so it is marked INTERRUPTED directly.
 
         Returns the predecessor execution-state id on success, or None when no matching
-        predecessor exists or the state query failed (logged). Persist failures are
-        re-raised so callers can distinguish "not found" from "found but save failed".
+        predecessor exists or the state query failed (logged). Persist failures on the
+        IN_PROGRESS path are re-raised so callers can distinguish "not found" from "found
+        but save failed"; `record_transition` on the SUCCEEDED path is non-raising by its
+        own contract.
         """
         predecessor_ids = {s.id for s in self.workflow_config.states if interrupted_state_id in s.next.leads_to()}
         try:
@@ -530,10 +540,16 @@ class WorkflowExecutionService:
             return None
 
         for state in states:
-            if state.state_id in predecessor_ids and state.status in (
-                WorkflowExecutionStatusEnum.SUCCEEDED,
-                WorkflowExecutionStatusEnum.IN_PROGRESS,
-            ):
+            if state.state_id not in predecessor_ids:
+                continue
+            if state.status == WorkflowExecutionStatusEnum.SUCCEEDED:
+                self.record_transition(
+                    from_state_id=state.id,
+                    to_state_id=None,
+                    workflow_context=checkpoint_state or {},
+                )
+                return state.id
+            if state.status == WorkflowExecutionStatusEnum.IN_PROGRESS:
                 try:
                     state.status = WorkflowExecutionStatusEnum.INTERRUPTED
                     state.save()

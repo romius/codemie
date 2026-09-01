@@ -80,9 +80,10 @@ class TaskException(Exception):
 
 
 class InterruptedException(Exception):
-    def __init__(self, message: str, interrupted_state: str) -> None:
+    def __init__(self, message: str, interrupted_state: str, checkpoint_state: Optional[dict] = None) -> None:
         self.message = message
         self.interrupted_state = interrupted_state
+        self.checkpoint_state = checkpoint_state
         super().__init__(message)
 
 
