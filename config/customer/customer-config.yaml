@@ -243,7 +243,7 @@ components:
 
   - id: "features:teamsBotIntegration"
     settings:
-      enabled: false
+      enabled: true
       name: "Teams Bot Integration"
       description: "Enable project-level assistant configuration for Microsoft Teams Bot integration."
 

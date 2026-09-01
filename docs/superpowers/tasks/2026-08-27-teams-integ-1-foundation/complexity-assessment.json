@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "task": "Add a project-scoped 'ms_teams' CredentialTypes/Settings integration type (enum + payload design + project_settings.py create/update/list/delete support with enabled-assistant validation), excluding the data migration and old assistant_project_mapping removal.",
+  "generated": "2026-08-27",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 4, "label": "L" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 20,
+  "size": "M",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Touches project_settings.py router, SettingsService validation branch, and the shared CredentialTypes enum used by ~30 other integration types — bumped from M for touching a core shared utility." },
+    { "dimension": "requirements_clarity", "reason": "Task says 'the same way other integration types are' but the payload shape (project_name + list of enabled-assistant ids) has no existing precedent in Settings.credential_values, and the ms_teams naming diverges from existing PascalCase enum members — a 'similar to X but different' gap requiring a design decision before implementation." },
+    { "dimension": "technical_risk", "reason": "No exact precedent for storing a list-of-ids payload in the generic key/value Settings model (closest analog is credential_values JSON); adding the enum member likely requires a Postgres ENUM ALTER migration per technical-analysis; validating 'currently-enabled assistants only' requires new cross-referencing logic against AssistantRepository with no existing template." },
+    { "dimension": "affected_layers", "reason": "API (project_settings.py), Service (SettingsService validation), and DB/Persistence (CredentialTypes enum migration) — matches the L band definition of 3-4 layers including a persistence-layer schema/enum change." }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from M to L: touches core shared CredentialTypes enum used across ~30 other integration types",
+    "Requirements Clarity bumped from M to L: 'similar to other integration types but different' phrasing — project-only scope restriction and enabled-assistant validation have no direct precedent"
+  ],
+  "split_recommendation": null
+}

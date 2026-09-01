@@ -1,0 +1,133 @@
+{
+  "decision": "request-changes",
+  "rationale": "No spec/story artifact existed so acceptance never ran, capping confidence low; standards review flags 2 commits missing the EPMCDME ticket prefix (partial, blocking). 9 blocking issues introduced by this change: a missing teamsBotIntegration feature-flag check on ms_teams create/update, a destructive undocumented migration downgrade that deletes all ms_teams settings without restoring the source data, a forward-migration path that drops assistant_project_mapping even when rows were left unmigrated, ms_teams assistant_ids that are never revalidated after an assistant is deleted or moved (the old FK cascade guarantee is gone), an update-path validation that trusts an unverified request.project_name, a generic IntegrityError mismapped to an ms_teams-only 409 for other credential types, missing tests for the IntegrityError->409 mapping and for the migration's transform logic, and 2 non-conforming commit subjects. No findings deferred. 4 findings dismissed as noise: an unreachable feature-column-filter concern (the old feature enum only ever had one value), an ES-lag singleton race already backed by a real DB unique-index + IntegrityError backstop, a validator-placement change inside a try block with no behavioral effect, and unbounded-but-realistically-small N+1 assistant lookups.",
+  "confidence": "low",
+  "risk_flags": ["security", "breaking-change"],
+  "business_review": [],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "partial",
+      "notes": "14 of 16 commit subjects use the documented EPMCDME-####: Description format; two do not: 'teams-integ-2-migration: add planning artifacts' and 'teams-integ-1-foundation: add planning artifacts'"
+    },
+    {
+      "kind": "code-quality",
+      "status": "pass",
+      "notes": "New/modified files carry the Apache header, modern type hints, no line exceeds the configured Ruff line-length, and new validation paths are covered by new unit tests"
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "Migration SQL uses bound parameters; permission check now runs before credential validation; assistant_ids are strictly type-checked; the singleton check is backed by a DB partial unique index with IntegrityError converted to 409; no credentials or tokens are logged"
+    }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/codemie/rest_api/routers/project_settings.py",
+      "line": 114,
+      "title": "Missing teamsBotIntegration feature-flag check",
+      "problem": "The deleted assistant_project_mapping router gated all Teams-mapping operations behind customer_config.is_feature_enabled(\"teamsBotIntegration\"). Neither create_project_setting nor update_project_setting nor validate_ms_teams_request contains any equivalent check; there is no reference to \"teamsBotIntegration\" anywhere left in the source.",
+      "impact": "Any customer, regardless of whether they are entitled to the Teams Bot Integration feature, can now create and manage ms_teams project integrations. This silently removes a paid-feature/entitlement gate for every customer.",
+      "recommendation": "Reinstate an is_feature_enabled(\"teamsBotIntegration\") check (403 on failure) in the MS_TEAMS branch of create_project_setting/update_project_setting or inside validate_ms_teams_request before any other validation runs."
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/rest_api/routers/project_settings.py",
+      "line": 124,
+      "title": "IntegrityError mismapped to ms_teams conflict for other types",
+      "problem": "Both create_project_setting and update_project_setting catch IntegrityError unconditionally and always raise the ms_teams-specific 409 \"…integration already exists…\" message, regardless of request.credential_type.",
+      "impact": "Any IntegrityError raised while creating/updating a non-MS_TEAMS setting (e.g. an unrelated FK or constraint violation) now returns a confusing, incorrect \"ms_teams integration already exists\" error to the caller instead of a meaningful message.",
+      "recommendation": "Branch on request.credential_type inside the except IntegrityError block: keep the ms_teams 409 message for MS_TEAMS, fall back to the previous generic handling for every other credential type."
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/rest_api/routers/project_settings.py",
+      "line": 124,
+      "title": "No test covers the IntegrityError to 409 mapping",
+      "problem": "tests/codemie/rest_api/routers/test_project_settings.py has no test that lets SettingsService.create_setting/update_settings raise IntegrityError; every ms_teams test patches validate_ms_teams_request directly and never exercises the router's except IntegrityError branch.",
+      "impact": "If the except IntegrityError clause were removed, reordered, or broken, a genuine concurrent-insert race would silently fall through to the generic 422 handler instead of 409, and no test would catch the regression.",
+      "recommendation": "Add a test that mocks SettingsService.create_setting/update_settings to raise sqlalchemy.exc.IntegrityError and asserts the response is a 409 with the ms_teams conflict message."
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/rest_api/routers/project_settings.py",
+      "line": 180,
+      "title": "Update revalidates ms_teams request against unverified project_name",
+      "problem": "update_project_setting checks write access via get_setting_ability(setting_id), which is derived from the setting's real, persisted project_name, but then calls validate_ms_teams_request(request, ...) which validates assistant membership and singleton uniqueness against request.project_name — a caller-supplied value never checked against the setting actually being updated. update_settings() itself never reassigns project_name from the request, so the two can diverge silently.",
+      "impact": "A caller with write access to a setting in project A can submit a different project_name (e.g. project B) in the PUT body; assistant_ids get validated as belonging to project B, and the singleton check runs against project B, while the persisted setting stays attached to project A — defeating the per-project assistant-membership guarantee the validator is meant to enforce.",
+      "recommendation": "Look up the setting's actual project_name via Settings.get_by_id(setting_id) and reject the request (400) if request.project_name does not match it before calling validate_ms_teams_request."
+    },
+    {
+      "id": "CR-005",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/service/settings/settings_request_validator.py",
+      "line": 269,
+      "title": "ms_teams assistant_ids never revalidated after assistant deletion/move",
+      "problem": "validate_ms_teams_request checks that every assistant_ids entry belongs_to_project() only at create/update time. The retired assistant_project_mapping table enforced this continuously via a real foreign key with ON DELETE CASCADE on assistant_id; the new assistant_ids list lives inside a JSONB credential_values blob with no FK and no cleanup path when an assistant is later deleted or moved to another project.",
+      "impact": "A stored ms_teams integration can silently keep referencing assistants that no longer belong to (or no longer exist in) that project, with nothing pruning or re-validating the list — a real regression from the FK-cascade guarantee the old table provided.",
+      "recommendation": "Add a cleanup path (e.g. on assistant delete/move) that prunes stale assistant_ids from ms_teams settings, or revalidate the list on read and surface/repair stale entries."
+    },
+    {
+      "id": "CR-006",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/external/alembic/versions/c3d4e5f6a7b8_migrate_assistant_project_mapping_to_settings.py",
+      "line": 43,
+      "title": "Migration transform logic has no unit test",
+      "problem": "The grouping/dedup/skip-if-existing transform in upgrade() is written inline against a live DB connection, unlike the codebase's own established pattern (tests/codemie/migrations/test_k5l6m7n8o9p0_deprecate_python_repl.py imports and unit-tests a pure _transform_toolkits() function extracted from its migration module). No test file exists for this migration.",
+      "impact": "A bug in the grouping, dedup, or skip-if-existing logic would ship undetected into a migration that drops its source table in the same revision — the loss would be unrecoverable and no test in the repo would catch it.",
+      "recommendation": "Extract the per-project grouping/dedup/skip logic into a pure function and add a unit test following the test_k5l6m7n8o9p0 pattern."
+    },
+    {
+      "id": "CR-007",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/external/alembic/versions/c3d4e5f6a7b8_migrate_assistant_project_mapping_to_settings.py",
+      "line": 73,
+      "title": "upgrade() drops source table despite skipped unmigrated rows",
+      "problem": "When a project already has an ms_teams settings row, upgrade() logs a warning and skips migrating that project's assistant_project_mapping rows (line 73-80), but then unconditionally calls op.drop_table(\"assistant_project_mapping\") afterward (line 92) regardless of whether any project's rows were skipped.",
+      "impact": "Any assistant_project_mapping rows left unmigrated because their project already had an ms_teams row are permanently and silently lost the moment the source table is dropped in the same migration, with only a log line as a trace.",
+      "recommendation": "Either merge/append skipped assistant_ids into the existing ms_teams row instead of skipping, or export skipped rows to a backup table before dropping assistant_project_mapping, and fail the migration loudly instead of only logging a warning."
+    },
+    {
+      "id": "CR-008",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/external/alembic/versions/c3d4e5f6a7b8_migrate_assistant_project_mapping_to_settings.py",
+      "line": 95,
+      "title": "downgrade() destroys all ms_teams data without backup",
+      "problem": "downgrade() recreates an empty assistant_project_mapping table (no data restored) and then runs DELETE FROM codemie.settings WHERE credential_type = 'MS_TEAMS' — one migration revision earlier than necessary, since the MS_TEAMS enum value itself is only removed by the separate, later 8b2c1a4d5e6f migration's own downgrade. Unlike the repo's own convention for irreversible migrations (k5l6m7n8o9p0_deprecate_python_repl_code_interpreter.py documents its no-op downgrade explicitly: \"Downgrade is a no-op: the old tool was removed from prod and cannot be restored\"), this downgrade performs an unnecessary, undocumented, destructive delete with no comment flagging it as deliberate.",
+      "impact": "Running `alembic downgrade` one step past this revision — a normal rollback/incident-response action — permanently deletes every ms_teams project integration in production, including ones created after the migration ran, with no backup and no restore path.",
+      "recommendation": "Do not delete settings rows in this revision's downgrade; leave that to 8b2c1a4d5e6f's own downgrade where the enum removal actually requires it, or back up affected rows to a table before any delete, and add a comment documenting the irreversibility."
+    },
+    {
+      "id": "CR-009",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "unknown",
+      "title": "Two commits omit EPMCDME ticket prefix",
+      "problem": "Commits 'teams-integ-2-migration: add planning artifacts' and 'teams-integ-1-foundation: add planning artifacts' omit the EPMCDME-14111: prefix required by the project's git-workflow standard.",
+      "impact": "Breaks the documented ticket-traceable commit history the git-workflow guide requires for repository commits.",
+      "recommendation": "Reword the two commits (or fold them into an adjacent EPMCDME-14111 commit) so every subject carries the EPMCDME-14111: prefix."
+    }
+  ]
+}

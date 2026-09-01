@@ -1124,6 +1124,7 @@ class Assistant(BaseModelWithSQLSupport, AssistantBase, table=True):
     @classmethod
     def delete_assistant(cls, assistant_id: str):
         from codemie.service.settings.scheduler_settings_service import SchedulerSettingsService
+        from codemie.rest_api.models.settings import Settings
         from codemie_tools.base.models import CredentialTypes
 
         assistant = cls.find_by_id(assistant_id)
@@ -1146,6 +1147,13 @@ class Assistant(BaseModelWithSQLSupport, AssistantBase, table=True):
                     logger.warning(
                         f"Failed to delete {credential_type.value} integrations for assistant {assistant_id}: {e}"
                     )
+
+            try:
+                pruned = Settings.prune_ms_teams_assistant_id(assistant_internal_id)
+                if pruned:
+                    logger.info(f"Pruned assistant {assistant_id} from {pruned} ms_teams settings row(s)")
+            except Exception as e:
+                logger.warning(f"Failed to prune ms_teams assistant_ids for assistant {assistant_id}: {e}")
 
             assistant.delete()
             GuardrailService.remove_guardrail_assignments_for_entity(GuardrailEntity.ASSISTANT, assistant_internal_id)

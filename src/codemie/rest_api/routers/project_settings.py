@@ -16,6 +16,7 @@ import json
 from typing import Optional
 
 from fastapi import APIRouter, status, Request, Depends
+from sqlalchemy.exc import IntegrityError
 
 from codemie.configs.logger import logger
 from codemie.core.ability import Ability, Action
@@ -31,6 +32,7 @@ from codemie.service.settings.settings_index_service import SettingsIndexService
 from codemie.service.settings.settings_request_validator import (
     validate_git_request,
     validate_litellm_request,
+    validate_ms_teams_request,
     validate_scheduler_request,
     validate_webhook_request,
 )
@@ -88,6 +90,8 @@ def create_project_setting(request: SettingRequest, user: User = Depends(authent
     """
     Create project-specific setting
     """
+    _check_permission(user, request.project_name)
+
     if request.credential_type == CredentialTypes.SCHEDULER:
         validate_scheduler_request(request)
     elif request.credential_type == CredentialTypes.LITE_LLM:
@@ -107,8 +111,8 @@ def create_project_setting(request: SettingRequest, user: User = Depends(authent
         validate_git_request(request)
     elif request.credential_type == CredentialTypes.WEBHOOK:
         validate_webhook_request(request)
-
-    _check_permission(user, request.project_name)
+    elif request.credential_type == CredentialTypes.MS_TEAMS:
+        validate_ms_teams_request(request, setting_type=SettingType.PROJECT)
 
     try:
         SettingsService.create_setting(user_id=user.id, request=request, settings_type=SettingType.PROJECT, user=user)
@@ -117,6 +121,8 @@ def create_project_setting(request: SettingRequest, user: User = Depends(authent
             f"credential_type={request.credential_type.value!r}, by={user.id}, domain=project_management"
         )
         return BaseResponse(message="Specified credentials saved")
+    except IntegrityError as e:
+        raise _map_integrity_error(request, e) from e
     except Exception as e:
         raise ExtendedHTTPException(
             code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -137,26 +143,6 @@ def update_project_setting(request: SettingRequest, setting_id: str, user: User 
     """
     Update project setting
     """
-    if request.credential_type == CredentialTypes.SCHEDULER:
-        validate_scheduler_request(request)
-    elif request.credential_type == CredentialTypes.LITE_LLM:
-        if not user.is_admin_or_maintainer:
-            raise ExtendedHTTPException(
-                code=status.HTTP_403_FORBIDDEN,
-                message="Access denied",
-                details="LiteLLM integrations can only be updated by admin users.",
-                help="Please contact your system administrator to configure LiteLLM integrations.",
-            )
-        # Check if LiteLLM enterprise is available before allowing credential update
-        from codemie.enterprise.litellm import require_litellm_enabled
-
-        require_litellm_enabled()
-        validate_litellm_request(request)
-    elif request.credential_type == CredentialTypes.GIT:
-        validate_git_request(request)
-    elif request.credential_type == CredentialTypes.WEBHOOK:
-        validate_webhook_request(request)
-
     try:
         setting_ability = SettingsService.get_setting_ability(
             credential_id=setting_id,
@@ -165,11 +151,36 @@ def update_project_setting(request: SettingRequest, setting_id: str, user: User 
 
         if not Ability(user).can(Action.WRITE, setting_ability):
             raise_access_denied("write")
+
+        if request.credential_type == CredentialTypes.SCHEDULER:
+            validate_scheduler_request(request)
+        elif request.credential_type == CredentialTypes.LITE_LLM:
+            if not user.is_admin_or_maintainer:
+                raise ExtendedHTTPException(
+                    code=status.HTTP_403_FORBIDDEN,
+                    message="Access denied",
+                    details="LiteLLM integrations can only be updated by admin users.",
+                    help="Please contact your system administrator to configure LiteLLM integrations.",
+                )
+            # Check if LiteLLM enterprise is available before allowing credential update
+            from codemie.enterprise.litellm import require_litellm_enabled
+
+            require_litellm_enabled()
+            validate_litellm_request(request)
+        elif request.credential_type == CredentialTypes.GIT:
+            validate_git_request(request)
+        elif request.credential_type == CredentialTypes.WEBHOOK:
+            validate_webhook_request(request)
+        elif request.credential_type == CredentialTypes.MS_TEAMS:
+            validate_ms_teams_request(request, setting_type=SettingType.PROJECT, setting_id=setting_id)
+
         SettingsService.update_settings(
             credential_id=setting_id, request=request, settings_type=SettingType.PROJECT, user_id=user.id
         )
     except ExtendedHTTPException:
         raise
+    except IntegrityError as e:
+        raise _map_integrity_error(request, e) from e
     except Exception as e:
         raise ExtendedHTTPException(
             code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -218,6 +229,30 @@ def delete_project_setting(setting_id: str, user: User = Depends(authenticate)):
         f"alias={setting.alias!r}, by={user.id}, domain=project_management"
     )
     return BaseResponse(message="Specified credential removed")
+
+
+def _map_integrity_error(request: SettingRequest, error: IntegrityError) -> ExtendedHTTPException:
+    """Map a persistence-layer IntegrityError to an API error.
+
+    The ms_teams singleton-per-project constraint is the only known cause of an
+    IntegrityError on this path today; every other credential type falls back to
+    the generic 422 handling used for unexpected persistence failures.
+    """
+    if request.credential_type == CredentialTypes.MS_TEAMS:
+        return ExtendedHTTPException(
+            code=status.HTTP_409_CONFLICT,
+            message="ms_teams integration already exists",
+            details=f"A concurrent request already created an ms_teams integration for project "
+            f"{request.project_name!r}.",
+            help="Update or delete the existing ms_teams integration for this project instead of creating a new one.",
+        )
+    return ExtendedHTTPException(
+        code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        message="Cannot save specified setting",
+        details=f"An error occurred while trying to save the setting: {str(error)}",
+        help="Invalid setting data. Please provide a non-empty, unique alias for the setting "
+        "and ensure all required fields are filled correctly. If the problem persists, contact support.",
+    )
 
 
 def _check_permission(user: User, project_name: str):

@@ -18,8 +18,10 @@ from typing import TYPE_CHECKING
 
 from fastapi import status
 
+from codemie.configs.customer_config import customer_config
 from codemie.core.exceptions import ExtendedHTTPException
-from codemie.rest_api.models.settings import CredentialValues, SettingRequest
+from codemie.rest_api.models.settings import CredentialValues, Settings, SettingRequest, SettingType
+from codemie.service.assistant.assistant_service import AssistantService
 from codemie.service.settings.scheduler_settings_service import (
     _validate_minimum_hourly_frequency,
     INVALID_CRON_EXPRESSION_MESSAGE,
@@ -263,6 +265,108 @@ def validate_webhook_request(request: SettingRequest) -> None:
 
     if resource_type == "datasource" and datasource is not None:
         validate_datasource_type_for_webhook(datasource)
+
+
+TEAMS_BOT_INTEGRATION_FEATURE = "teamsBotIntegration"
+
+
+def validate_ms_teams_request(
+    request: SettingRequest, setting_type: SettingType, setting_id: str | None = None
+) -> None:
+    """
+    Validate an ms_teams project-integration request: PROJECT-scope only, every
+    assistant_ids entry must belong to the target project, and at most one
+    ms_teams row may exist per project.
+    """
+    if not customer_config.is_feature_enabled(TEAMS_BOT_INTEGRATION_FEATURE):
+        raise ExtendedHTTPException(
+            code=status.HTTP_403_FORBIDDEN,
+            message="Feature not available",
+            details="Teams Bot Integration is not enabled for this customer.",
+            help="Contact your system administrator to enable the 'features:teamsBotIntegration' component.",
+        )
+
+    if setting_type != SettingType.PROJECT:
+        raise ExtendedHTTPException(
+            code=status.HTTP_400_BAD_REQUEST,
+            message="ms_teams integrations are project-scoped only",
+            details="ms_teams integrations cannot be created or updated at USER scope.",
+            help="Submit this request with setting_type=PROJECT.",
+        )
+
+    if not request.project_name:
+        raise ExtendedHTTPException(
+            code=status.HTTP_400_BAD_REQUEST,
+            message="project_name is required",
+            details="ms_teams integrations require a non-empty project_name.",
+            help="Provide the target project_name in the request.",
+        )
+
+    if setting_id is not None:
+        existing_setting = Settings.get_by_id(setting_id)
+        if existing_setting.project_name != request.project_name:
+            raise ExtendedHTTPException(
+                code=status.HTTP_400_BAD_REQUEST,
+                message="Project mismatch",
+                details=f"Setting {setting_id!r} belongs to project {existing_setting.project_name!r}, "
+                f"not {request.project_name!r}.",
+                help="The project_name in the request body must match the setting being updated.",
+            )
+
+    assistant_ids_creds = [cv for cv in request.credential_values if cv.key == "assistant_ids"]
+    if (
+        len(assistant_ids_creds) != 1
+        or not isinstance(assistant_ids_creds[0].value, list)
+        or not assistant_ids_creds[0].value
+    ):
+        raise ExtendedHTTPException(
+            code=status.HTTP_400_BAD_REQUEST,
+            message="assistant_ids is required",
+            details="ms_teams integrations require exactly one credential_values entry "
+            "with key='assistant_ids' and a non-empty list value.",
+            help="Provide a single CredentialValues(key='assistant_ids', value=[<assistant_id>, ...]).",
+        )
+
+    assistant_ids = assistant_ids_creds[0].value
+    if not all(isinstance(assistant_id, str) for assistant_id in assistant_ids):
+        raise ExtendedHTTPException(
+            code=status.HTTP_400_BAD_REQUEST,
+            message="Invalid assistant_ids",
+            details="Every entry in assistant_ids must be a string assistant id.",
+            help="Provide assistant_ids as a list of string assistant id values.",
+        )
+
+    if len(assistant_ids) != len(set(assistant_ids)):
+        raise ExtendedHTTPException(
+            code=status.HTTP_400_BAD_REQUEST,
+            message="Duplicate assistant_ids",
+            details="assistant_ids must not contain duplicate assistant id values.",
+            help="Remove duplicate entries from assistant_ids.",
+        )
+
+    invalid_ids = [
+        assistant_id
+        for assistant_id in assistant_ids
+        if not AssistantService.belongs_to_project(assistant_id, request.project_name)
+    ]
+    if invalid_ids:
+        raise ExtendedHTTPException(
+            code=status.HTTP_400_BAD_REQUEST,
+            message="Invalid assistant_ids",
+            details=f"The following assistant id(s) do not exist or do not belong to "
+            f"project {request.project_name!r}: {', '.join(invalid_ids)}.",
+            help="Only assistants belonging to the target project may be listed in assistant_ids.",
+        )
+
+    try:
+        Settings.check_ms_teams_exist(request.project_name, setting_id=setting_id)
+    except ValueError as e:
+        raise ExtendedHTTPException(
+            code=status.HTTP_409_CONFLICT,
+            message="ms_teams integration already exists",
+            details=str(e),
+            help="Update or delete the existing ms_teams integration for this project instead of creating a new one.",
+        ) from e
 
 
 def validate_datasource_type_for_webhook(datasource: IndexInfo) -> None:

@@ -15,19 +15,19 @@
 """Tests for validate_datasource_type_for_scheduler in settings_request_validator."""
 
 import pytest
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock, patch
 
 from fastapi import status
 
-from unittest.mock import MagicMock
-
 from codemie.core.exceptions import ExtendedHTTPException
-from codemie.rest_api.models.settings import SettingRequest
+from codemie.rest_api.models.settings import CredentialValues, SettingRequest, SettingType
 from codemie.service.settings.settings_request_validator import (
-    validate_datasource_type_for_scheduler,
-    validate_timezone_value,
     UNSUPPORTED_SCHEDULER_DATASOURCE_TYPES,
+    validate_datasource_type_for_scheduler,
+    validate_ms_teams_request,
+    validate_timezone_value,
 )
+from codemie_tools.base.models import CredentialTypes
 
 
 def _make_datasource(index_type: str, ds_id: str = "ds-123") -> Mock:
@@ -183,3 +183,137 @@ def test_normalize_is_enabled_preserves_explicit_false():
     values = [c for c in request.credential_values if c.key == "is_enabled"]
     assert len(values) == 1
     assert values[0].value is False
+
+
+def _ms_teams_request(credential_values, project_name="proj1"):
+    return SettingRequest(
+        project_name=project_name,
+        alias="teams-integration",
+        credential_type=CredentialTypes.MS_TEAMS,
+        credential_values=credential_values,
+    )
+
+
+@patch("codemie.rest_api.models.settings.Settings.check_ms_teams_exist")
+@patch("codemie.service.assistant.assistant_service.AssistantService.belongs_to_project")
+def test_valid_request_passes(mock_belongs_to_project, mock_singleton):
+    # Arrange
+    mock_belongs_to_project.return_value = True
+    mock_singleton.return_value = True
+    request = _ms_teams_request([CredentialValues(key="assistant_ids", value=["a1", "a2"])])
+
+    # Act / Assert — no exception
+    validate_ms_teams_request(request, setting_type=SettingType.PROJECT)
+
+
+@patch("codemie.service.settings.settings_request_validator.customer_config")
+def test_rejects_when_teams_bot_feature_disabled(mock_customer_config):
+    """The retired assistant_project_mapping router gated Teams on this flag; the
+    replacement validator must enforce the same entitlement gate."""
+    mock_customer_config.is_feature_enabled.return_value = False
+    request = _ms_teams_request([CredentialValues(key="assistant_ids", value=["a1"])])
+
+    with pytest.raises(ExtendedHTTPException) as exc_info:
+        validate_ms_teams_request(request, setting_type=SettingType.PROJECT)
+
+    assert exc_info.value.code == status.HTTP_403_FORBIDDEN
+    mock_customer_config.is_feature_enabled.assert_called_once_with("teamsBotIntegration")
+
+
+def test_rejects_user_scope():
+    # Arrange
+    request = _ms_teams_request([CredentialValues(key="assistant_ids", value=["a1"])])
+
+    # Act / Assert
+    with pytest.raises(ExtendedHTTPException) as exc_info:
+        validate_ms_teams_request(request, setting_type=SettingType.USER)
+    assert exc_info.value.code == status.HTTP_400_BAD_REQUEST
+
+
+def test_rejects_missing_project_name():
+    """A None project_name must fail fast with a clear error, not a confusing assistant_ids 400."""
+    request = _ms_teams_request([CredentialValues(key="assistant_ids", value=["a1"])], project_name=None)
+
+    with pytest.raises(ExtendedHTTPException) as exc_info:
+        validate_ms_teams_request(request, setting_type=SettingType.PROJECT)
+    assert exc_info.value.code == status.HTTP_400_BAD_REQUEST
+    assert "project_name" in exc_info.value.message
+
+
+def test_rejects_non_string_assistant_ids():
+    """Non-string elements must be rejected before they reach set()/join() and crash with a 500."""
+    request = _ms_teams_request([CredentialValues(key="assistant_ids", value=["a1", 123])])
+
+    with pytest.raises(ExtendedHTTPException) as exc_info:
+        validate_ms_teams_request(request, setting_type=SettingType.PROJECT)
+    assert exc_info.value.code == status.HTTP_400_BAD_REQUEST
+
+
+def test_rejects_missing_assistant_ids():
+    # Arrange
+    request = _ms_teams_request([])
+
+    # Act / Assert
+    with pytest.raises(ExtendedHTTPException) as exc_info:
+        validate_ms_teams_request(request, setting_type=SettingType.PROJECT)
+    assert exc_info.value.code == status.HTTP_400_BAD_REQUEST
+
+
+@patch("codemie.service.assistant.assistant_service.AssistantService.belongs_to_project")
+def test_rejects_assistant_not_in_project(mock_belongs_to_project):
+    # Arrange
+    mock_belongs_to_project.return_value = False
+    request = _ms_teams_request([CredentialValues(key="assistant_ids", value=["bad-id"])])
+
+    # Act / Assert
+    with pytest.raises(ExtendedHTTPException) as exc_info:
+        validate_ms_teams_request(request, setting_type=SettingType.PROJECT)
+    assert "bad-id" in exc_info.value.details
+
+
+@patch("codemie.rest_api.models.settings.Settings.check_ms_teams_exist")
+@patch("codemie.service.assistant.assistant_service.AssistantService.belongs_to_project")
+def test_rejects_duplicate_ms_teams_row(mock_belongs_to_project, mock_singleton):
+    # Arrange
+    mock_belongs_to_project.return_value = True
+    mock_singleton.side_effect = ValueError("duplicate")
+    request = _ms_teams_request([CredentialValues(key="assistant_ids", value=["a1"])])
+
+    # Act / Assert
+    with pytest.raises(ExtendedHTTPException) as exc_info:
+        validate_ms_teams_request(request, setting_type=SettingType.PROJECT)
+    assert exc_info.value.code == status.HTTP_409_CONFLICT
+
+
+def test_rejects_empty_assistant_ids_list():
+    """An empty assistant_ids list defeats the integration's purpose and must be rejected."""
+    request = _ms_teams_request([CredentialValues(key="assistant_ids", value=[])])
+
+    with pytest.raises(ExtendedHTTPException) as exc_info:
+        validate_ms_teams_request(request, setting_type=SettingType.PROJECT)
+    assert exc_info.value.code == status.HTTP_400_BAD_REQUEST
+
+
+def test_rejects_multiple_assistant_ids_entries():
+    """A second credential_values entry keyed 'assistant_ids' must not be silently dropped."""
+    request = _ms_teams_request(
+        [
+            CredentialValues(key="assistant_ids", value=["a1"]),
+            CredentialValues(key="assistant_ids", value=["a2"]),
+        ]
+    )
+
+    with pytest.raises(ExtendedHTTPException) as exc_info:
+        validate_ms_teams_request(request, setting_type=SettingType.PROJECT)
+    assert exc_info.value.code == status.HTTP_400_BAD_REQUEST
+
+
+@patch("codemie.service.assistant.assistant_service.AssistantService.belongs_to_project")
+def test_rejects_duplicate_assistant_ids_within_list(mock_belongs_to_project):
+    """The same assistant id repeated in the list must not be stored twice."""
+    mock_belongs_to_project.return_value = True
+    request = _ms_teams_request([CredentialValues(key="assistant_ids", value=["a1", "a1"])])
+
+    with pytest.raises(ExtendedHTTPException) as exc_info:
+        validate_ms_teams_request(request, setting_type=SettingType.PROJECT)
+    assert exc_info.value.code == status.HTTP_400_BAD_REQUEST

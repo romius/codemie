@@ -1,0 +1,103 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-14111-move-teams-to-integrations",
+  "head": "bb34b9d7f8d770a1876b4268766d9045b147f193",
+  "runner": "poetry",
+  "started_at": "2026-08-28T08:16:37Z",
+  "completed_at": "2026-08-28T08:30:10Z",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3051,
+      "command": "poetry run ruff format && poetry run ruff check --fix && poetry run ruff check",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 5630,
+      "command": "poetry build",
+      "exit_code": 0
+    },
+    {
+      "id": "license",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1146,
+      "command": "poetry run python scripts/license_headers/check_license_headers.py --check --quiet",
+      "exit_code": 0
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 167016,
+      "command": "poetry run pytest tests/",
+      "exit_code": 0,
+      "notes": "14753 passed, 164 skipped, 189 warnings in 160.49s"
+    },
+    {
+      "id": "secrets-ci",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 234617,
+      "command": "docker run --rm -v \"$(pwd):/workspace\" ghcr.io/gitleaks/gitleaks:v8.30.1 dir --no-banner --verbose --config=/workspace/.gitleaks.toml /workspace",
+      "exit_code": 1,
+      "notes": "35 leaks found, all inside .elasticsearch_data/ and codemie-storage/dev-codemie-user/, both gitignored local runtime artifacts from prior local app/test runs on this checkout, not tracked by git and unrelated to the branch diff. Gate scans the full filesystem (not git history), so local untracked data is in scope of the literal command. First run hit the 3-minute harness timeout scanning ~870MB of local data (exit 143); rerun with an extended timeout completed and found the same finding set. Re-verify from a clean checkout (no local .elasticsearch_data/codemie-storage) or delete/gitleaks-ignore those local dirs before re-running to confirm no real secret in the diff."
+    },
+    {
+      "id": "static-analysis",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 124,
+      "command": "node scripts/sonar/run-local-sonar.js",
+      "exit_code": 0,
+      "notes": "Self-skip: '[sonar-local] Skipping Sonar scan because SONAR_TOKEN is not set.' Set SONAR_TOKEN (and ensure the SonarQube server is reachable) to run this gate locally. Only CI settles this check."
+    },
+    {
+      "id": "coverage",
+      "source": "guide",
+      "status": "SKIPPED",
+      "command": "poetry run coverage run -m pytest tests/ -W ignore::DeprecationWarning --cov --cov-report=html",
+      "notes": "Not requested by the caller for this run."
+    },
+    {
+      "id": "test-harness",
+      "source": "guide",
+      "status": "SKIPPED",
+      "command": "uvx codemie-test-harness --sanity-api",
+      "notes": "Skip if: not opening a merge request in this run (local iteration only). Requires docker compose stack, superadmin fixtures, and ~/.codemie/test-harness.json."
+    },
+    {
+      "id": "secrets-hook",
+      "source": "hook",
+      "status": "SKIPPED",
+      "duration_ms": 1432,
+      "command": "bash scripts/git-hooks/validate_secrets.sh",
+      "exit_code": 0,
+      "notes": "Self-skip: '0 commits scanned.' / 'scanned ~0 bytes (0)' \u2014 nothing is currently staged, so the staged-diff scan had no content to check. Stage the intended changes and re-run to exercise this gate for real; only settles staged content at commit time."
+    },
+    {
+      "id": "commit-msg-hook",
+      "source": "hook",
+      "status": "N/A",
+      "command": "bash scripts/git-hooks/commit_msg.sh",
+      "notes": "No commit is being created in this run; hook validates the commit message subject format only."
+    },
+    {
+      "id": "pre-push-hook",
+      "source": "hook",
+      "status": "N/A",
+      "command": "poetry run pytest tests/ --ignore=tests/enterprise/ -W ignore::DeprecationWarning --cov --cov-report=xml:coverage.xml && SONAR_SKIP_TESTS=1 make sonar-local",
+      "notes": "Opt-in only (CODEMIE_PREPUSH_ENABLED, default false) and triggered on 'git push', not invoked here. Substance already covered by the 'unit' gate (full pytest) and would hit the same SONAR_TOKEN gap as 'static-analysis'."
+    }
+  ],
+  "failures": {
+    "secrets-ci": "gitleaks secrets-ci scan detected 7 finding(s). Raw secret values and surrounding context redacted from this report; only rule/file/line metadata retained below.\n- rule=github-pat file=/workspace/.elasticsearch_data/indices/grTvWuOUSUGP6ul33woWHA/0/index/_2.cfs line=3\n- rule=openai-api-key file=/workspace/codemie-storage/dev-codemie-user/llama.py line=14\n- rule=generic-api-key file=/workspace/codemie-storage/dev-codemie-user/Test cases P1.csv line=1905\n- rule=generic-api-key file=/workspace/codemie-storage/dev-codemie-user/Test cases P1.csv line=2176\n- rule=aws-access-token file=/workspace/codemie-storage/dev-codemie-user/Test cases P1.csv line=2176\n- rule=generic-api-key file=/workspace/codemie-storage/dev-codemie-user/Test cases P1.csv line=2191\n- rule=generic-api-key file=/workspace/codemie-storage/dev-codemie-user/Test cases P1.csv line=2194\n8:28AM INF scanned ~869989240 bytes (869.99 MB) in 3m54s"
+  }
+}

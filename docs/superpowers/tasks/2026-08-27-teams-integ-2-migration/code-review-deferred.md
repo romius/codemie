@@ -1,0 +1,3 @@
+# Deferred from code review — 2026-08-27-teams-integ-2-migration (2026-08-27)
+
+- **update_project_setting allows silent credential_type conversion** — `src/codemie/rest_api/routers/project_settings.py:161` — `update_settings` overwrites a setting's stored `credential_type` with whatever the request specifies, so a WEBHOOK (or other) setting can be silently converted to MS_TEAMS via update without a consistency check between the existing and requested type. Pre-existing: this generic type-switching gap lives in the shared `update_settings` mechanism used by every credential type and predates this migration's ms_teams-specific validation wiring — out of this story's scope.

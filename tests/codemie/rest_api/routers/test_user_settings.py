@@ -492,3 +492,51 @@ async def test_admin_create_litellm_unchanged_when_personal_feature_disabled(
     mock_require_litellm_enabled.assert_called_once_with()
     mock_validate_litellm_request.assert_called_once()
     mock_create_setting.assert_called_once()
+
+
+@pytest.mark.anyio
+@patch('codemie.service.settings.settings.SettingsService.create_setting')
+@patch("codemie.rest_api.security.idp.local.LocalIdp.authenticate")
+async def test_create_user_setting_rejects_ms_teams(mock_authenticate, mock_create_setting):
+    # ms_teams integrations are project-scope only and must be rejected at USER scope.
+    mock_authenticate.return_value = User(id="user123", username="testuser", project_names=["test_project"])
+
+    request_data = {
+        "project_name": "test_project",
+        "alias": "ms-teams-alias",
+        "credential_type": "MSTeams",
+        "credential_values": [{"key": "assistant_ids", "value": ["assistant-1"]}],
+    }
+    transport = ASGITransport(app=app)
+
+    with pytest.raises(ExtendedHTTPException) as excinfo:
+        async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+            await ac.post("/v1/settings/user", headers={"user-id": "user123"}, json=request_data)
+
+    assert excinfo.value.code == status.HTTP_400_BAD_REQUEST
+    mock_create_setting.assert_not_called()
+
+
+@pytest.mark.anyio
+@patch('codemie.service.settings.settings.SettingsService.update_settings')
+@patch('codemie.service.settings.settings.SettingsService.get_setting_ability')
+@patch("codemie.rest_api.security.idp.local.LocalIdp.authenticate")
+async def test_update_user_setting_rejects_ms_teams(mock_authenticate, mock_get_setting_ability, mock_update_settings):
+    # ms_teams integrations are project-scope only and must be rejected at USER scope.
+    mock_authenticate.return_value = User(id="user123", username="testuser", project_names=["test_project"])
+
+    request_data = {
+        "project_name": "test_project",
+        "alias": "ms-teams-alias",
+        "credential_type": "MSTeams",
+        "credential_values": [{"key": "assistant_ids", "value": ["assistant-1"]}],
+    }
+    transport = ASGITransport(app=app)
+
+    with pytest.raises(ExtendedHTTPException) as excinfo:
+        async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+            await ac.put("/v1/settings/user/setting_123", headers={"user-id": "user123"}, json=request_data)
+
+    assert excinfo.value.code == status.HTTP_400_BAD_REQUEST
+    mock_get_setting_ability.assert_not_called()
+    mock_update_settings.assert_not_called()

@@ -1,0 +1,123 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-14111-move-teams-to-integrations",
+  "head": "8d0e65b375dd7871ff33f4e85d5cac72aee328a1",
+  "runner": "poetry",
+  "started_at": "2026-08-31T12:59:01Z",
+  "completed_at": "2026-08-31T13:06:00Z",
+  "status": "BLOCKED",
+  "drift_detected": true,
+  "gates": [
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2422,
+      "command": "make ruff",
+      "exit_code": 0,
+      "notes": "2410 files unchanged by ruff format; ruff check --fix and final ruff check both clean. Covers the same command as the codemie-pre-commit hook's ruff steps (_ruff_staged.sh + ruff check), so that hook chain is not re-run as a separate gate."
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 5894,
+      "command": "make build",
+      "exit_code": 0
+    },
+    {
+      "id": "license",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1270,
+      "command": "make license-check",
+      "exit_code": 0,
+      "notes": "Checked 2146 files, 0 missing license headers. Covers the same check the codemie-pre-commit hook runs as its second step; not re-run separately."
+    },
+    {
+      "id": "gitleaks",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 171690,
+      "command": "make gitleaks",
+      "exit_code": 1,
+      "notes": "34 leaks found by `gitleaks dir` scanning the full working tree, not just tracked/staged content. All findings are in the untracked/gitignored codemie-storage/dev-codemie-user/Test cases P1.csv (aws-access-token, generic-api-key hits) confirmed via `git status --ignored --short` showing '!! codemie-storage/', '!! htmlcov/', '!! src/external/alembic/codemie-storage/'. None of these paths are staged or tracked. The staged-scan hook (codemie-gitleaks) below found 0 leaks on the same tree, confirming no secret entered the tracked diff. Same finding as the prior gate run at head 3e7c823a; unresolved because the local codemie-storage/ artifact directory still exists on disk. Remediation: delete/clean codemie-storage/ and htmlcov/ (or run against a clean checkout) before trusting this gate as green; nothing here is a real committed credential requiring rotation."
+    },
+    {
+      "id": "codemie-gitleaks",
+      "source": "hook",
+      "status": "PASS",
+      "duration_ms": 103,
+      "command": "bash scripts/git-hooks/validate_secrets.sh",
+      "exit_code": 0,
+      "notes": "gitleaks protect --staged via docker (ghcr.io/gitleaks/gitleaks:v8.30.1); 0 leaks found in staged changes."
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 162720,
+      "command": "poetry run pytest tests/",
+      "exit_code": 1,
+      "notes": "29 failed, 15264 passed, 164 skipped. Same two pre-existing root causes as the prior gate run at head 3e7c823a, both unrelated to any commit on this branch: (1) uncommitted working-tree debug edits in src/codemie/rest_api/security/user_providers/persistent.py (line 106 hardcodes authenticate_dev_header(\"devuser\") ahead of the real USER_ID_HEADER branch) and src/codemie/service/user/authentication_service.py (aget_by_id call replaced with a hardcoded UUID literal) break 5 tests; confirmed present via `git diff` on those two files, shown as unstaged modifications in git status at session start, not part of any branch commit. (2) 24 tests (test_provider_adapters.py, test_flow_engine.py, test_state_signing.py) fail with `ImportError: cannot import name 'encode_signed_state' from 'codemie_enterprise.mcp_auth'` -- verified directly by re-running test_state_signing.py::test_round_trip in isolation; the installed codemie_enterprise package does not export encode_signed_state/exchange_authorization_code that src/codemie/service/oauth/state_signing.py and provider_adapters.py depend on. This is dependency/spec drift, not something the tested change introduced. Covers the pytest step of the (opt-in, disabled-by-default) codemie-pre-push hook; not re-run separately."
+    },
+    {
+      "id": "coverage",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 0,
+      "command": "make coverage",
+      "exit_code": null,
+      "notes": "Skip if: user did not request coverage. Not requested for this run."
+    },
+    {
+      "id": "sonar",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 30,
+      "command": "SONAR_SKIP_TESTS=1 make sonar-local",
+      "exit_code": 0,
+      "notes": "Self-skip signal in output: \"[sonar-local] Skipping Sonar scan because SONAR_TOKEN is not set.\" Exit 0 is not evidence the scan ran. Enable locally by exporting SONAR_TOKEN for a reachable SonarQube instance. Also covers the sonar step of the codemie-pre-push hook."
+    },
+    {
+      "id": "verify",
+      "source": "guide",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "make verify",
+      "exit_code": null,
+      "notes": "Composite of ruff + license + gitleaks + test, all already run individually above. Not independently re-executed to avoid duplicating the ~2.9-minute `make gitleaks` dir scan and the ~2.7-minute full pytest run. Given gitleaks FAIL and unit FAIL above, `make verify` would fail at the gitleaks step exactly as the standalone gitleaks gate did."
+    },
+    {
+      "id": "test-harness",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 0,
+      "command": "make test-harness",
+      "exit_code": null,
+      "notes": "Skip if: not opening a merge request (local iteration only). No docker stack, superadmin fixtures, or ~/.codemie/test-harness.json were provisioned for this run."
+    },
+    {
+      "id": "codemie-commit-msg",
+      "source": "hook",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "bash scripts/git-hooks/commit_msg.sh",
+      "exit_code": null,
+      "notes": "Validates a commit message prefix (EPMCDME-<n>:); no commit was created during this gate run so there is no message to validate."
+    },
+    {
+      "id": "wait-ci-init",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "gitlab-ci wait-ci-init (EXPECTED_CONTEXTS: ci-pipeline, compliance-report)",
+      "exit_code": null,
+      "notes": ".gitlab-ci.yml only defines a pre-ci-guard stage that waits on external status contexts (ci-pipeline, compliance-report) supplied by another pipeline system; it enforces nothing locally checkable and requires a live GitLab CI/MR context this environment does not have."
+    }
+  ],
+  "failures": {
+    "gitleaks": "1:02PM INF scanned ~647367751 bytes (647.37 MB) in 2m51s\n1:02PM WRN leaks found: 34\nmake: *** [gitleaks] Error 1\n\nAll findings resolve to codemie-storage/dev-codemie-user/Test cases P1.csv (aws-access-token, generic-api-key rule hits at lines 1901, 1905, 2176 x2, 2191, 2194, and further lines beyond the truncated tail). `git status --ignored --short` confirms: '!! codemie-storage/', '!! htmlcov/', '!! src/external/alembic/codemie-storage/'. None of these paths are staged or tracked; the staged-scan hook (codemie-gitleaks) found 0 leaks on the same tree.",
+    "unit": "FAILED tests/codemie/rest_api/security/test_persistent_user_provider.py::TestPersistentUserProvider::test_authenticate_dev_header_local_env\nFAILED tests/codemie/rest_api/security/test_persistent_user_provider.py::TestPersistentUserProvider::test_bearer_jwt_in_local_env_uses_local_jwt_validation\nFAILED tests/codemie/rest_api/security/test_persistent_user_provider.py::TestPersistentUserProvider::test_bare_authorization_value_no_longer_triggers_dev_auth\nFAILED tests/codemie/rest_api/security/test_persistent_user_provider.py::TestPersistentUserProvider::test_dev_header_wins_over_bearer_jwt_in_local_env\nFAILED tests/codemie/service/oauth/adapters/test_provider_adapters.py::test_gitlab_exchange_maps_enterprise_token_data\nFAILED tests/codemie/service/oauth/adapters/test_provider_adapters.py::test_atlassian_exchange_maps_enterprise_token_data\nFAILED tests/codemie/service/oauth/test_flow_engine.py::test_happy_path_persists_and_succeeds\nFAILED tests/codemie/service/oauth/test_flow_engine.py::test_cr001_integration_id_mismatch_is_rejected_and_never_persists\nFAILED tests/codemie/service/oauth/test_flow_engine.py::test_user_id_mismatch_is_rejected\nFAILED tests/codemie/service/oauth/test_flow_engine.py::test_tampered_state_is_rejected\nFAILED tests/codemie/service/oauth/test_flow_engine.py::test_provider_error_publishes_terminal_result_for_waiting_tab\nFAILED tests/codemie/service/oauth/test_flow_engine.py::test_token_exchange_failure_publishes_terminal_result\nFAILED tests/codemie/service/oauth/test_flow_engine.py::test_finalize_failure_is_reported_and_no_token_persisted\nFAILED tests/codemie/service/oauth/test_flow_engine.py::test_credentials_are_not_stored_in_the_pkce_record\nFAILED tests/codemie/service/oauth/test_flow_engine.py::test_persist_failure_publishes_error_not_success\nFAILED tests/codemie/service/oauth/test_flow_engine.py::test_test_mode_validates_without_persisting\nFAILED tests/codemie/service/oauth/test_flow_engine.py::test_initiate_test_mode_allows_no_integration\nFAILED tests/codemie/service/oauth/test_flow_engine.py::test_callback_redis_error_on_consume_returns_503\nFAILED tests/codemie/service/oauth/test_state_signing.py::test_round_trip - ImportError: cannot import name 'encode_signed_state' from 'codemie_enterprise.mcp_auth'\nFAILED tests/codemie/service/oauth/test_state_signing.py::test_rejects_tamper\nFAILED tests/codemie/service/oauth/test_state_signing.py::test_rejects_wrong_key\nFAILED tests/codemie/service/oauth/test_state_signing.py::test_rejects_expired\nFAILED tests/codemie/service/oauth/test_state_signing.py::test_rejects_future_timestamp\nFAILED tests/codemie/service/oauth/test_state_signing.py::test_rejects_wrong_provider\nFAILED tests/codemie/service/oauth/test_state_signing.py::test_accepts_provider_in_allowlist\nFAILED tests/codemie/service/oauth/test_state_signing.py::test_rejects_malformed[]\nFAILED tests/codemie/service/oauth/test_state_signing.py::test_rejects_malformed[no-dot]\nFAILED tests/codemie/service/oauth/test_state_signing.py::test_rejects_malformed[a.b.c]\nFAILED tests/codemie/service/user/test_authentication_service.py::TestAuthenticateDevHeader::test_authenticate_dev_header_existing_user\n=== 29 failed, 15264 passed, 164 skipped, 191 warnings in 156.20s (0:02:36) ====\n\nRoot cause 1 (5 failures, persistent.py/authentication_service.py): uncommitted debug edits present in the working tree at session start -- persistent.py:106 hardcodes authenticate_dev_header(\"devuser\") ahead of the real USER_ID_HEADER-derived call; authentication_service.py replaced `aget_by_id(session, user_id)` with a hardcoded UUID literal.\nRoot cause 2 (24 failures, oauth/*): `from codemie_enterprise.mcp_auth import encode_signed_state` (and exchange_authorization_code / MCPAuthTokenExchangeError) raises ImportError against the installed codemie_enterprise package -- src/codemie/service/oauth/state_signing.py and src/codemie/service/oauth/provider_adapters.py depend on an enterprise API surface the currently installed package does not export."
+  }
+}

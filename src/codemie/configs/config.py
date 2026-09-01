@@ -191,6 +191,7 @@ class Config(BaseSettings):
     ] = "local"
     KEYCLOAK_LOGOUT_URL: str = ""
     ADMIN_USER_ID: str = ""
+    TEAMS_SERVICE_ACCOUNT_ID: str = "codemie-teams-bot"
     ADMIN_ROLE_NAME: str = "admin"
 
     # ===========================================

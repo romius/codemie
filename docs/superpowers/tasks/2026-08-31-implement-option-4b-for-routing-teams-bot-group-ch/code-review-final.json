@@ -1,0 +1,142 @@
+{
+  "decision": "request-changes",
+  "rationale": "Critical: AssistantRequestHandler's conversation-level Ability(self.user) checks run against the resolved Teams billing user (get_request_handler is invoked with billing_user in both _ask_assistant and _ask_virtual_assistant), contradicting the required design that access control stay pinned to the original service-account caller. Critical: the ms_teams singleton partial-unique-index predicate ('MS_TEAMS') no longer matches the renamed enum value ('MSTeams'), so the DB-level race guard is silently inert. Acceptance lens did not run (no spec/story artifact) so no business_review rows exist and decision_needed is unavailable; ambiguous-but-introduced findings were routed to patch/major per no-spec rules. diff_metadata.oversized is true, so review windows around each finding's call sites were read rather than every changed file end-to-end -- treat coverage as partial. Standards audit flagged one blocking commit-format violation (3 of ~38 commit subjects use a task-slug prefix instead of EPMCDME-####). 9 findings dismissed as noise: the header-trust-without-signature concern (blind #1 / edge-case #1) matches the explicitly requested option-4b design and is not a defect; several other blind-lens items (GitlabConfig token requirement weakening, GenericJiraIssueTool eager-init uncertainty, LiteLLM reasoning-strip edge case, migration downgrade backup asymmetry, already-documented mapping-data-loss on downgrade, speculative no-periodic-reconciliation claim, multimodal-attribute-missing masking, non-allowlisted-fallback observability gap, MSTeams string-literal duplication) were speculative, already self-documented, or below the blocking floor. No findings were deferred: nothing in this diff is established as pre-existing by the original task or a spec/story, so out-of-scope claims were graded on their merits instead.",
+  "confidence": "low",
+  "risk_flags": ["security", "auth"],
+  "business_review": [],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "partial",
+      "notes": "3 of ~38 commit subjects use a task-slug prefix ('teams-integ-N-...') instead of the required EPMCDME-####: Description format; all others comply."
+    },
+    {
+      "kind": "code-quality",
+      "status": "pass",
+      "notes": "Spot-checked billing_user_resolver.py, config.py TEAMS_SERVICE_ACCOUNT_ID addition, and assistant.py header helper/routing calls: typed signatures, docstrings present, no violations found."
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "resolve_billing_user only substitutes billing identity for the allow-listed service-account caller; sender_email is used only as a lookup key, never logged; no credentials logged in reviewed paths."
+    }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/codemie/rest_api/handlers/assistant_handlers.py",
+      "line": 125,
+      "title": "Conversation Ability check uses billing user, not caller",
+      "problem": "AssistantRequestHandler._validate_interactive_response, _populate_conversation_history, and _populate_conversation_history_legacy call Ability(self.user).can(Action.READ, conversation) at lines 125, 181 and 244. self.user is set from get_request_handler(assistant, billing_user, request_uuid), which both _ask_assistant and _ask_virtual_assistant in src/codemie/rest_api/routers/assistant.py call with billing_user (the Teams-resolved end-user), not the router's original authenticated `user`.",
+      "impact": "The task explicitly requires access control (Ability(user).can(...)) to stay evaluated against the original authenticated service-account caller while only budget/LLM-context resolution uses the resolved Teams end-user. Because conversation-history reads are gated on self.user = billing_user, a caller holding the Teams service account's credentials can supply any resolvable sender_email plus that user's conversation_id and pass the Ability check purely on the resolved user's own ownership of the conversation -- bypassing the service account's actual authorization boundary and letting the caller read/replay another user's conversation history.",
+      "recommendation": "Keep get_request_handler (and AssistantRequestHandler.self.user) bound to the original authenticated caller for all Ability/authorization checks; pass billing_user separately (e.g. a dedicated billing_user constructor/field) only to the call sites that need it for usage recording, request-summary attribution, and set_llm_context."
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/rest_api/models/settings.py",
+      "line": 331,
+      "title": "prune_ms_teams_assistant_id unbounded scan and silent failure",
+      "problem": "prune_ms_teams_assistant_id runs Settings.get_all_by_fields({\"credential_type.keyword\": \"MSTeams\"}), an unfiltered scan of every ms_teams settings row across all projects, invoked from Assistant.delete_assistant() and update_assistant()'s project-change path. Both call sites wrap it in a try/except that only logs a warning on failure.",
+      "impact": "Every assistant delete/move pays an O(all-ms_teams-rows) cost that grows with the number of Teams integrations, and a failed prune leaves a stale assistant id inside an ms_teams settings row indefinitely with no retry, alert, or visible marker of drift.",
+      "recommendation": "Scope the lookup to the affected project (or paginate/batch it), and record a durable retry/reconciliation signal (metric, dead-letter row, or scheduled reconciliation job) instead of only logging a warning on prune failure."
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/rest_api/routers/project_settings.py",
+      "line": 6136,
+      "title": "MS_TEAMS setting update on unknown id raises 422 not 404",
+      "problem": "update_project_setting's MS_TEAMS branch calls existing_setting = Settings.get_by_id(setting_id) and then accesses existing_setting.project_name without checking existing_setting is not None.",
+      "impact": "A request against a setting_id that does not exist raises an unhandled AttributeError, which surfaces as a generic 422 instead of a clear 404, making the failure mode confusing for API consumers.",
+      "recommendation": "Add `if existing_setting is None: raise ExtendedHTTPException(404, 'Setting not found')` before dereferencing existing_setting."
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/service/settings/settings.py",
+      "title": "OAuth-cleanup dispatch on delete has no end-to-end test",
+      "problem": "SettingsService.delete_setting now dispatches to _cleanup_gitlab_oauth_tokens/_cleanup_jira_oauth_tokens/_cleanup_confluence_oauth_tokens based on setting.credential_type, and delete_project_setting in src/codemie/rest_api/routers/project_settings.py now calls SettingsService.delete_setting(credential_id=setting_id, user_id=user.id) instead of Settings.delete_setting(setting_id) directly. No test drives DELETE /v1/settings/project/{id} (or otherwise calls SettingsService.delete_setting) and asserts a cleanup helper is invoked; the existing router test for delete still exercises the old Settings.delete_setting call pattern.",
+      "impact": "A regression in the credential_type dispatch (a dropped provider branch, inverted condition, or the router reverting to Settings.delete_setting) would leave per-user OAuth tokens live in TMS after a project-scoped OAuth integration is deleted, and no test would catch it.",
+      "recommendation": "Add a test that drives delete_project_setting (or SettingsService.delete_setting directly) for each of GITLAB_OAUTH/JIRA_OAUTH/CONFLUENCE_OAUTH and asserts the matching _cleanup_*_oauth_tokens helper is invoked."
+    },
+    {
+      "id": "CR-005",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/service/settings/settings_request_validator.py",
+      "line": 10653,
+      "title": "validate_ms_teams_request skips project existence check",
+      "problem": "validate_ms_teams_request checks that assistant_ids belong to the target project via AssistantService.belongs_to_project, but does not verify project_name itself refers to an existing, non-deleted project -- a check the retired AssistantProjectMappingService performed.",
+      "impact": "An ms_teams setting can be created or updated against a nonexistent or soft-deleted project, unlike the behavior it replaces.",
+      "recommendation": "Add a project-existence/not-deleted check for project_name in validate_ms_teams_request, raising a 404 when it fails."
+    },
+    {
+      "id": "CR-006",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/service/user/billing_user_resolver.py",
+      "line": 38,
+      "title": "resolve_billing_user does not validate resolved user",
+      "problem": "resolve_billing_user looks up db_user = user_repository.get_by_email(session, sender_email) and only checks db_user is not None before substituting it as the billing identity. UserDB (src/codemie/rest_api/models/user_management.py) has is_active, deleted_at and user_type ('regular' | 'external' | 'service_account') fields, none of which are checked here, and get_by_email applies no such filter either.",
+      "impact": "A sender_email that resolves to a deactivated/soft-deleted user silently attributes budget and usage to that account with no caller-visible error. A sender_email that resolves to a different service_account user swaps billing to that second service account's budget instead of a real Teams end-user, defeating the stated purpose of routing to per-user budgets.",
+      "recommendation": "In resolve_billing_user, after the lookup, reject (clear error) when db_user.is_active is False, db_user.deleted_at is set, or db_user.user_type == 'service_account'."
+    },
+    {
+      "id": "CR-007",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie_tools/data_management/workspace/inspect_workspace_image_tool.py",
+      "title": "Vision-model call has no timeout and a hardcoded max_tokens",
+      "problem": "InspectWorkspaceImageTool.execute() invokes chat_model.invoke(...) with a hardcoded max_tokens=3000 and no explicit timeout, unlike other tool invocations in the codebase that plumb through request_id/streaming controls.",
+      "impact": "A slow or hanging vision-provider call has no visible upper bound on wall-clock time from this code path, which can hang the request beyond normal expectations.",
+      "recommendation": "Pass an explicit timeout to chat_model.invoke(...) consistent with other tool call sites, and make max_tokens configurable rather than hardcoded."
+    },
+    {
+      "id": "CR-008",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/external/alembic/versions/c3d4e5f6a7b8_migrate_assistant_project_mapping_to_settings.py",
+      "title": "Migrated ms_teams settings rows get a NULL alias",
+      "problem": "_merge_assistant_ids/upgrade() in this migration inserts a new ms_teams settings row per project without setting a non-null alias.",
+      "impact": "Settings.check_alias_unique raises 'Alias is required' the first time such a migrated row is edited through the normal update API, blocking an otherwise valid update.",
+      "recommendation": "Generate a deterministic alias (e.g. f'ms-teams-{project_name}') when inserting the row in the migration."
+    },
+    {
+      "id": "CR-009",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/external/alembic/versions/f1a2b3c4d5e6_add_ms_teams_singleton_unique_index.py",
+      "line": 45,
+      "title": "Singleton index predicate stale after credential_type rename",
+      "problem": "The partial unique index uix_settings_project_ms_teams_singleton is created with postgresql_where=sa.text(\"credential_type = 'MS_TEAMS'\"). CredentialTypes.MS_TEAMS in src/codemie_tools/base/models.py:113 has value 'MSTeams' (renamed by commit bdd044b29), so every ms_teams row now stores credential_type='MSTeams', which the index predicate no longer matches.",
+      "impact": "The DB-level race-safety backstop for the singleton constraint (the stated defense for check_ms_teams_exist's read-then-write TOCTOU race) is silently inert: concurrent creates can both pass the application-level check and insert duplicate active ms_teams integrations per project with nothing at the database level to stop them.",
+      "recommendation": "Add a follow-up migration that drops and recreates the partial index with postgresql_where=sa.text(\"credential_type = 'MSTeams'\") to match the renamed enum value."
+    },
+    {
+      "id": "CR-010",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "unknown",
+      "title": "Commit subjects break ticket-prefix format",
+      "problem": "3 of ~38 commit subjects in the review range ('teams-integ-1-foundation: add planning artifacts', 'teams-integ-2-migration: add planning artifacts', 'teams-integ-3-read-merge: add planning artifacts') use a task-slug prefix instead of the documented 'EPMCDME-####: Description' format.",
+      "impact": "Violates the project's documented, blocking commit-format standard (.ai-run/guides/standards/git-workflow.md).",
+      "recommendation": "Reword the 3 subjects to the EPMCDME-14111: <description> format (e.g. via rebase/reword), or squash them into a ticket-prefixed commit per the guide's merge strategy before merge."
+    }
+  ]
+}

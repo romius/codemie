@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import pytest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from fastapi import FastAPI, status
 from httpx import AsyncClient, ASGITransport
 
@@ -192,3 +192,219 @@ async def test_delete_project_setting_logs_on_success(
     message = mock_logger.info.call_args[0][0]
     assert "project_setting_deleted" in message
     assert "set-1" in message
+
+
+@pytest.mark.anyio
+@patch('codemie.service.settings.settings.SettingsService.create_setting')
+@patch("codemie.rest_api.security.idp.local.LocalIdp.authenticate")
+async def test_create_ms_teams_project_setting_succeeds(mock_authenticate, mock_create_setting):
+    user = User(id="user123", username="testuser", project_names=["proj1"])
+    user.is_admin = True
+    mock_authenticate.return_value = user
+
+    payload = {
+        "project_name": "proj1",
+        "alias": "teams-integration",
+        "credential_type": "MSTeams",
+        "credential_values": [{"key": "assistant_ids", "value": ["a1"]}],
+    }
+
+    with patch("codemie.rest_api.routers.project_settings.validate_ms_teams_request") as mock_validate:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+            response = await ac.post("/v1/settings/project", json=payload, headers={"user-id": "user123"})
+
+    assert response.status_code == 200
+    mock_validate.assert_called_once()
+    mock_create_setting.assert_called_once()
+
+
+@pytest.mark.anyio
+@patch('codemie.service.settings.settings.SettingsService.create_setting')
+@patch("codemie.rest_api.security.idp.local.LocalIdp.authenticate")
+async def test_create_ms_teams_project_setting_rejects_invalid_request(mock_authenticate, mock_create_setting):
+    user = User(id="user123", username="testuser", project_names=["proj1"])
+    user.is_admin = True
+    mock_authenticate.return_value = user
+
+    payload = {
+        "project_name": "proj1",
+        "alias": "teams-integration",
+        "credential_type": "MSTeams",
+        "credential_values": [{"key": "assistant_ids", "value": ["bad-id"]}],
+    }
+
+    with patch(
+        "codemie.rest_api.routers.project_settings.validate_ms_teams_request",
+        side_effect=ExtendedHTTPException(
+            code=status.HTTP_400_BAD_REQUEST, message="Invalid assistant_ids", details="bad-id", help="fix it"
+        ),
+    ):
+        transport = ASGITransport(app=app)
+        with pytest.raises(ExtendedHTTPException) as excinfo:
+            async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+                await ac.post("/v1/settings/project", json=payload, headers={"user-id": "user123"})
+
+    assert excinfo.value.code == status.HTTP_400_BAD_REQUEST
+    mock_create_setting.assert_not_called()
+
+
+@pytest.mark.anyio
+@patch('codemie.service.settings.settings.SettingsService.create_setting')
+@patch("codemie.rest_api.security.idp.local.LocalIdp.authenticate")
+async def test_create_ms_teams_project_setting_checks_permission_before_validation(
+    mock_authenticate, mock_create_setting
+):
+    """An unauthorized caller must be rejected before validate_ms_teams_request runs, so
+    ms_teams existence for a project the caller cannot access is never leaked."""
+    user = User(id="user123", username="testuser", project_names=[])
+    user.is_admin = False
+    mock_authenticate.return_value = user
+
+    payload = {
+        "project_name": "other-proj",
+        "alias": "teams-integration",
+        "credential_type": "MSTeams",
+        "credential_values": [{"key": "assistant_ids", "value": ["a1"]}],
+    }
+
+    with patch("codemie.rest_api.routers.project_settings.validate_ms_teams_request") as mock_validate:
+        transport = ASGITransport(app=app)
+        with pytest.raises(ExtendedHTTPException) as excinfo:
+            async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+                await ac.post("/v1/settings/project", json=payload, headers={"user-id": "user123"})
+
+    assert excinfo.value.code == status.HTTP_403_FORBIDDEN
+    mock_validate.assert_not_called()
+    mock_create_setting.assert_not_called()
+
+
+@pytest.mark.anyio
+@patch("codemie.rest_api.routers.project_settings.Settings")
+@patch("codemie.rest_api.routers.project_settings.Ability")
+@patch('codemie.service.settings.settings.SettingsService.update_settings')
+@patch('codemie.service.settings.settings.SettingsService.get_setting_ability')
+@patch("codemie.rest_api.security.idp.local.LocalIdp.authenticate")
+async def test_update_ms_teams_project_setting_revalidates(
+    mock_authenticate, mock_get_setting_ability, mock_update_settings, mock_ability, mock_settings
+):
+    from codemie.rest_api.models.settings import SettingType
+
+    user = User(id="user123", username="testuser", project_names=["proj1"])
+    user.is_admin = True
+    mock_authenticate.return_value = user
+    mock_ability.return_value.can.return_value = True
+    mock_get_setting_ability.return_value = MagicMock()
+    mock_settings.get_by_id.return_value = MagicMock(project_name="proj1")
+
+    payload = {
+        "project_name": "proj1",
+        "alias": "teams-integration",
+        "credential_type": "MSTeams",
+        "credential_values": [{"key": "assistant_ids", "value": ["a1", "a2"]}],
+    }
+
+    with patch("codemie.rest_api.routers.project_settings.validate_ms_teams_request") as mock_validate:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+            response = await ac.put("/v1/settings/project/setting-1", json=payload, headers={"user-id": "user123"})
+
+    assert response.status_code == 200
+    mock_validate.assert_called_once_with(
+        mock_validate.call_args[0][0], setting_type=SettingType.PROJECT, setting_id="setting-1"
+    )
+    mock_update_settings.assert_called_once()
+
+
+@pytest.mark.anyio
+@patch("codemie.service.settings.settings_request_validator.Settings")
+@patch("codemie.rest_api.routers.project_settings.Ability")
+@patch('codemie.service.settings.settings.SettingsService.update_settings')
+@patch('codemie.service.settings.settings.SettingsService.get_setting_ability')
+@patch("codemie.rest_api.security.idp.local.LocalIdp.authenticate")
+async def test_update_ms_teams_project_setting_rejects_project_mismatch(
+    mock_authenticate, mock_get_setting_ability, mock_update_settings, mock_ability, mock_settings
+):
+    """The setting being updated actually belongs to 'proj1'; a caller may not smuggle
+    a different project_name into the PUT body to have it validated/applied instead.
+
+    validate_ms_teams_request (not the router) owns this check, so it must run for real
+    here rather than being mocked out."""
+    user = User(id="user123", username="testuser", project_names=["proj1"])
+    user.is_admin = True
+    mock_authenticate.return_value = user
+    mock_ability.return_value.can.return_value = True
+    mock_get_setting_ability.return_value = MagicMock()
+    mock_settings.get_by_id.return_value = MagicMock(project_name="proj1")
+
+    payload = {
+        "project_name": "other-proj",
+        "alias": "teams-integration",
+        "credential_type": "MSTeams",
+        "credential_values": [{"key": "assistant_ids", "value": ["a1"]}],
+    }
+
+    transport = ASGITransport(app=app)
+    with pytest.raises(ExtendedHTTPException) as excinfo:
+        async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+            await ac.put("/v1/settings/project/setting-1", json=payload, headers={"user-id": "user123"})
+
+    assert excinfo.value.code == status.HTTP_400_BAD_REQUEST
+    assert excinfo.value.message == "Project mismatch"
+    mock_update_settings.assert_not_called()
+
+
+@pytest.mark.anyio
+@patch('codemie.service.settings.settings.SettingsService.create_setting')
+@patch("codemie.rest_api.security.idp.local.LocalIdp.authenticate")
+async def test_create_ms_teams_integrity_error_maps_to_409(mock_authenticate, mock_create_setting):
+    """The ms_teams-specific 409 must only fire for MS_TEAMS credential_type."""
+    from sqlalchemy.exc import IntegrityError
+
+    user = User(id="user123", username="testuser", project_names=["proj1"])
+    user.is_admin = True
+    mock_authenticate.return_value = user
+    mock_create_setting.side_effect = IntegrityError("stmt", {}, Exception("dup"))
+
+    payload = {
+        "project_name": "proj1",
+        "alias": "teams-integration",
+        "credential_type": "MSTeams",
+        "credential_values": [{"key": "assistant_ids", "value": ["a1"]}],
+    }
+
+    with patch("codemie.rest_api.routers.project_settings.validate_ms_teams_request"):
+        transport = ASGITransport(app=app)
+        with pytest.raises(ExtendedHTTPException) as excinfo:
+            async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+                await ac.post("/v1/settings/project", json=payload, headers={"user-id": "user123"})
+
+    assert excinfo.value.code == status.HTTP_409_CONFLICT
+    assert "ms_teams" in excinfo.value.message
+
+
+@pytest.mark.anyio
+@patch("codemie.rest_api.routers.project_settings.logger")
+@patch('codemie.service.settings.settings.SettingsService.create_setting')
+@patch("codemie.rest_api.security.idp.local.LocalIdp.authenticate")
+async def test_create_git_integrity_error_maps_to_generic_422(mock_authenticate, mock_create_setting, mock_logger):
+    """A non-ms_teams IntegrityError must not be reported as an ms_teams conflict."""
+    from sqlalchemy.exc import IntegrityError
+
+    mock_authenticate.return_value = _admin_user()
+    mock_create_setting.side_effect = IntegrityError("stmt", {}, Exception("dup alias"))
+
+    payload = {
+        "project_name": "test_project",
+        "alias": "my-git",
+        "credential_type": "Git",
+        "credential_values": [{"key": "token", "value": "super-secret-token"}],
+    }
+
+    transport = ASGITransport(app=app)
+    with pytest.raises(ExtendedHTTPException) as excinfo:
+        async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+            await ac.post("/v1/settings/project", headers={"user-id": "admin1"}, json=payload)
+
+    assert excinfo.value.code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert "ms_teams" not in excinfo.value.message

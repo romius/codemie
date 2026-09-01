@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "generated": "2026-08-27T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 6, "label": "XXL" },
+    "file_change_estimate": { "score": 6, "label": "XXL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 5, "label": "XL" }
+  },
+  "total": 25,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 33,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Three alembic migrations (enum add, data migration, singleton index), Settings model (check_ms_teams_singleton), two routers (project_settings.py, user_settings.py), settings_request_validator.py (new validate_ms_teams_request), and codemie_tools/base/models.py (CredentialTypes.MS_TEAMS) — 6+ components spanning DB-Persistence, Service, and API layers, plus a new invariant (application read-then-write check backed by a DB partial unique index)."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "Irreversible data migration: assistant_project_mapping rows are deduped/merged into settings.credential_values by project_name with no filter on the mapping table's `feature` column, then the source table, its FK, unique constraint, and index are dropped. If any assistant_project_mapping rows belonged to a feature other than ms_teams, that data is silently folded into MS_TEAMS credentials with no way to recover it — downgrade() reconstructs the table but not the original per-row feature/created_at/updated_by values. Combined with the new partial-unique-index concurrency guard, this has no exact precedent in the codebase."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "diffstat reports 33 files changed (mapped to XXL per the 16+ threshold). Note: the bulk of that count is docs/superpowers/tasks/2026-08-27-teams-integ-1-foundation/* artifacts from a prior, already-landed task bundled into the same diff, not new work for this migration story; the code-relevant footprint is 14 files (.gitignore, 5 app modules, 3 new alembic revisions, 5 test files)."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "DB-Persistence (3 alembic revisions, settings table schema/index changes), Service (settings_request_validator.validate_ms_teams_request, Settings.check_ms_teams_singleton), and API (project_settings.py, user_settings.py routing) — a schema-change/migration spanning three layers."
+    }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped: 'Changes database schema significantly' (enum sync + partial unique index) and 'Requires data migration' (assistant_project_mapping merge into settings), capped at XXL(6).",
+    "Affected Layers bumped: 'Changes database schema significantly' pushes the 3-layer (DB-Persistence/Service/API) schema-migration case from the base M to XL(5)."
+  ],
+  "split_recommendation": null
+}

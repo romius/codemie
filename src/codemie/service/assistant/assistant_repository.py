@@ -236,8 +236,33 @@ class AssistantRepository:
         Returns:
             The updated assistant
         """
+        old_project_name = assistant.project
         assistant.update_assistant(assistant_request, user)
+
+        if assistant.project != old_project_name:
+            AssistantRepository._prune_ms_teams_assistant_id_on_project_move(str(assistant.id), assistant.project)
+
         return assistant
+
+    @staticmethod
+    def _prune_ms_teams_assistant_id_on_project_move(assistant_id: str, new_project_name: str) -> None:
+        """Drop a moved assistant's id from every ms_teams settings row outside its new project.
+
+        The ms_teams assistant_ids list has no FK/cascade to the assistant, so a project move
+        must be reflected explicitly or a stale reference lingers. Failures are logged, not
+        raised — this is best-effort cleanup and must never fail the assistant update itself.
+        """
+        from codemie.configs.logger import logger
+        from codemie.rest_api.models.settings import Settings
+
+        try:
+            pruned = Settings.prune_ms_teams_assistant_id(assistant_id, keep_project_name=new_project_name)
+            if pruned:
+                logger.info(
+                    f"Pruned assistant {assistant_id} from {pruned} ms_teams settings row(s) after project move"
+                )
+        except Exception as e:
+            logger.warning(f"Failed to prune ms_teams assistant_ids after moving assistant {assistant_id}: {e}")
 
     @staticmethod
     def enrich_system_prompt_history(assistant: Assistant) -> Assistant:

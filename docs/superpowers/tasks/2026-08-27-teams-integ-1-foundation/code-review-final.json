@@ -1,0 +1,61 @@
+{
+  "decision": "request-changes",
+  "rationale": "Blocking: USER-scope ms_teams settings are never rejected (POST/PUT /v1/settings/user has no MS_TEAMS branch, and the validator's own setting_type!=PROJECT guard is unreachable since project_settings.py hardcodes PROJECT), which fails the spec's required USER-scope rejection criterion; a code-quality standard (Optional[X] vs X | None) is violated; and assistant_ids validation is under-strict (accepts empty list, drops extra duplicate-keyed entries, never dedupes ids). 1 deferred: update_project_setting validates ms_teams singleton/ownership against the request body's project_name rather than the target setting's actual project, but this mirrors the pre-existing, unchanged check_alias_unique pattern shared by every credential type, so fixing it here alone is out of this story's scope. 7 findings dismissed as noise after verifying against source: the reported enum-case mismatch (model uses 'ms_teams', migration uses 'MS_TEAMS') is not a bug — SQLAlchemy Enum columns store the member name, and every prior credential-type migration (e.g. GOOGLE_OAUTH) follows the identical name-based pattern; the matching downgrade()-delete-mismatch claim is the same false premise; check_ms_teams_singleton's get_by_fields(...).id usage exactly mirrors the pre-existing check_alias_unique/check_webhook_id_unique pattern in the same file; the claimed unused CredentialTypes import does not exist in settings_request_validator.py; the check-then-create singleton race is an explicit trade-off named by the original task itself ('app-level singleton'); an uncaught non-ValueError from check_ms_teams_singleton mirrors existing handling elsewhere; and an empty/None project_name still fails safely via the assistant-ownership check.",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    { "kind": "spec", "item": "CredentialTypes.MS_TEAMS == \"ms_teams\" exists and a passing Alembic migration adds it to the Postgres enum", "status": "pass", "notes": "Verified against models.py and migration 8b2c1a4d5e6f; enum storage follows the existing name-based convention." },
+    { "kind": "spec", "item": "POST /v1/settings/project ms_teams (PROJECT scope, valid assistant_ids, no existing row) succeeds", "status": "pass", "notes": "project_settings.py wires validate_ms_teams_request into create_project_setting." },
+    { "kind": "spec", "item": "The same request with setting_type=USER is rejected", "status": "fail", "notes": "Unreachable in practice: user_settings.py has no MS_TEAMS branch and validate_ms_teams_request is never invoked with setting_type=USER from any real route." },
+    { "kind": "spec", "item": "An assistant id that does not exist, or belongs to a different project, is rejected", "status": "pass", "notes": "validate_ms_teams_request checks AssistantService.belongs_to_project per id." },
+    { "kind": "spec", "item": "A second ms_teams row on a project that already has one is rejected", "status": "pass", "notes": "check_ms_teams_singleton raises ValueError mapped to HTTP 409." },
+    { "kind": "spec", "item": "PUT re-validates assistant_ids the same way when the list changes", "status": "pass", "notes": "update_project_setting calls validate_ms_teams_request on the MS_TEAMS branch." },
+    { "kind": "spec", "item": "GET/DELETE for ms_teams rows work without any new code path", "status": "pass", "notes": "No changes to GET/DELETE handlers; generic paths apply." },
+    { "kind": "spec", "item": "No reference to features:teamsBotIntegration in the new ms_teams paths", "status": "pass", "notes": "No occurrences in the changed files." },
+    { "kind": "spec", "item": "Permission check reuses existing _check_permission/ability checks unchanged", "status": "pass", "notes": "Unmodified ability checks apply identically to the ms_teams branch." },
+    { "kind": "spec", "item": "No new feature-flag gating added on ms_teams paths", "status": "pass", "notes": "No feature-flag checks in validator or router branches." }
+  ],
+  "standards_review": [
+    { "kind": "commit-format", "status": "pass", "notes": "All 3 commit subjects match the documented 'EPMCDME-####: Description' format." },
+    { "kind": "code-quality", "status": "partial", "notes": "New Optional[str] import/usage in settings_request_validator.py deviates from the module's own established 'X | None' style." },
+    { "kind": "security", "status": "pass", "notes": "Relies on existing authenticate/_check_permission/Ability checks; no secrets introduced or logged; assistant_ids validated via belongs_to_project before use." }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/codemie/rest_api/routers/user_settings.py",
+      "line": 127,
+      "title": "USER-scope ms_teams settings bypass all validation",
+      "problem": "create_user_setting/update_user_setting (lines 127-148, 166-195) have no CredentialTypes.MS_TEAMS branch and never call validate_ms_teams_request. Separately, validate_ms_teams_request's own 'setting_type != SettingType.PROJECT' rejection (settings_request_validator.py:277-283) is dead code: it is only ever invoked from project_settings.py, which hardcodes setting_type=SettingType.PROJECT regardless of the request body, so that guard can never fire from any real HTTP request.",
+      "impact": "A POST or PUT to /v1/settings/user with credential_type=ms_teams is persisted as a USER-scoped row with none of the required checks applied (no PROJECT-scope enforcement, no assistant_ids validation, no per-project singleton check), directly contradicting the explicit spec requirement that ms_teams stay project-scope only.",
+      "recommendation": "Add an explicit rejection for credential_type == CredentialTypes.MS_TEAMS in create_user_setting/update_user_setting (mirroring the pattern used for SCHEDULER/LITE_LLM/GIT/WEBHOOK), or otherwise make the USER-scope rejection reachable from a real route; add a test exercising /v1/settings/user with credential_type=ms_teams."
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/service/settings/settings_request_validator.py",
+      "line": 17,
+      "title": "New Optional[X] import breaks module's X | None style",
+      "problem": "The new validate_ms_teams_request signature types setting_id as 'Optional[str] = None' and adds a fresh 'from typing import Optional' import, even though the module already uses 'from __future__ import annotations' and the preferred 'IndexInfo | None' union style elsewhere.",
+      "impact": "Violates the documented code-quality standard for new code and is inconsistent with this module's own already-established pattern.",
+      "recommendation": "Type the parameter as 'setting_id: str | None = None' and drop the new Optional import from the typing import line."
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/service/settings/settings_request_validator.py",
+      "line": 285,
+      "title": "assistant_ids extraction under-validates its input",
+      "problem": "The 'assistant_ids' credential_values entry is extracted with next((cv for cv in request.credential_values if cv.key == \"assistant_ids\"), None) and only checked for presence and list-type: an empty list passes through, any additional entries also keyed 'assistant_ids' beyond the first are silently discarded rather than rejected, and duplicate ids within the list are neither deduplicated nor rejected.",
+      "impact": "Allows creating/updating an ms_teams integration with zero linked assistants (defeating its purpose), silently drops a second assistant_ids payload without validating it, and allows the same assistant id to be stored multiple times against one integration.",
+      "recommendation": "Reject an empty or missing assistant_ids list; reject (or explicitly merge-and-validate) more than one credential_values entry keyed 'assistant_ids'; reject or deduplicate repeated ids within the list before running the per-id ownership check."
+    }
+  ]
+}

@@ -1,0 +1,104 @@
+{
+  "decision": "request-changes",
+  "rationale": "7 blocking findings survived reachability verification: a DB-level singleton race condition (no unique constraint backing check_ms_teams_singleton), unvalidated assistant_ids elements that can crash with a 500, a missing project_name check, a pre-permission-check information leak on ms_teams existence, no direct test for check_ms_teams_singleton (always mocked), and two documented-standard violations (commit subject missing the EPMCDME-14111 prefix, Optional[str] used instead of str | None). 1 finding deferred (update_project_setting's pre-existing lack of a credential_type consistency check, out of this migration story's scope). 10 findings dismissed as false positives or as behavior explicitly required by the acceptance criteria (no-merge skip-and-warn, schema-only downgrade, single-value feature enum, Pydantic-required credential_values field, no confirmed circular import, mischaracterized error-handling flow, speculative downgrade-ordering, tautological test assertion, audit-trail nice-to-have).",
+  "confidence": "high",
+  "risk_flags": ["security"],
+  "business_review": [
+    {"kind": "spec", "item": "New revision c3d4e5f6a7b8 chains onto Story 1's head (down_revision=8b2c1a4d5e6f)", "status": "pass", "notes": "Confirmed in the migration file's revision/down_revision identifiers."},
+    {"kind": "spec", "item": "upgrade() produces at most one ms_teams PROJECT settings row per project, one assistant_ids credential_values entry, ordered by created_at", "status": "pass", "notes": "Confirmed: SELECT ordered by project_name, created_at; dedup into by_project; one INSERT per project with MS_TEAMS/PROJECT literals."},
+    {"kind": "spec", "item": "A project with an existing ms_teams row keeps it unchanged; its mapping rows are left unmigrated and logged, not merged", "status": "pass", "notes": "Confirmed: existence check + logger.warning + continue, no merge logic, matching the one-way no-merge intent."},
+    {"kind": "spec", "item": "assistant_project_mapping (table, FK, unique constraint, index) no longer exists after upgrade()", "status": "pass", "notes": "Confirmed: op.drop_table(\"assistant_project_mapping\") at end of upgrade()."},
+    {"kind": "spec", "item": "downgrade() recreates the table schema only (no data restore) and deletes MS_TEAMS settings rows", "status": "pass", "notes": "Confirmed: schema-only create_table/create_index then DELETE ... WHERE credential_type='MS_TEAMS'; matches the documented one-way, one-time intent."},
+    {"kind": "spec", "item": "Migration never touches features:teamsBotIntegration; no assistant_project_mapping router/service/repository file is modified", "status": "pass", "notes": "Confirmed: no occurrence of teamsBotIntegration in the diff; only settings.py, project_settings.py/user_settings.py, settings_request_validator.py, two alembic files, and tests are touched."}
+  ],
+  "standards_review": [
+    {"kind": "commit-format", "status": "partial", "notes": "6 of 7 subjects match 'EPMCDME-####: Description'; 'teams-integ-1-foundation: add planning artifacts' uses a non-ticket prefix instead of EPMCDME-14111."},
+    {"kind": "code-quality", "status": "partial", "notes": "check_ms_teams_singleton(setting_id: Optional[str] = None) in settings.py:318 uses typing.Optional instead of the required 'str | None', unlike the sibling new validate_ms_teams_request."},
+    {"kind": "security", "status": "pass", "notes": "New ms_teams validation enforces PROJECT-only scope, singleton-per-project, and assistant-ownership checks; migration SQL is fully parameterized; no credentials logged."}
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "commit: teams-integ-1-foundation add planning artifacts",
+      "title": "Commit subject omits ticket prefix",
+      "problem": "Commit 'teams-integ-1-foundation: add planning artifacts' uses a task-slug prefix instead of the required 'EPMCDME-14111: Description' format.",
+      "impact": "Breaks the documented ticket-traceable commit history convention this repo enforces, weakening traceability from commit to Jira ticket.",
+      "recommendation": "Reword the subject to 'EPMCDME-14111: add planning artifacts', or squash it into an adjacent EPMCDME-14111 commit before merge."
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/rest_api/models/settings.py",
+      "line": 318,
+      "title": "MS Teams singleton lacks direct test",
+      "problem": "check_ms_teams_singleton is never exercised directly by any test; every test that reaches validate_ms_teams_request patches Settings.check_ms_teams_singleton itself instead of letting it run.",
+      "impact": "A typo in the query field name or an inverted setting_id comparison would silently break the per-project ms_teams singleton invariant in production without any test failing.",
+      "recommendation": "Add a direct unit test analogous to check_alias_unique's tests in tests/codemie/rest_api/models/test_settings_model.py, asserting the exact get_by_fields query shape and the existing/setting_id branch."
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/rest_api/models/settings.py",
+      "line": 318,
+      "title": "MS Teams singleton race condition (TOCTOU)",
+      "problem": "Per-project ms_teams uniqueness is enforced only by check_ms_teams_singleton's read-then-write check; no DB-level unique constraint or index backs it in either alembic migration.",
+      "impact": "Two concurrent create requests for the same project can both pass the existence check before either insert completes, producing two ms_teams settings rows for the same project.",
+      "recommendation": "Add a partial unique index on settings(project_name) WHERE credential_type='MS_TEAMS' (or an equivalent DB constraint), and handle the resulting IntegrityError as a 409."
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/rest_api/models/settings.py",
+      "line": 318,
+      "title": "Optional[str] used instead of str | None",
+      "problem": "check_ms_teams_singleton(cls, project_name, setting_id: Optional[str] = None) uses typing.Optional while the sibling new function validate_ms_teams_request correctly uses 'setting_id: str | None = None'.",
+      "impact": "Documented blocking Python style standard (code-quality.md) for new code is unmet.",
+      "recommendation": "Change the parameter to 'setting_id: str | None = None' to match the style already used in validate_ms_teams_request."
+    },
+    {
+      "id": "CR-005",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/rest_api/routers/project_settings.py",
+      "line": 110,
+      "title": "MS Teams existence check leaks before permission",
+      "problem": "In both create_project_setting and update_project_setting, validate_ms_teams_request (which raises a 409 naming the project when an ms_teams integration already exists) runs before _check_permission / the Ability(user).can() ownership check.",
+      "impact": "A caller can probe for the existence of any project's ms_teams integration by supplying an arbitrary project_name, before the system has verified the caller has any access to that project.",
+      "recommendation": "Move the permission/ownership check ahead of the credential-type-specific validation block in both routers, so unauthorized callers never reach validate_ms_teams_request."
+    },
+    {
+      "id": "CR-006",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/service/settings/settings_request_validator.py",
+      "line": 270,
+      "title": "project_name not validated in MS Teams request",
+      "problem": "validate_ms_teams_request never checks that request.project_name is non-empty before passing it to AssistantService.belongs_to_project and Settings.check_ms_teams_singleton; SettingRequest.project_name is Optional[str] = None at the API layer.",
+      "impact": "A request with project_name=None reaches belongs_to_project for every assistant id, which returns False for all of them, producing a confusing 'Invalid assistant_ids' 400 instead of a clear 'project_name is required' error.",
+      "recommendation": "Add 'if not request.project_name: raise ExtendedHTTPException(400, ...)' at the top of validate_ms_teams_request."
+    },
+    {
+      "id": "CR-007",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/service/settings/settings_request_validator.py",
+      "line": 300,
+      "title": "assistant_ids elements not type-validated",
+      "problem": "assistant_ids_creds[0].value is only checked to be a non-empty list (CredentialValues.value: Any); individual elements are never validated to be strings before set(assistant_ids) (dedup check) or ', '.join(invalid_ids) (error message) run on them.",
+      "impact": "An unhashable element (e.g. a nested dict/list) crashes set(assistant_ids) with an unhandled TypeError, and a hashable non-string element (e.g. an int) that fails belongs_to_project crashes ', '.join(invalid_ids); both surface as an unhandled 500 instead of a 400 validation error.",
+      "recommendation": "Validate 'if not all(isinstance(a, str) for a in assistant_ids): raise ExtendedHTTPException(400, ...)' immediately after extracting assistant_ids, before the duplicate check."
+    }
+  ]
+}

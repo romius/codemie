@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "generated": "2026-08-27",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 19,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 10,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Diff touches 4 distinct components: two API routers (project_settings.py, user_settings.py) with symmetric elif branches, a new service-layer validator (validate_ms_teams_request in settings_request_validator.py), a new model-layer classmethod (Settings.check_ms_teams_singleton), and the shared CredentialTypes enum in codemie_tools/base/models.py used by ~30 other integration types — bumped from M to L for touching that core shared enum." },
+    { "dimension": "requirements_clarity", "reason": "The implementation reads as a clean single pass: assistant_ids validation, singleton-per-project enforcement, and PROJECT-only scope restriction are each expressed as one coherent block reusing existing helpers (AssistantService.belongs_to_project, get_by_fields) with no leftover TODOs or inconsistent branches — no rework or ambiguity signals visible in the diff." },
+    { "dimension": "technical_risk", "reason": "Ownership/duplicate/singleton checks in validate_ms_teams_request closely mirror the existing validate_scheduler_request/validate_webhook_request and check_alias_unique patterns (low novelty). However the migration alters the live Postgres 'credentialtypes' ENUM via op.sync_enum_values against the settings.credential_type column, and its downgrade path deletes rows with credential_type='MS_TEAMS' — a schema change affecting production data, which is the 'Changes database schema significantly' red flag." },
+    { "dimension": "file_change_estimate", "reason": "diffstat reports 10 files changed (477 insertions, 7 deletions): 5 modified source files (settings.py, project_settings.py, user_settings.py, settings_request_validator.py, codemie_tools/base/models.py), 1 new migration file, and 4 modified test files across rest_api/models, rest_api/routers, service/settings, codemie_tools/base and external/alembic/versions directories — maps to the L band (7-10 files)." },
+    { "dimension": "affected_layers", "reason": "API (both settings routers), Service (settings_request_validator.py), and DB-Persistence (SettingsBase model + Alembic ENUM migration on settings.credential_type) — 3 layers including a persistence-layer schema/enum change, matching the L band definition; bumped by the same schema-change red flag as Technical Risk." }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from M to L: touches the core shared CredentialTypes enum used across ~30 other integration types",
+    "Technical Risk and Affected Layers bumped from M to L: adds MS_TEAMS via a Postgres ENUM ALTER migration (op.sync_enum_values) against the settings.credential_type column, with a data-deleting downgrade path"
+  ],
+  "split_recommendation": null
+}

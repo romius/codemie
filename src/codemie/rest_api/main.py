@@ -66,7 +66,6 @@ from codemie.rest_api.routers import (
     background_tasks,
     assistant,
     assistant_mapping,
-    assistant_project_mapping,
     assistant_prompt_variable_mapping,
     category,
     vendor,
@@ -887,7 +886,6 @@ StateImportService().import_indexes()
 
 app.include_router(a2a.router)
 app.include_router(assistant_mapping.router)
-app.include_router(assistant_project_mapping.router)
 app.include_router(assistant.router)
 app.include_router(assistant_prompt_variable_mapping.router)
 app.include_router(category.router)

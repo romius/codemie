@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "task": "Write an Alembic migration that groups assistant_project_mapping rows by project into ms_teams Settings rows, then drops the assistant_project_mapping table.",
+  "generated": "2026-08-27",
+  "dimensions": {
+    "component_scope":      { "score": 2, "label": "S" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 6, "label": "XXL" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 17,
+  "size": "M",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "technical_risk", "reason": "No precedent in this repo for a single migration that both aggregates rows via group-by and drops the source table; the drop is irreversible for the original per-mapping granularity even with a compensating downgrade, and there is no existing test for the transform or its interaction with Settings.check_ms_teams_singleton/validate_ms_teams_request. Two red flags apply additively: 'changes database schema significantly' (dropping assistant_project_mapping, removing its FK/unique constraint/index) and 'requires data migration' (grouping many mapping rows into one Settings row per project), each bumping technical_risk by 1 from an L(4) baseline to the XXL(6) cap." },
+    { "dimension": "requirements_clarity", "reason": "The destination shape is fully specified by Story 1's merged validator/model (one Settings row per project, credential_type=ms_teams, one assistant_ids credential_values entry), which removes most design ambiguity, but the group-by transform itself has no direct precedent and the task explicitly leaves unhandled the edge case of a project that already has an ms_teams Settings row before the migration runs." },
+    { "dimension": "file_change_estimate", "reason": "Baseline is a single new migration file under src/external/alembic/versions/ (S), possibly plus one migration-logic test file per the k5l6m7n8o9p0 precedent; bumped to M by the 'requires data migration' red flag." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from L to XL: 'Changes database schema significantly' (drops assistant_project_mapping table and its FK/unique constraint/index)",
+    "Technical Risk bumped from XL to XXL (capped): 'Requires data migration' (grouping assistant_project_mapping rows by project into aggregated Settings rows)",
+    "Affected Layers bumped from XS to S: 'Changes database schema significantly'",
+    "File Change Estimate bumped from S to M: 'Requires data migration'"
+  ],
+  "split_recommendation": null
+}

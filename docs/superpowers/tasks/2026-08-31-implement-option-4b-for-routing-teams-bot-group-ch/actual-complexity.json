@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "generated": "2026-08-31T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 16,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 5,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "technical_risk",
+      "reason": "billing_user_resolver.py introduces caller-identity substitution for billing purposes based on an allow-listed Teams service-account id plus a caller-supplied X-Teams-Sender-Email header — new trust-boundary logic with no exact precedent in the codebase, even though it reuses existing repository/exception patterns and explicitly never affects access control. Red flag applied: affects authentication/authorization-adjacent identity resolution, bumping this dimension from M to L."
+    }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from M to L: new caller-identity substitution logic touches the boundary between authentication (caller identity) and billing/authorization-adjacent decisions (whose budget is charged)."
+  ],
+  "split_recommendation": null
+}

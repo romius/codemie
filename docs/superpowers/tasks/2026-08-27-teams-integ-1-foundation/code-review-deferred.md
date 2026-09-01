@@ -1,0 +1,3 @@
+# Deferred from code review — 2026-08-27-teams-integ-1-foundation (2026-08-27)
+
+- **`update_project_setting` never cross-checks `request.project_name` against the target setting's actual project** — `src/codemie/rest_api/routers/project_settings.py:162-163`. `validate_ms_teams_request`/`check_ms_teams_singleton` and the assistant-ownership check run against the request body's `project_name` rather than the `setting_id`'s real project. Pre-existing: `Settings.check_alias_unique` (used by every credential type, including this one via `SettingsService.update_settings`) already has the identical body-vs-target mismatch, unchanged by this diff — fixing it for `ms_teams` alone would be inconsistent with the settings-validation family and belongs to a wider follow-up.

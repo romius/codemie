@@ -34,6 +34,7 @@ from codemie.rest_api.security.user import User
 PROJECT_NAME_TERM = "project_name.keyword"
 USER_ID_TERM = "user_id.keyword"
 ALIAS_TERM = "alias.keyword"
+CREDENTIAL_TYPE_TERM = "credential_type.keyword"
 
 
 class CredentialValues(BaseModel):
@@ -319,6 +320,42 @@ class SettingsBase(CommonBaseModel):
         return True
 
     @classmethod
+    def check_ms_teams_exist(cls, project_name: str, setting_id: str | None = None) -> bool:
+        existing = cls.get_by_fields(
+            {PROJECT_NAME_TERM: project_name, CREDENTIAL_TYPE_TERM: CredentialTypes.MS_TEAMS.value}
+        )
+        if existing and (not setting_id or setting_id != existing.id):
+            raise ValueError(f"An ms_teams integration already exists for project {project_name!r}")
+        return True
+
+    @classmethod
+    def prune_ms_teams_assistant_id(cls, assistant_id: str, keep_project_name: Optional[str] = None) -> int:
+        """Remove assistant_id from every ms_teams settings row's assistant_ids list.
+
+        The ms_teams assistant_ids list lives in a JSONB credential_values blob with no
+        FK/cascade to an assistant, unlike the retired assistant_project_mapping table.
+        This must be called when an assistant is deleted (keep_project_name=None, prune
+        everywhere) or moved to a different project (keep_project_name=the new project,
+        prune everywhere else), or a stale reference silently lingers.
+
+        Returns the number of settings rows that were changed.
+        """
+        settings = cls.get_all_by_fields({CREDENTIAL_TYPE_TERM: CredentialTypes.MS_TEAMS.value})
+        updated = 0
+        for setting in settings:
+            if keep_project_name and setting.project_name == keep_project_name:
+                continue
+            changed = False
+            for cred in setting.credential_values:
+                if cred.key == "assistant_ids" and isinstance(cred.value, list) and assistant_id in cred.value:
+                    cred.value = [aid for aid in cred.value if aid != assistant_id]
+                    changed = True
+            if changed:
+                setting.save()
+                updated += 1
+        return updated
+
+    @classmethod
     def check_webhook_id_unique(cls, webhook_id: str, setting_id: Optional[str] = None) -> bool:
         query = {"credential_values.key.keyword": "webhook_id", "credential_values.value.keyword": webhook_id}
 
@@ -376,7 +413,7 @@ class Settings(BaseModelWithSQLSupport, SettingsBase, table=True):
             query_filters["setting_type.keyword"] = setting_type.value
 
         if credential_type:
-            query_filters["credential_type.keyword"] = credential_type.value
+            query_filters[CREDENTIAL_TYPE_TERM] = credential_type.value
 
         if query_filters:
             return cls.get_all_by_fields(query_filters)

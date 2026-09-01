@@ -110,6 +110,7 @@ class CredentialTypes(str, Enum):
 
     # Project settings
     DIAL = "DIAL"
+    MS_TEAMS = "MSTeams"
 
 
 class ToolSet(str, Enum):

@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "generated": "2026-08-27T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 6, "label": "XXL" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 6, "label": "XXL" },
+    "file_change_estimate": { "score": 6, "label": "XXL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 5, "label": "XL" }
+  },
+  "total": 26,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 63,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Full removal of the assistant_project_mapping repository/service/router subsystem, replaced by a new MS_TEAMS credential_type flowing through SettingsService, settings_request_validator (new validate_ms_teams_request with singleton + feature-flag checks), codemie_tools/base/models.py CredentialTypes, and both project_settings.py and user_settings.py routers (create/update/delete paths). New abstraction (per-project singleton constraint) introduced. Bumped by the 'migrate large subsystem' red flag." },
+    { "dimension": "technical_risk", "reason": "Data migration (c3d4e5f6a7b8) moves rows from assistant_project_mapping into codemie.settings with dedup/merge logic, then drops the source table; a follow-on migration (f1a2b3c4d5e6) adds a singleton unique index. Downgrade is explicitly partial/non-destructive because reconstructing dropped rows is impossible — an irreversible-once-deployed characteristic. Bumped further by the 'requires data migration' and 'changes DB schema significantly' red flags." },
+    { "dimension": "file_change_estimate", "reason": "Diffstat reports 63 files changed across this branch (Stories 1-3 combined per the caller's note), mapping to the 16+ XXL band regardless of how many are process artifacts under docs/superpowers/." },
+    { "dimension": "affected_layers", "reason": "DB-Persistence (3 alembic migrations, schema change), Service (SettingsService, settings_request_validator, AssistantService.belongs_to_project), and API (project_settings.py, user_settings.py, assistant.py, plus removal of assistant_project_mapping.py router) are all touched by a single schema-driven change. Bumped from L to XL by the 'changes database schema significantly' red flag." },
+    { "dimension": "requirements_clarity", "reason": "The merged diff reads as a coherent, deliberate design: explicit code comments justify the non-destructive downgrade, the singleton constraint, and the feature-flag gate, with matching new tests for the migration, the validator, the repository removal, and both settings routers — little evidence of rework or unresolved ambiguity." }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped: 'migrate/refactor large subsystem' — assistant_project_mapping repository, service, and router removed wholesale and replaced by a settings-based MS_TEAMS credential type",
+    "Technical Risk bumped: 'requires data migration' — c3d4e5f6a7b8 merges and drops the assistant_project_mapping table with an intentionally partial, non-destructive downgrade",
+    "Affected Layers bumped: 'changes database schema significantly' — three alembic revisions (new credential type value, data migration + table drop, singleton unique index) touch persistence directly"
+  ],
+  "split_recommendation": null
+}

@@ -91,9 +91,12 @@ class ChatHistoryData:
 
 
 class AssistantRequestHandler(ABC):
-    def __init__(self, assistant: Assistant, user: User, request_uuid: str):
+    def __init__(self, assistant: Assistant, user: User, request_uuid: str, billing_user: User | None = None):
         self.assistant = assistant
         self.user = user
+        # Drives budget-key selection / cost attribution only. Access control and
+        # conversation ownership must always evaluate self.user (the original caller).
+        self.billing_user = billing_user or user
         self.request_uuid = request_uuid
         self.background_tasks: BackgroundTasks | None = None
 
@@ -384,7 +387,7 @@ class AssistantRequestHandler(ABC):
         # execution context as upsert_chat_history → send_conversation_metric.
         from codemie.service.llm_service.utils import set_llm_context
 
-        set_llm_context(self.assistant, None, self.user)
+        set_llm_context(self.assistant, None, self.billing_user)
 
         summary = request_summary_manager.get_summary(self.request_uuid)
         tokens_usage = (summary.tokens_usage if summary else None) or TokensUsage(
@@ -541,7 +544,7 @@ class StandardAssistantHandler(AssistantRequestHandler):
             agent = AssistantService.build_agent(
                 assistant=self.assistant,
                 request=request,
-                user=self.user,
+                user=self.billing_user,
                 request_uuid=raw_request.state.uuid,
                 thread_generator=generator_queue,
                 request_headers=request_headers,
@@ -835,7 +838,7 @@ class StandardAssistantHandler(AssistantRequestHandler):
         agent = AssistantService.build_agent(
             assistant=self.assistant,
             request=request,
-            user=self.user,
+            user=self.billing_user,
             request_uuid=request_uuid,
             request_headers=request_headers,
         )
@@ -896,7 +899,7 @@ class StandardAssistantHandler(AssistantRequestHandler):
         agent = AssistantService.build_agent(
             assistant=self.assistant,
             request=request,
-            user=self.user,
+            user=self.billing_user,
             request_uuid=raw_request.state.uuid,
             request_headers=request_headers,
         )
@@ -954,8 +957,8 @@ class StandardAssistantHandler(AssistantRequestHandler):
 
 
 class A2AAssistantHandler(AssistantRequestHandler):
-    def __init__(self, assistant: Assistant, user: User, request_uuid: str):
-        super().__init__(assistant, user, request_uuid)
+    def __init__(self, assistant: Assistant, user: User, request_uuid: str, billing_user: User | None = None):
+        super().__init__(assistant, user, request_uuid, billing_user)
         self.agent_card = assistant.agent_card
         self.remote_connection = RemoteAgentConnections(
             agent_card=self.agent_card,
@@ -1112,12 +1115,14 @@ class A2AAssistantHandler(AssistantRequestHandler):
         return model_response
 
 
-def get_request_handler(assistant: Assistant, user: User, request_uuid: str) -> AssistantRequestHandler:
+def get_request_handler(
+    assistant: Assistant, user: User, request_uuid: str, billing_user: User | None = None
+) -> AssistantRequestHandler:
     """Factory function to create appropriate handler based on assistant type"""
     if assistant.type == AssistantType.A2A:
-        return A2AAssistantHandler(assistant, user, request_uuid)
+        return A2AAssistantHandler(assistant, user, request_uuid, billing_user)
     if assistant.hedging_config is not None and customer_config.is_feature_enabled("requestHedging"):
         from codemie.rest_api.handlers.hedged_handler import HedgedAssistantHandler
 
-        return HedgedAssistantHandler(assistant, user, request_uuid)
-    return StandardAssistantHandler(assistant, user, request_uuid)
+        return HedgedAssistantHandler(assistant, user, request_uuid, billing_user)
+    return StandardAssistantHandler(assistant, user, request_uuid, billing_user)

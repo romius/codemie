@@ -108,6 +108,7 @@ from codemie.service.mcp.access_control import MCPAccessControlService
 from codemie.service.assistant.assistant_health_check_service import AssistantHealthCheckService
 from codemie.service.tools.plugin_tools_info_service import PluginToolsInfoService, PluginToolsInfoServiceError
 from codemie.service.llm_service.llm_service import llm_service
+from codemie.service.user.billing_user_resolver import get_billing_user
 
 from codemie.service.subagents.builtin_subagents_registry import BuiltinSubagentsRegistry
 
@@ -956,6 +957,7 @@ async def ask_virtual_assistant(
     background_tasks: BackgroundTasks,
     request: VirtualAssistantChatRequest,
     user: User = Depends(authenticate),
+    billing_user: User = Depends(get_billing_user),
     include_tool_errors: bool = Query(
         False,
         description='Include tool error details in response',
@@ -1023,7 +1025,7 @@ async def ask_virtual_assistant(
         assistant,
         raw_request,
         chat_request,
-        user,
+        billing_user,
         background_tasks,
         include_tool_errors,
         error_detail_level,
@@ -1043,6 +1045,7 @@ async def ask_assistant_by_id(
     background_tasks: BackgroundTasks,
     request: AssistantChatRequest,
     user: User = Depends(authenticate),
+    billing_user: User = Depends(get_billing_user),
     include_tool_errors: bool = Query(
         False,
         description="Include tool error details in response",
@@ -1080,6 +1083,7 @@ async def ask_assistant_by_id(
         background_tasks,
         include_tool_errors,
         error_detail_level,
+        billing_user,
     )
     return result
 
@@ -1096,6 +1100,7 @@ def ask_assistant_by_slug(
     background_tasks: BackgroundTasks,
     request: AssistantChatRequest,
     user: User = Depends(authenticate),
+    billing_user: User = Depends(get_billing_user),
     include_tool_errors: bool = Query(
         False,
         description="Include tool error details in response",
@@ -1134,6 +1139,7 @@ def ask_assistant_by_slug(
         background_tasks,
         include_tool_errors,
         error_detail_level,
+        billing_user,
     )
 
 
@@ -2256,6 +2262,7 @@ def _ask_assistant(
     background_tasks: BackgroundTasks,
     include_tool_errors: bool = False,
     error_detail_level: ErrorDetailLevel = ErrorDetailLevel.STANDARD,
+    billing_user: User | None = None,
 ):
     """
     Internal helper for assistant execution.
@@ -2263,7 +2270,12 @@ def _ask_assistant(
     Error handling parameters:
     - include_tool_errors: Include tool error details in response
     - error_detail_level: Error verbosity (minimal/standard/full)
+
+    `billing_user` drives usage recording, request-summary attribution, and
+    `get_request_handler` (hence budget-key selection); it defaults to `user`
+    when omitted. Access control always evaluates the original `user`.
     """
+    billing_user = billing_user or user
     request_uuid = raw_request.state.uuid
     _check_user_can_access_assistant(user, assistant, "view", Action.READ)
     _validate_remote_entities_and_raise(assistant)
@@ -2293,15 +2305,15 @@ def _ask_assistant(
             request.text = guardrailed_text
 
     try:
-        assistant_user_interaction_service.record_usage(assistant=assistant, user=user)
+        assistant_user_interaction_service.record_usage(assistant=assistant, user=billing_user)
 
         request_summary_manager.create_request_summary(
             request_id=request_uuid,
             project_name=assistant.project,
-            user=user.as_user_model(),
+            user=billing_user.as_user_model(),
         )
 
-        handler = get_request_handler(assistant, user, request_uuid)
+        handler = get_request_handler(assistant, user, request_uuid, billing_user=billing_user)
         # Pass error handling options to handler
         return handler.process_request(
             request,

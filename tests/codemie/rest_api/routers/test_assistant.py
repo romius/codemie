@@ -831,3 +831,85 @@ class TestAssistantDetailEnrichment:
 
         body = json.loads(response.body)
         assert body["user_abilities"] == ["read", "write", "delete"]
+
+
+class TestAskAssistantBillingUserSwap:
+    @patch("codemie.rest_api.routers.assistant.assistant_user_interaction_service.record_usage")
+    @patch("codemie.rest_api.routers.assistant.request_summary_manager.create_request_summary")
+    @patch("codemie.rest_api.routers.assistant.Ability")
+    @patch("codemie.rest_api.routers.assistant.get_request_handler")
+    def test_billing_user_drives_record_usage_while_access_check_uses_original_user(
+        self,
+        mock_get_handler,
+        mock_ability,
+        mock_request_summary,
+        mock_record_usage,
+        mock_user,
+        mock_assistant,
+    ):
+        from codemie.rest_api.routers.assistant import _ask_assistant
+        from codemie.core.models import AssistantChatRequest
+        from unittest.mock import MagicMock
+
+        mock_ability_instance = MagicMock()
+        mock_ability_instance.can.return_value = True
+        mock_ability.return_value = mock_ability_instance
+        mock_handler = MagicMock()
+        mock_handler.process_request.return_value = {"response": "ok"}
+        mock_get_handler.return_value = mock_handler
+
+        billing_user = MagicMock(spec=User)
+        billing_user.id = "end-user-1"
+        billing_user.as_user_model.return_value = MagicMock()
+
+        request = AssistantChatRequest(text="hi")
+        _ask_assistant(
+            mock_assistant,
+            MagicMock(state=MagicMock(uuid="req-1")),
+            request,
+            mock_user,
+            MagicMock(),
+            billing_user=billing_user,
+        )
+
+        # Access control checked against the ORIGINAL caller
+        mock_ability.assert_called_with(mock_user)
+        # Budget/usage attribution uses the RESOLVED billing user
+        mock_record_usage.assert_called_once_with(assistant=mock_assistant, user=billing_user)
+        # Handler receives the caller for access control and the billing user separately
+        # for budget-key selection — never the billing user as `user` (EPMCDME-14111).
+        mock_get_handler.assert_called_once_with(mock_assistant, mock_user, "req-1", billing_user=billing_user)
+
+
+class TestAskVirtualAssistantBillingUserSwap:
+    @pytest.mark.asyncio
+    @patch("codemie.rest_api.routers.assistant.asyncio.to_thread")
+    async def test_virtual_assistant_project_uses_caller_but_thread_gets_billing_user(
+        self,
+        mock_to_thread,
+        mock_user,
+    ):
+        from codemie.rest_api.routers.assistant import ask_virtual_assistant, VirtualAssistantChatRequest
+        from unittest.mock import MagicMock
+
+        mock_user.current_project = "caller-project"
+        billing_user = MagicMock(spec=User)
+        mock_to_thread.return_value = {"response": "ok"}
+
+        async def _noop():
+            return None
+
+        raw_request = MagicMock()
+        raw_request.state.wait_for_disconnect = MagicMock(return_value=_noop())
+        request = VirtualAssistantChatRequest()
+
+        # billing_user is resolved by the get_billing_user dependency (tested separately in
+        # test_billing_user_resolver.py); routes just receive it and pass it through.
+        await ask_virtual_assistant(raw_request, MagicMock(), request, mock_user, billing_user)
+
+        # to_thread's positional args: (_ask_virtual_assistant, assistant, raw_request, chat_request, user, ...)
+        call_args = mock_to_thread.call_args.args
+        passed_assistant = call_args[1]
+        passed_user = call_args[4]
+        assert passed_assistant.project == "caller-project"  # project scoping stays on the original caller
+        assert passed_user is billing_user  # budget resolution uses the resolved user

@@ -64,6 +64,77 @@ def test_settings_check_alias_ok(mock_get_by_fields):
 
 
 @patch.object(Settings, "get_by_fields", return_value=None)
+def test_check_ms_teams_exist_no_existing_row(mock_get_by_fields):
+    result = Settings.check_ms_teams_exist(project_name="proj1")
+    assert result is True
+    mock_get_by_fields.assert_called_once_with({"project_name.keyword": "proj1", "credential_type.keyword": "MSTeams"})
+
+
+@patch.object(Settings, "get_by_fields")
+def test_check_ms_teams_exist_rejects_second_row(mock_get_by_fields):
+    mock_get_by_fields.return_value = MagicMock(id="existing_setting_id")
+
+    with pytest.raises(ValueError, match="An ms_teams integration already exists for project 'proj1'"):
+        Settings.check_ms_teams_exist(project_name="proj1")
+    mock_get_by_fields.assert_called_once_with({"project_name.keyword": "proj1", "credential_type.keyword": "MSTeams"})
+
+
+@patch.object(Settings, "get_by_fields")
+def test_check_ms_teams_exist_allows_updating_same_row(mock_get_by_fields):
+    mock_get_by_fields.return_value = MagicMock(id="setting-1")
+
+    result = Settings.check_ms_teams_exist(project_name="proj1", setting_id="setting-1")
+    assert result is True
+
+
+def _ms_teams_setting(project_name, assistant_ids):
+    setting = MagicMock()
+    setting.project_name = project_name
+    setting.credential_values = [MagicMock(key="assistant_ids", value=list(assistant_ids))]
+    return setting
+
+
+@patch.object(Settings, "get_all_by_fields")
+def test_prune_ms_teams_assistant_id_removes_stale_id(mock_get_all_by_fields):
+    setting = _ms_teams_setting("proj1", ["a1", "a2"])
+    mock_get_all_by_fields.return_value = [setting]
+
+    updated = Settings.prune_ms_teams_assistant_id("a1")
+
+    assert updated == 1
+    assert setting.credential_values[0].value == ["a2"]
+    setting.save.assert_called_once()
+    mock_get_all_by_fields.assert_called_once_with({"credential_type.keyword": "MSTeams"})
+
+
+@patch.object(Settings, "get_all_by_fields")
+def test_prune_ms_teams_assistant_id_noop_when_absent(mock_get_all_by_fields):
+    setting = _ms_teams_setting("proj1", ["a2"])
+    mock_get_all_by_fields.return_value = [setting]
+
+    updated = Settings.prune_ms_teams_assistant_id("a1")
+
+    assert updated == 0
+    assert setting.credential_values[0].value == ["a2"]
+    setting.save.assert_not_called()
+
+
+@patch.object(Settings, "get_all_by_fields")
+def test_prune_ms_teams_assistant_id_keeps_new_project_row(mock_get_all_by_fields):
+    old_row = _ms_teams_setting("old-proj", ["a1"])
+    new_row = _ms_teams_setting("new-proj", ["a1"])
+    mock_get_all_by_fields.return_value = [old_row, new_row]
+
+    updated = Settings.prune_ms_teams_assistant_id("a1", keep_project_name="new-proj")
+
+    assert updated == 1
+    assert old_row.credential_values[0].value == []
+    old_row.save.assert_called_once()
+    assert new_row.credential_values[0].value == ["a1"]
+    new_row.save.assert_not_called()
+
+
+@patch.object(Settings, "get_by_fields", return_value=None)
 def test_settings_check_alias_ok_project(mock_get_by_fields):
     result = Settings.check_alias_unique(
         project_name="test_project",

@@ -1,0 +1,77 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-14111-move-teams-to-integrations",
+  "head": "8c515cbe5290052a7eba138f16535073aa85f650",
+  "runner": "poetry",
+  "started_at": "2026-08-28T09:39:01Z",
+  "completed_at": "2026-08-28T09:52:30Z",
+  "status": "BLOCKED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "lint",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2000,
+      "command": "make ruff",
+      "exit_code": 0,
+      "notes": "ruff format auto-reformatted 2 files (src/codemie/rest_api/routers/assistant.py, src/external/alembic/versions/c3d4e5f6a7b8_migrate_assistant_project_mapping_to_settings.py) — line-length only, no semantic change, then ruff check --fix and ruff check both passed cleanly."
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 6000,
+      "command": "make build",
+      "exit_code": 0
+    },
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 1000,
+      "command": "make license-check",
+      "exit_code": 0,
+      "notes": "Checked 2051 files, 0 missing license headers."
+    },
+    {
+      "id": "secrets-ci",
+      "source": "guide",
+      "status": "FAIL",
+      "duration_ms": 231000,
+      "command": "make gitleaks",
+      "exit_code": 2,
+      "notes": "All 35 findings are inside untracked, gitignored local runtime artifacts present only in this checkout (.elasticsearch_data/, codemie-storage/, htmlcov/ — 0 files under git ls-files); none touch a tracked or diff file. `gitleaks dir` scans the full working tree regardless of .gitignore, so this is local-environment noise rather than a secret introduced by the change, but the guide's literal Pass/Fail criteria ('Fail: a secret-like value is detected') is mechanically met, so this blocks per Step 5. Rerunning on a clean checkout (or excluding those three gitignored paths) should resolve it."
+    },
+    {
+      "id": "secrets-precommit",
+      "source": "hook",
+      "status": "SKIPPED",
+      "duration_ms": 2000,
+      "command": "bash scripts/git-hooks/validate_secrets.sh",
+      "exit_code": 0,
+      "notes": "Self-skip: 'INF 0 commits scanned.' / 'scanned ~0 bytes (0) in 60.1ms' — nothing was staged in the index at run time, so gitleaks protect --staged verified nothing. To exercise this gate for real, stage the diff (git add) and rerun before commit."
+    },
+    {
+      "id": "unit",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 170000,
+      "command": "make test",
+      "exit_code": 0,
+      "notes": "14754 passed, 164 skipped, 191 warnings in 164.07s."
+    },
+    {
+      "id": "static-analysis",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 0,
+      "command": "make sonar-local",
+      "exit_code": 0,
+      "notes": "Self-skip: '[sonar-local] Skipping Sonar scan because SONAR_TOKEN is not set.' Set SONAR_TOKEN (and network access to https://sonar.core.kuberocketci.io) to run this gate locally. CI/reviewer-run scan still owed."
+    }
+  ],
+  "failures": {
+    "secrets-ci": "RuleID: private-key | File: /workspace/htmlcov/z_a0a95aa5cdaf0280_test_jwt_service_py.html | Line: 138\nRuleID: generic-api-key | File: /workspace/codemie-storage/dev-codemie-user/Test cases P1.csv | Line: 1901\nRuleID: generic-api-key | File: /workspace/codemie-storage/dev-codemie-user/Test cases P1.csv | Line: 2176\nRuleID: aws-access-token | File: /workspace/codemie-storage/dev-codemie-user/Test cases P1.csv | Line: 2176\nRuleID: generic-api-key | File: /workspace/codemie-storage/dev-codemie-user/Test cases P1.csv | Line: 2191\nRuleID: generic-api-key | File: /workspace/codemie-storage/dev-codemie-user/Test cases P1.csv | Line: 2194\n(29 more findings in the same 4 gitignored files, secret values and match context redacted before persisting this file)\n\n9:46AM INF scanned ~870158148 bytes (870.16 MB) in 3m52s\n9:46AM WRN leaks found: 35\nmake: *** [gitleaks] Error 1\n\nAll 35 findings map to 4 files, all untracked and gitignored, none part of this diff or git history: .elasticsearch_data/indices/... (3), codemie-storage/dev-codemie-user/llama.py (1), codemie-storage/dev-codemie-user/Test cases P1.csv (30), htmlcov/z_a0a95aa5cdaf0280_test_jwt_service_py.html (1). `git ls-files` on all three top-level dirs returns 0 tracked files."
+  }
+}

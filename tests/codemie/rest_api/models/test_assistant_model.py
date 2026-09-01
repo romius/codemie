@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import pytest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from pydantic import ValidationError
 
@@ -1049,3 +1049,50 @@ class TestAssistantValidateMCPServerNames:
         ):
             result = a.validate_fields()
         assert "Duplicate MCP server names" in result
+
+
+class TestDeleteAssistantPrunesMsTeams:
+    """delete_assistant must prune the deleted assistant from any ms_teams
+    settings row's assistant_ids list, since that JSONB list has no FK/cascade."""
+
+    @patch("codemie.service.guardrail.guardrail_service.GuardrailService.remove_guardrail_assignments_for_entity")
+    @patch("codemie.rest_api.models.settings.Settings.prune_ms_teams_assistant_id")
+    @patch(
+        "codemie.service.settings.scheduler_settings_service.SchedulerSettingsService.delete_integrations_by_resource"
+    )
+    @patch.object(Assistant, "find_by_id")
+    def test_prunes_ms_teams_assistant_ids_on_delete(
+        self, mock_find, mock_delete_integrations, mock_prune, mock_remove_guardrails
+    ):
+        assistant = MagicMock()
+        assistant.id = "assistant-1"
+        assistant.project = "proj1"
+        mock_find.return_value = assistant
+        mock_delete_integrations.return_value = 0
+        mock_prune.return_value = 1
+
+        Assistant.delete_assistant("assistant-1")
+
+        mock_prune.assert_called_once_with("assistant-1")
+        assistant.delete.assert_called_once()
+
+    @patch("codemie.service.guardrail.guardrail_service.GuardrailService.remove_guardrail_assignments_for_entity")
+    @patch("codemie.rest_api.models.settings.Settings.prune_ms_teams_assistant_id")
+    @patch(
+        "codemie.service.settings.scheduler_settings_service.SchedulerSettingsService.delete_integrations_by_resource"
+    )
+    @patch.object(Assistant, "find_by_id")
+    def test_deletion_proceeds_when_pruning_fails(
+        self, mock_find, mock_delete_integrations, mock_prune, mock_remove_guardrails
+    ):
+        """A pruning failure must not block the assistant deletion itself."""
+        assistant = MagicMock()
+        assistant.id = "assistant-1"
+        assistant.project = "proj1"
+        mock_find.return_value = assistant
+        mock_delete_integrations.return_value = 0
+        mock_prune.side_effect = RuntimeError("boom")
+
+        Assistant.delete_assistant("assistant-1")
+
+        assistant.delete.assert_called_once()
