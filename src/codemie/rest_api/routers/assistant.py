@@ -2200,6 +2200,7 @@ def _ask_virtual_assistant(
     # No _check_user_can_access_assistant — there is no DB record to check ownership against
     _validate_remote_entities_and_raise(assistant)
     _validate_assistant_supports_files_and_raise(assistant, request.file_names)
+    _validate_file_attachment_allowed_and_raise(assistant, request.file_names)
     _validate_assistant_supports_model_change_and_raise(assistant, request.llm_model)
 
     # Guardrail check is skipped automatically: assistant.id is None, so the
@@ -2280,6 +2281,7 @@ def _ask_assistant(
     _check_user_can_access_assistant(user, assistant, "view", Action.READ)
     _validate_remote_entities_and_raise(assistant)
     _validate_assistant_supports_files_and_raise(assistant, request.file_names)
+    _validate_file_attachment_allowed_and_raise(assistant, request.file_names)
     _validate_assistant_supports_model_change_and_raise(assistant, request.llm_model)
 
     if assistant.id and request.text:
@@ -2356,6 +2358,22 @@ def _ask_assistant(
         _save_error(request_uuid, request, error, user, assistant)
         logger.error(error_details, exc_info=True)
         raise error from e
+
+
+def _validate_file_attachment_allowed_and_raise(
+    assistant: Assistant,
+    file_names: Optional[list[str]],
+) -> None:
+    """Raise HTTP 403 if file attachment is disabled for the assistant."""
+    if not file_names:
+        return
+    if assistant.file_attachment_enabled is False:
+        raise ExtendedHTTPException(
+            code=status.HTTP_403_FORBIDDEN,
+            message="File attachment not allowed",
+            details="File uploads are disabled for this assistant.",
+            help="Contact your administrator to enable file attachment for this assistant.",
+        )
 
 
 def _validate_assistant_supports_files_and_raise(assistant: Assistant, file_names: Optional[list[str]]):

@@ -1,0 +1,34 @@
+{
+  "decision": "approve",
+  "rationale": "Full three-lens review after rebase onto current main. AC1–AC7 satisfied. CR-001 (untyped parameter) and CR-002 (version service propagation) from the prior round are resolved in the rebased branch. CR-003 (workflow execution path) was deferred as out-of-scope per prior check round. EC-001 (virtual assistant no-op): _ask_virtual_assistant builds the assistant via model_construct which omits file_attachment_enabled, so the guard is always a no-op for virtual assistant requests — this is a pre-existing behaviour of ephemeral virtual assistants that never persist configuration, and the guard design is intentionally scoped to persistent assistants only; acceptable. AC8 partial: unit tests cover the validator in isolation (4 tests, all pass), but no HTTP-level integration tests exercise the guard through _ask_assistant or _ask_virtual_assistant call sites — gap is minor given the call sites are one-liners and the validator is well-covered. PATCH reset risk follows the existing pattern for nullable boolean fields. One deferred finding (EC-003/CR-003: workflow execution bypass) tracked for a follow-up ticket. Dismissed: PATCH reset minor note (follows existing project pattern for nullable boolean fields).",
+  "findings": [],
+  "business_review": [
+    {"criterion": "AC1 — file_attachment_enabled field on Assistant model with Optional[bool] default None", "status": "pass", "notes": "SQLField(default=None, nullable=True) on AssistantBase and AssistantConfiguration."},
+    {"criterion": "AC2 — AssistantRequest includes field for create/update", "status": "pass", "notes": "file_attachment_enabled: Optional[bool] = None present in AssistantRequest."},
+    {"criterion": "AC3 — HTTP 403 raised when enabled is False and files supplied", "status": "pass", "notes": "_validate_file_attachment_allowed_and_raise raises ExtendedHTTPException(HTTP_403_FORBIDDEN) when file_attachment_enabled is False and file_names is non-empty."},
+    {"criterion": "AC4 — None (unset) allows file attachment (backward compatible)", "status": "pass", "notes": "Guard uses identity check `is False`; None falls through without error."},
+    {"criterion": "AC5 — Guard called in _ask_assistant and _ask_virtual_assistant", "status": "pass", "notes": "Both call sites invoke _validate_file_attachment_allowed_and_raise before processing."},
+    {"criterion": "AC6 — Alembic migration adds column to assistants and assistant_configurations", "status": "pass", "notes": "Migration u2v3w4x5y6z7 adds nullable boolean column to both tables. down_revision correctly set to b5c6d7e8f9a0."},
+    {"criterion": "AC7 — Version service propagates field through snapshot lifecycle", "status": "pass", "notes": "create_initial_version, create_new_version, rollback, and update_assistant_config_fields all propagate file_attachment_enabled."},
+    {"criterion": "AC8 — Tests cover the guard and its call sites", "status": "partial", "notes": "4 unit tests cover the validator in isolation. No HTTP-level integration test exercises the guard through the router call sites. Gap is minor given one-liner call sites and complete validator coverage."}
+  ],
+  "standards_review": [
+    {
+      "standard": "commit-format",
+      "status": "pass",
+      "notes": "Commits follow EPMCDME-####: Description format consistent with project conventions."
+    },
+    {
+      "standard": "code-quality",
+      "status": "pass",
+      "notes": "Typed parameters, modern Optional syntax, Ruff formatting applied. No blocking quality issues."
+    },
+    {
+      "standard": "security",
+      "status": "pass",
+      "notes": "HTTP 403 enforcement. Flag defaults to None (allow) — safe backward-compatible default. No secret handling, no auth bypass, no injection surface."
+    }
+  ],
+  "risk_flags": [],
+  "confidence": "medium"
+}

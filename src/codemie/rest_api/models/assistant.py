@@ -337,6 +337,7 @@ class AssistantRequest(BaseModel):
         default=None, gt=0, description="Max token size limit for tool outputs for this assistant"
     )
     smart_tool_selection_enabled: Optional[bool] = False
+    file_attachment_enabled: Optional[bool] = None
     hedging_config: Optional[HedgingConfig] = None
     interactive_features: Optional[InteractiveFeaturesConfig] = None
     mcp_servers: list[MCPServerDetails] = Field(default_factory=list)
@@ -663,6 +664,7 @@ class AssistantBase(CommonBaseModel, Owned):
     top_p: Optional[float] = None
     tools_tokens_size_limit: Optional[int] = None
     smart_tool_selection_enabled: Optional[bool] = False
+    file_attachment_enabled: Optional[bool] = SQLField(default=None)
     hedging_config: Optional[HedgingConfig] = SQLField(default=None, sa_column=Column(PydanticType(HedgingConfig)))
     interactive_features: Optional[InteractiveFeaturesConfig] = SQLField(
         default=None, sa_column=Column(PydanticType(InteractiveFeaturesConfig))
@@ -1263,6 +1265,7 @@ class AssistantConfiguration(BaseModelWithSQLSupport, table=True):
     system_prompt: str
     llm_model_type: Optional[str] = None
     enable_image_generation: Optional[bool] = False
+    file_attachment_enabled: Optional[bool] = SQLField(default=None)
     image_generation_model: Optional[str] = None
     temperature: Optional[float] = None
     top_p: Optional[float] = None
