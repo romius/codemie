@@ -541,6 +541,9 @@ class Config(BaseSettings):
 
     # MCP Client configuration
     MCP_CLIENT_TIMEOUT: float = 300.0  # Timeout in seconds for MCP client requests
+    MCP_SERVER_INIT_TIMEOUT: float = (
+        300.0  # Timeout in seconds for MCP server initialization (matches MCP_CLIENT_TIMEOUT ceiling)
+    )
 
     # Comma-separated header names (case-insensitive) blocked from forwarding to downstream services (MCP, providers)
     FORWARDED_HEADERS_BLOCKLIST: str = (

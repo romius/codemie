@@ -763,8 +763,8 @@ class MCPToolkitFactory:
                 pass
 
         try:
-            # Get tool definitions from the MCP server
-            tool_definitions = await self.mcp_client.list_tools(server_config, execution_context)
+            # Get tool definitions from the MCP server; guard against indefinite hang on slow startup.
+            tool_definitions = await self._list_tools_with_init_timeout(server_config, execution_context)
 
             # Generate toolkit name and description if not provided
             name = toolkit_name or f"MCP Toolkit ({server_config.command})"
@@ -793,8 +793,36 @@ class MCPToolkitFactory:
 
             return toolkit
 
+        except asyncio.TimeoutError:
+            # _list_tools_with_init_timeout already logged the actionable message.
+            raise
         except Exception as e:
             logger.error(f"Failed to create MCP toolkit: {str(e)}")
+            raise
+
+    async def _list_tools_with_init_timeout(
+        self,
+        server_config: MCPServerConfig,
+        execution_context: MCPExecutionContext | None,
+    ) -> list[MCPToolDefinition]:
+        """
+        Fetch tool definitions from the MCP server, bounding the wait so a slow-starting
+        server cannot hang toolkit creation indefinitely.
+
+        Raises:
+            asyncio.TimeoutError: If the server does not initialize within MCP_SERVER_INIT_TIMEOUT.
+        """
+        try:
+            return await asyncio.wait_for(
+                self.mcp_client.list_tools(server_config, execution_context),
+                timeout=config.MCP_SERVER_INIT_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            logger.error(
+                f"MCP server '{server_config.command or server_config.url}' did not initialize "
+                f"within {config.MCP_SERVER_INIT_TIMEOUT}s (MCP_SERVER_INIT_TIMEOUT). "
+                f"Increase MCP_SERVER_INIT_TIMEOUT if the server needs more startup time."
+            )
             raise
 
     def get_toolkit(self, server_config: MCPServerConfig) -> MCPToolkit | None:

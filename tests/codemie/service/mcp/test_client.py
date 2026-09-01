@@ -1522,3 +1522,65 @@ class TestHashRemainderDistribution:
         assert len(unique_values) > 1
         # All values should be in valid range
         assert all(0 <= x < config.MCP_CONNECT_BUCKETS_COUNT for x in results)
+
+
+class TestMCPServerInitTimeout:
+    """Tests for MCP_SERVER_INIT_TIMEOUT config field."""
+
+    def test_config_has_mcp_server_init_timeout_with_default_300(self):
+        from codemie.configs import config
+
+        assert config.MCP_SERVER_INIT_TIMEOUT == 300.0
+
+    def test_invocation_request_excludes_init_timeout_seconds(self):
+        """init_timeout_seconds must never appear in the bridge payload (extra=forbid on the bridge)."""
+        from codemie.service.mcp.models import MCPToolInvocationRequest
+
+        req = MCPToolInvocationRequest(
+            method="tools/call",
+            serverPath="npx",
+            args=[],
+            params={},
+        )
+        body = req.model_dump(exclude_none=True)
+        assert "init_timeout_seconds" not in body
+
+
+class TestInitTimeoutInPayload:
+    """Tests that init_timeout_seconds is absent from bridge payloads (bridge uses extra=forbid)."""
+
+    @pytest.mark.asyncio
+    async def test_list_tools_payload_excludes_init_timeout_seconds(self, server_config):
+        """list_tools must NOT send init_timeout_seconds to the bridge (extra=forbid would cause 422)."""
+        client = MCPConnectClient()
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"tools": []}
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("codemie.service.mcp.client.httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.post = AsyncMock(return_value=mock_response)
+            await client.list_tools(server_config)
+
+            call_kwargs = mock_client.return_value.__aenter__.return_value.post.call_args
+            posted_json = call_kwargs.kwargs["json"]
+            assert "init_timeout_seconds" not in posted_json
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_payload_excludes_init_timeout_seconds(self, server_config):
+        """invoke_tool must NOT include init_timeout_seconds in the payload."""
+        client = MCPConnectClient()
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"content": [{"type": "text", "text": "ok"}], "isError": False}
+        mock_response.raise_for_status = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers = {}
+
+        with patch("codemie.service.mcp.client.httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.post = AsyncMock(return_value=mock_response)
+            await client.invoke_tool(server_config, "test_tool", {})
+
+            call_kwargs = mock_client.return_value.__aenter__.return_value.post.call_args
+            posted_json = call_kwargs.kwargs["json"]
+            assert "init_timeout_seconds" not in posted_json

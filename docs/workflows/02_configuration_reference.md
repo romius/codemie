@@ -587,6 +587,35 @@ Template variables in `command`, `url`, `headers`, `args`, and `env` can referen
 2. **streamable-http**: Remote server accessed via HTTP with streaming support
 3. **sse**: Server-Sent Events transport (automatically detected)
 
+#### Timeouts:
+
+MCP server startup and request timeouts are controlled by three independent environment variables:
+
+- **`MCP_SERVER_INIT_TIMEOUT`** (default: `300`): Seconds the CodeMie backend waits for an MCP
+  server to finish starting. Set on the **CodeMie** deployment. Raise this value for servers that
+  download dependencies on first run (e.g. `npx`-based servers on slow networks or with large packages).
+
+  ```
+  MCP_SERVER_INIT_TIMEOUT=300
+  ```
+
+- **`MCP_CONNECT_INIT_TIMEOUT`** (default: `30000` **ms**, set on the **MCP-Connect** service):
+  Bridge-side initialization timeout in **milliseconds** applied around `session.initialize()`.
+  The effective startup budget is `min(MCP_SERVER_INIT_TIMEOUT, MCP_CONNECT_INIT_TIMEOUT / 1000)` —
+  the smaller of the two wins. Raise both variables together for slow-starting servers.
+
+- **`MCP_CLIENT_TIMEOUT`** (default: `300`): Seconds to wait for an individual tool invocation to
+  complete. This is separate from initialization — it governs how long a running server may take
+  to respond to a `tools/call` request.
+
+All settings apply to all transport types (stdio, SSE, streamable-http) and all connection modes
+(cached and single-use).
+
+**Troubleshooting slow-start 500 errors:** If users report 500 errors when connecting a server for
+the first time (especially `npx` or `uvx` servers that must download packages), raise **both**
+`MCP_SERVER_INIT_TIMEOUT` (on CodeMie) and `MCP_CONNECT_INIT_TIMEOUT` (on MCP-Connect, in ms)
+to a consistent value — for example `MCP_SERVER_INIT_TIMEOUT=120` and `MCP_CONNECT_INIT_TIMEOUT=120000`.
+
 #### Examples:
 
 **Filesystem Server:**

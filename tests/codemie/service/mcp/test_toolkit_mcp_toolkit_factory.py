@@ -337,3 +337,53 @@ class TestMCPToolkitFactory(unittest.TestCase):
 
         # Verify None is returned for non-existent toolkit
         self.assertIsNone(nonexistent_toolkit)
+
+
+class TestMCPToolkitFactoryInitTimeout(unittest.IsolatedAsyncioTestCase):
+    """Tests for the asyncio.wait_for guard on list_tools in create_toolkit."""
+
+    def setUp(self):
+        self.mock_client = MagicMock(spec=MCPConnectClient)
+        self.mock_server_config = MagicMock(spec=MCPServerConfig)
+        self.mock_server_config.url = None
+        self.mock_server_config.command = "slow_server"
+        self.mock_server_config.args = []
+        self.mock_server_config.env = {}
+
+    @patch("codemie.service.mcp.toolkit.config")
+    async def test_create_toolkit_raises_timeout_when_list_tools_is_slow(self, mock_config):
+        """create_toolkit() must raise asyncio.TimeoutError when list_tools exceeds MCP_SERVER_INIT_TIMEOUT."""
+        mock_config.MCP_SERVER_INIT_TIMEOUT = 0.05  # 50 ms
+        mock_config.MCP_TOOLKIT_FACTORY_CACHE_SIZE = 50
+        mock_config.MCP_TOOLKIT_FACTORY_CACHE_TTL = 600
+
+        async def slow_list_tools(*args, **kwargs):
+            await asyncio.sleep(1.0)  # 1 s — far exceeds 50 ms timeout
+            return []
+
+        self.mock_client.list_tools = slow_list_tools
+
+        factory = MCPToolkitFactory(mcp_client=self.mock_client)
+
+        with self.assertRaises(asyncio.TimeoutError):
+            await factory.create_toolkit(server_config=self.mock_server_config, use_cache=False)
+
+    @patch("codemie.service.mcp.toolkit.config")
+    async def test_create_toolkit_succeeds_when_list_tools_is_fast(self, mock_config):
+        """create_toolkit() must return a toolkit when list_tools completes within the timeout."""
+        mock_config.MCP_SERVER_INIT_TIMEOUT = 5.0
+        mock_config.MCP_TOOLKIT_FACTORY_CACHE_SIZE = 50
+        mock_config.MCP_TOOLKIT_FACTORY_CACHE_TTL = 600
+        mock_config.MCP_TOOL_TOKENS_SIZE_LIMIT = 30000
+
+        self.mock_client.list_tools = AsyncMock(return_value=[])
+
+        factory = MCPToolkitFactory(mcp_client=self.mock_client)
+        toolkit = await factory.create_toolkit(
+            server_config=self.mock_server_config,
+            toolkit_name="test",
+            toolkit_description="test toolkit",
+            use_cache=False,
+        )
+
+        self.assertIsInstance(toolkit, MCPToolkit)

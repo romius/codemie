@@ -1203,7 +1203,8 @@ class MCPToolkitService:
 
             return toolkit
         except Exception as e:
-            logger.error(f"Failed to get MCP toolkit: {e}")
+            if not isinstance(e, asyncio.TimeoutError):
+                logger.error(f"Failed to get MCP toolkit: {e}")
             raise
 
     def get_toolkit(
