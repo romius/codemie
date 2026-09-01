@@ -18,12 +18,13 @@ from __future__ import annotations
 
 import json
 import mimetypes
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 from elasticsearch.exceptions import NotFoundError
 from fastapi import UploadFile, status
 
-from codemie.configs import logger
+from codemie.configs import config, logger
 from codemie.core.exceptions import ExtendedHTTPException
 from codemie.core.models import Application, CreatedByUser
 from codemie.datasource.file.file_datasource_processor import FILE_PATH_DATA_NT
@@ -290,6 +291,36 @@ class FileDatasourceService:
         return paths, filenames
 
     @staticmethod
+    def process_files_batch(
+        files: list[UploadFile],
+        user_id: str,
+        file_repo,
+    ) -> tuple[list[FILE_PATH_DATA_NT], list[str]]:
+        """Write multiple uploaded files to storage concurrently.
+
+        Runs ``_process_upload_file`` over ``files`` using a small bounded thread pool
+        and merges the per-file ``(paths, filenames)`` results back in input order.
+        """
+        if not files:
+            return [], []
+
+        max_workers = min(config.FILE_DATASOURCE_UPLOAD_MAX_WORKERS, len(files))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            results = list(
+                executor.map(
+                    lambda file: FileDatasourceService._process_upload_file(file, user_id, file_repo),
+                    files,
+                )
+            )
+
+        paths: list[FILE_PATH_DATA_NT] = []
+        filenames: list[str] = []
+        for file_paths, file_names in results:
+            paths.extend(file_paths)
+            filenames.extend(file_names)
+        return paths, filenames
+
+    @staticmethod
     def upload_and_prepare_files(
         new_files: list[UploadFile],
         user: User,
@@ -306,17 +337,23 @@ class FileDatasourceService:
         - ``uploaded_files``   — canonical filenames for the final ``uploaded_files``
           column on the ``IndexInfo`` record.
         """
+        combined_count = len(new_files) + len(uploaded_files_to_keep)
+        if combined_count > config.FILE_DATASOURCE_MAX_UPLOAD_COUNT:
+            raise ExtendedHTTPException(
+                code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                message="Too many files",
+                details=(
+                    f"Retained and newly uploaded files together total {combined_count}, "
+                    f"which exceeds the maximum of {config.FILE_DATASOURCE_MAX_UPLOAD_COUNT}."
+                ),
+                help="Remove some retained files or upload fewer new files.",
+            )
+
         original_owner_id = index.created_by.id if index.created_by else user.id
         kept_paths = [FILE_PATH_DATA_NT(name=fname, owner=original_owner_id) for fname in uploaded_files_to_keep]
 
         file_repo = FileRepositoryFactory.get_current_repository()
-        new_paths: list[FILE_PATH_DATA_NT] = []
-        new_filenames: list[str] = []
-
-        for file in new_files:
-            file_paths, file_names = FileDatasourceService._process_upload_file(file, user.id, file_repo)
-            new_paths.extend(file_paths)
-            new_filenames.extend(file_names)
+        new_paths, new_filenames = FileDatasourceService.process_files_batch(new_files, user.id, file_repo)
 
         return PreparedFilesResult(
             all_files_paths=kept_paths + new_paths,

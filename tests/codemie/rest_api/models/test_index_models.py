@@ -18,10 +18,12 @@ from fastapi import UploadFile
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
 
+from codemie.configs import config
 from codemie.rest_api.models.index import (
     IndexKnowledgeBaseFileTypes,
     IndexKnowledgeBaseFileRequest,
     IndexKnowledgeBaseRequest,
+    UpdateKnowledgeBaseFileRequest,
 )
 
 
@@ -86,6 +88,15 @@ class TestIndexKnowledgeBaseFileRequest:
         with pytest.raises(RequestValidationError):
             IndexKnowledgeBaseFileRequest(**mock_attrs, files=mock_files)
 
+    def test_validate_files_count_respects_higher_configured_limit(self, mock_attrs, monkeypatch):
+        monkeypatch.setattr(config, "FILE_DATASOURCE_MAX_UPLOAD_COUNT", 50)
+        mock_files = [MagicMock(spec=UploadFile) for _ in range(20)]
+        for f in mock_files:
+            f.size = 1024
+            f.filename = 'test_file.txt'
+
+        assert IndexKnowledgeBaseFileRequest(**mock_attrs, files=mock_files)
+
     def test_validate_file_too_large(self, mock_attrs):
         mock_file = MagicMock(spec=UploadFile)
         mock_file.size = 1024 * 1024 * 1024 + 1
@@ -129,6 +140,76 @@ class TestIndexKnowledgeBaseFileRequest:
             IndexKnowledgeBaseFileRequest(**mock_attrs, files=[mock_file])
 
         assert "my_photo.png" in str(exc_info.value)
+
+    def test_validate_total_size_within_limit_ok(self, mock_attrs, monkeypatch):
+        monkeypatch.setattr(config, "FILE_DATASOURCE_MAX_UPLOAD_TOTAL_SIZE", 2048)
+        mock_files = [MagicMock(spec=UploadFile) for _ in range(2)]
+        for f in mock_files:
+            f.size = 1024
+            f.filename = 'test_file.txt'
+
+        assert IndexKnowledgeBaseFileRequest(**mock_attrs, files=mock_files)
+
+    def test_validate_total_size_exceeded_raises(self, mock_attrs, monkeypatch):
+        monkeypatch.setattr(config, "FILE_DATASOURCE_MAX_UPLOAD_TOTAL_SIZE", 2048)
+        mock_files = [MagicMock(spec=UploadFile) for _ in range(3)]
+        for f in mock_files:
+            f.size = 1024
+            f.filename = 'test_file.txt'
+
+        with pytest.raises(RequestValidationError) as exc_info:
+            IndexKnowledgeBaseFileRequest(**mock_attrs, files=mock_files)
+
+        assert "total upload size" in str(exc_info.value).lower()
+
+
+class TestUpdateKnowledgeBaseFileRequest:
+    @pytest.fixture
+    def mock_attrs(self):
+        return {
+            'name': 'test_name',
+            'project_name': 'test_project_name',
+        }
+
+    def test_validate_files_count_at_default_limit_ok(self, mock_attrs):
+        mock_files = [MagicMock(spec=UploadFile) for _ in range(10)]
+        for f in mock_files:
+            f.size = 1024
+
+        assert UpdateKnowledgeBaseFileRequest(**mock_attrs, files=mock_files)
+
+    def test_validate_files_count_above_default_limit_raises(self, mock_attrs):
+        mock_files = [MagicMock(spec=UploadFile) for _ in range(11)]
+
+        with pytest.raises(RequestValidationError):
+            UpdateKnowledgeBaseFileRequest(**mock_attrs, files=mock_files)
+
+    def test_validate_files_count_respects_higher_configured_limit(self, mock_attrs, monkeypatch):
+        monkeypatch.setattr(config, "FILE_DATASOURCE_MAX_UPLOAD_COUNT", 50)
+        mock_files = [MagicMock(spec=UploadFile) for _ in range(20)]
+        for f in mock_files:
+            f.size = 1024
+
+        assert UpdateKnowledgeBaseFileRequest(**mock_attrs, files=mock_files)
+
+    def test_validate_total_size_within_limit_ok(self, mock_attrs, monkeypatch):
+        monkeypatch.setattr(config, "FILE_DATASOURCE_MAX_UPLOAD_TOTAL_SIZE", 2048)
+        mock_files = [MagicMock(spec=UploadFile) for _ in range(2)]
+        for f in mock_files:
+            f.size = 1024
+
+        assert UpdateKnowledgeBaseFileRequest(**mock_attrs, files=mock_files)
+
+    def test_validate_total_size_exceeded_raises(self, mock_attrs, monkeypatch):
+        monkeypatch.setattr(config, "FILE_DATASOURCE_MAX_UPLOAD_TOTAL_SIZE", 2048)
+        mock_files = [MagicMock(spec=UploadFile) for _ in range(3)]
+        for f in mock_files:
+            f.size = 1024
+
+        with pytest.raises(RequestValidationError) as exc_info:
+            UpdateKnowledgeBaseFileRequest(**mock_attrs, files=mock_files)
+
+        assert "total upload size" in str(exc_info.value).lower()
 
 
 class TestIndexKnowledgeBaseRequest:

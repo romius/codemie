@@ -137,6 +137,15 @@ class Config(BaseSettings):
     FILES_STORAGE_DIR: str = "./codemie-storage"
     FILES_STORAGE_TYPE: Literal["filesystem", "aws", "azure", "gcp"] = 'filesystem'
     FILES_STORAGE_MAX_UPLOAD_SIZE: int = 100 * 1024 * 1024  # 100 MB
+    FILE_DATASOURCE_MAX_UPLOAD_COUNT: int = Field(default=10, gt=0)
+    # Aggregate cap across all files in one upload request. The file-count limit above used to
+    # be a de facto aggregate size cap (count x FILES_STORAGE_MAX_UPLOAD_SIZE); now that the
+    # count is independently configurable, this restores that ceiling explicitly.
+    FILE_DATASOURCE_MAX_UPLOAD_TOTAL_SIZE: int = 10 * FILES_STORAGE_MAX_UPLOAD_SIZE
+    # Concurrent workers for FileDatasourceService.process_files_batch. Each worker holds a full
+    # file's content (and, for ZIP archives, up to _ZIP_MAX_UNCOMPRESSED_BYTES of decompressed
+    # content) resident in memory, so raising this trades peak RSS for upload throughput.
+    FILE_DATASOURCE_UPLOAD_MAX_WORKERS: int = Field(default=3, gt=0)
     IMAGE_INDEXING_MAX_SIZE_BYTES: int = 10 * 1024 * 1024  # 10 MB
     JIRA_COPY_MAX_ATTACHMENT_BYTES: int = -1
     JIRA_COPY_MAX_ATTACHMENTS: int = -1

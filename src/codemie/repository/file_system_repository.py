@@ -106,9 +106,7 @@ class FileSystemRepository(FileRepository):
         directory_path = os.path.join(owner_directory_path, name)
         directory_path_to_create = os.path.dirname(directory_path)
         logger.info(f"Creating directory {directory_path_to_create}")
-        if os.path.dirname(directory_path_to_create) and not os.path.exists(directory_path_to_create):
-            os.makedirs(directory_path_to_create)
-            logger.info(f"Created directory {directory_path_to_create}")
-        else:
-            logger.info(f"Directory already exists at {directory_path_to_create}")
+        if os.path.dirname(directory_path_to_create):
+            os.makedirs(directory_path_to_create, exist_ok=True)
+            logger.info(f"Directory ready at {directory_path_to_create}")
         return DirectoryObject(name=name, owner=owner, path=owner_directory_path)

@@ -1545,17 +1545,15 @@ class UpdateKnowledgeBaseFileRequest(BaseModel):
     embedding_model: Optional[str] = None
     include_email_attachments: bool = True
 
-    MAX_FILE_COUNT: ClassVar[int] = 10
-
     @field_validator("files")
     @classmethod
     def validate_files_count(cls, files: Optional[List[UploadFile]]) -> Optional[List[UploadFile]]:
-        if files and len(files) > cls.MAX_FILE_COUNT:
+        if files and len(files) > config.FILE_DATASOURCE_MAX_UPLOAD_COUNT:
             raise RequestValidationError(
                 [
                     {
                         "loc": ["files"],
-                        "msg": f"Too many files. Maximum count is {cls.MAX_FILE_COUNT}",
+                        "msg": f"Too many files. Maximum count is {config.FILE_DATASOURCE_MAX_UPLOAD_COUNT}",
                         "type": "value_error",
                     }
                 ]
@@ -1565,8 +1563,22 @@ class UpdateKnowledgeBaseFileRequest(BaseModel):
     @field_validator("files")
     @classmethod
     def validate_files_sizes(cls, files: Optional[List[UploadFile]]) -> Optional[List[UploadFile]]:
+        total_size = sum(file.size or 0 for file in files or [])
+        if total_size > config.FILE_DATASOURCE_MAX_UPLOAD_TOTAL_SIZE:
+            raise RequestValidationError(
+                [
+                    {
+                        "loc": ["files"],
+                        "msg": (
+                            "Total upload size too large. Maximum combined size is "
+                            f"{config.FILE_DATASOURCE_MAX_UPLOAD_TOTAL_SIZE} bytes"
+                        ),
+                        "type": "value_error",
+                    }
+                ]
+            )
         for file in files or []:
-            if file.size > config.FILES_STORAGE_MAX_UPLOAD_SIZE:
+            if (file.size or 0) > config.FILES_STORAGE_MAX_UPLOAD_SIZE:
                 raise RequestValidationError(
                     [
                         {
@@ -1724,7 +1736,6 @@ class IndexKnowledgeBaseFileRequest(IndexKnowledgeBaseRequest):
     include_email_attachments: bool = True
 
     MIN_FILE_COUNT: ClassVar[int] = 1
-    MAX_FILE_COUNT: ClassVar[int] = 10
 
     @field_validator("files")
     def validate_files_count(cls, files):
@@ -1739,12 +1750,12 @@ class IndexKnowledgeBaseFileRequest(IndexKnowledgeBaseRequest):
                 ]
             )
 
-        if len(files) > cls.MAX_FILE_COUNT:
+        if len(files) > config.FILE_DATASOURCE_MAX_UPLOAD_COUNT:
             raise RequestValidationError(
                 [
                     {
                         "loc": ["files"],
-                        "msg": f"Too many files. Maximum count is {cls.MAX_FILE_COUNT}",
+                        "msg": f"Too many files. Maximum count is {config.FILE_DATASOURCE_MAX_UPLOAD_COUNT}",
                         "type": "value_error",
                     }
                 ]
@@ -1761,8 +1772,22 @@ class IndexKnowledgeBaseFileRequest(IndexKnowledgeBaseRequest):
 
     @field_validator("files")
     def validate_files_sizes(cls, files):
+        total_size = sum(file.size or 0 for file in files)
+        if total_size > config.FILE_DATASOURCE_MAX_UPLOAD_TOTAL_SIZE:
+            raise RequestValidationError(
+                [
+                    {
+                        "loc": ["files"],
+                        "msg": (
+                            "Total upload size too large. Maximum combined size is "
+                            f"{format_file_size(config.FILE_DATASOURCE_MAX_UPLOAD_TOTAL_SIZE)}"
+                        ),
+                        "type": "value_error",
+                    }
+                ]
+            )
         for file in files:
-            if file.size > config.FILES_STORAGE_MAX_UPLOAD_SIZE:
+            if (file.size or 0) > config.FILES_STORAGE_MAX_UPLOAD_SIZE:
                 raise RequestValidationError(
                     [
                         {
@@ -1776,7 +1801,7 @@ class IndexKnowledgeBaseFileRequest(IndexKnowledgeBaseRequest):
                     ]
                 )
             is_image = get_file_extension(file.filename or "") in IndexKnowledgeBaseFileTypes.image_extensions()
-            if is_image and file.size > config.IMAGE_INDEXING_MAX_SIZE_BYTES:
+            if is_image and (file.size or 0) > config.IMAGE_INDEXING_MAX_SIZE_BYTES:
                 raise RequestValidationError(
                     [
                         {

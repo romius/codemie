@@ -96,3 +96,8 @@ def test_env_local_overrides_env(tmp_path):
     env_local_file.write_text("LOG_LEVEL=DEBUG\n")
     config = Config(_env_file=(str(env_file), str(env_local_file)))
     assert config.LOG_LEVEL == "DEBUG", ".env.local values must override .env values"
+
+
+def test_file_datasource_max_upload_count_defaults_to_ten():
+    config = Config()
+    assert config.FILE_DATASOURCE_MAX_UPLOAD_COUNT == 10

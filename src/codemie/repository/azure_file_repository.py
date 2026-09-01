@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from typing import Any
+from azure.core.exceptions import ResourceExistsError
 from azure.identity import DefaultAzureCredential
 from azure.storage.blob import BlobServiceClient, ContainerClient, ContentSettings
 from codemie_tools.base.file_object import FileObject
@@ -41,8 +42,11 @@ class AzureFileRepository(FileRepository):
             logger.debug(f"Container {owner} accessed successfully")
         except Exception:
             logger.debug(f"Container {owner} does not exist. Creating new container.")
-            container_client = self.blob_service_client.create_container(owner)
-            logger.debug(f"Container {owner} created successfully")
+            try:
+                container_client = self.blob_service_client.create_container(owner)
+                logger.debug(f"Container {owner} created successfully")
+            except ResourceExistsError:
+                logger.debug(f"Container {owner} was created concurrently by another request.")
         return container_client
 
     def write_file(self, name: str, mime_type: str, owner: str, content: Any = None) -> FileObject:

@@ -16,6 +16,7 @@ from email.parser import HeaderParser
 from typing import Any
 
 from codemie_tools.base.file_object import MimeType
+from google.api_core.exceptions import Conflict
 from google.cloud import storage
 from .base_file_repository import FileRepository, FileObject, DirectoryObject
 from codemie.configs import config, logger
@@ -30,8 +31,12 @@ class GCPFileRepository(FileRepository):
         bucket = self.client.lookup_bucket(owner)
         if bucket is None:
             logger.debug(f"Bucket {owner} does not exist. Creating new bucket.")
-            bucket = self.client.create_bucket(bucket_or_name=owner, location=config.FILES_STORAGE_GCP_REGION)
-            logger.debug(f"Bucket {owner} created successfully")
+            try:
+                bucket = self.client.create_bucket(bucket_or_name=owner, location=config.FILES_STORAGE_GCP_REGION)
+                logger.debug(f"Bucket {owner} created successfully")
+            except Conflict:
+                logger.debug(f"Bucket {owner} was created concurrently by another request.")
+                bucket = self.client.bucket(owner)
         else:
             logger.debug(f"Bucket {owner} accessed successfully")
         return bucket

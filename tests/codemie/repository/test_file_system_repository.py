@@ -119,3 +119,28 @@ def test_write_pdf_file(mock_file: patch, setup_repository: Generator) -> None:
     assert result.mime_type == "application/pdf"
     assert result.path == expected_path
     assert result.name == pdf_file_name
+
+
+class TestCreateDirectory:
+    def test_creates_directory_with_exist_ok_to_avoid_toctou_race(self, setup_repository: Generator) -> None:
+        """makedirs must be called with exist_ok=True: two upload threads for the same brand-new
+        user can both pass the pre-check before either creates the directory, so the second
+        call landing on an already-created directory must not raise."""
+        repo, file_name, _, owner, _, _ = setup_repository
+
+        with patch("os.path.exists", return_value=False), patch("os.makedirs") as mock_makedirs:
+            repo.create_directory(name=file_name, owner=owner)
+
+        assert mock_makedirs.call_args.kwargs.get("exist_ok") is True
+
+    def test_create_directory_is_idempotent_when_directory_already_exists(
+        self, setup_repository: Generator, tmp_path: Path
+    ) -> None:
+        repo, file_name, _, owner, _, _ = setup_repository
+
+        with patch.object(config, "FILES_STORAGE_DIR", str(tmp_path)):
+            repo.create_directory(name=file_name, owner=owner)
+            # A concurrent second call for the same owner must not raise FileExistsError.
+            result = repo.create_directory(name=file_name, owner=owner)
+
+        assert result.owner == owner

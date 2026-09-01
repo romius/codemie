@@ -16,14 +16,18 @@
 
 import io
 import json
+import time
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from elasticsearch.exceptions import NotFoundError
-from fastapi import status
+from fastapi import UploadFile, status
 from unittest.mock import MagicMock, patch
 
+from codemie.configs import config
 from codemie.core.exceptions import ExtendedHTTPException
+from codemie.datasource.file.file_datasource_processor import FILE_PATH_DATA_NT
 from codemie.rest_api.security.user import User
 from codemie.service.datasource.file_datasource_service import FileDatasourceService, _validate_json_file
 from codemie.service.datasource.zip_utils import ZipExtractionError, expand_zip_file
@@ -284,6 +288,37 @@ class TestUploadAndPrepareFiles:
         assert "kept.txt" in result.uploaded_files
         assert len(result.new_files_paths) == 1
         assert len(result.all_files_paths) == 2
+
+    def test_combined_kept_and_new_over_limit_raises(self, mock_index, mock_user, monkeypatch):
+        monkeypatch.setattr(config, "FILE_DATASOURCE_MAX_UPLOAD_COUNT", 3)
+        new_files = [self._make_upload_file(f"new{i}.txt") for i in range(2)]
+
+        with pytest.raises(ExtendedHTTPException) as exc_info:
+            FileDatasourceService.upload_and_prepare_files(
+                new_files=new_files,
+                user=mock_user,
+                uploaded_files_to_keep=["kept1.txt", "kept2.txt"],
+                index=mock_index,
+            )
+        assert exc_info.value.code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+    def test_combined_kept_and_new_at_limit_ok(self, mock_index, mock_user, monkeypatch):
+        monkeypatch.setattr(config, "FILE_DATASOURCE_MAX_UPLOAD_COUNT", 3)
+        upload_file = self._make_upload_file("new.txt")
+        file_obj = self._make_file_object("new.txt")
+
+        with patch(
+            "codemie.service.datasource.file_datasource_service.FileRepositoryFactory.get_current_repository"
+        ) as mock_repo:
+            mock_repo.return_value.write_file.return_value = file_obj
+            result = FileDatasourceService.upload_and_prepare_files(
+                new_files=[upload_file],
+                user=mock_user,
+                uploaded_files_to_keep=["kept1.txt", "kept2.txt"],
+                index=mock_index,
+            )
+
+        assert len(result.all_files_paths) == 3
 
     def test_uses_user_id_as_owner_when_created_by_is_none(self, mock_user):
         index = MagicMock()
@@ -699,3 +734,64 @@ class TestUploadAndPrepareFilesZip:
                 )
 
         assert exc_info.value.code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+
+# ---------------------------------------------------------------------------
+# process_files_batch
+# ---------------------------------------------------------------------------
+
+
+class TestProcessFilesBatch:
+    def _make_upload_file(self, filename):
+        f = MagicMock(spec=UploadFile)
+        f.filename = filename
+        return f
+
+    def test_empty_files_returns_empty_lists(self):
+        paths, filenames = FileDatasourceService.process_files_batch([], "user1", MagicMock())
+        assert paths == []
+        assert filenames == []
+
+    def test_preserves_input_order_even_when_files_complete_out_of_order(self):
+        files = [self._make_upload_file(f"file{i}.txt") for i in range(3)]
+        # file0 is slowest, file2 is fastest — completion order is reversed from input order.
+        delays = {"file0.txt": 0.03, "file1.txt": 0.015, "file2.txt": 0.0}
+
+        def fake_process(file, user_id, file_repo):
+            time.sleep(delays[file.filename])
+            return ([FILE_PATH_DATA_NT(name=file.filename, owner=user_id)], [file.filename])
+
+        with patch.object(FileDatasourceService, "_process_upload_file", side_effect=fake_process):
+            paths, filenames = FileDatasourceService.process_files_batch(files, "user1", MagicMock())
+
+        assert filenames == ["file0.txt", "file1.txt", "file2.txt"]
+        assert [p.name for p in paths] == ["file0.txt", "file1.txt", "file2.txt"]
+
+    def test_propagates_exception_raised_by_one_file(self):
+        files = [self._make_upload_file("ok.txt"), self._make_upload_file("bad.zip")]
+
+        def fake_process(file, user_id, file_repo):
+            if file.filename == "bad.zip":
+                raise ZipExtractionError(message="bad zip", detail="corrupt archive", help_text="try a different file")
+            return ([FILE_PATH_DATA_NT(name=file.filename, owner=user_id)], [file.filename])
+
+        with patch.object(FileDatasourceService, "_process_upload_file", side_effect=fake_process):
+            with pytest.raises(ZipExtractionError):
+                FileDatasourceService.process_files_batch(files, "user1", MagicMock())
+
+    def test_respects_configured_max_workers(self, monkeypatch):
+        monkeypatch.setattr(config, "FILE_DATASOURCE_UPLOAD_MAX_WORKERS", 1)
+        files = [self._make_upload_file(f"file{i}.txt") for i in range(5)]
+
+        with patch(
+            "codemie.service.datasource.file_datasource_service.ThreadPoolExecutor",
+            wraps=ThreadPoolExecutor,
+        ) as executor_spy:
+            with patch.object(
+                FileDatasourceService,
+                "_process_upload_file",
+                return_value=([], []),
+            ):
+                FileDatasourceService.process_files_batch(files, "user1", MagicMock())
+
+        executor_spy.assert_called_once_with(max_workers=1)

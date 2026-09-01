@@ -14,6 +14,7 @@
 
 import pytest
 from unittest.mock import patch, MagicMock
+from google.api_core.exceptions import Conflict
 from codemie.repository.gcp_file_repository import GCPFileRepository
 
 MIME_TEXT_PLAIN = "text/plain"
@@ -88,6 +89,24 @@ def test_bucket_creation(mock_storage: MagicMock) -> None:
     # Asserts
     mock_storage.Client().create_bucket.assert_called_once_with(bucket_or_name=BUCKET_NAME_NEW, location='US')
     mock_storage.Client().lookup_bucket.assert_called_with(BUCKET_NAME_NEW)
+
+
+@patch('codemie.repository.gcp_file_repository.storage')
+def test_get_bucket_falls_back_when_created_concurrently(mock_storage: MagicMock) -> None:
+    """Two upload threads racing to create a brand-new bucket: the loser's create_bucket call
+    raises Conflict, which must be swallowed instead of propagating, falling back to a lazy
+    local bucket reference via client.bucket(owner)."""
+    mock_storage.Client().lookup_bucket.return_value = None
+    mock_storage.Client().create_bucket.side_effect = Conflict("already exists")
+    mock_fallback_bucket = MagicMock()
+    mock_storage.Client().bucket.return_value = mock_fallback_bucket
+    repo = GCPFileRepository()
+
+    bucket = repo._get_bucket(BUCKET_NAME_NEW)
+
+    mock_storage.Client().create_bucket.assert_called_once_with(bucket_or_name=BUCKET_NAME_NEW, location='US')
+    mock_storage.Client().bucket.assert_called_once_with(BUCKET_NAME_NEW)
+    assert bucket is mock_fallback_bucket
 
 
 @patch('codemie.repository.gcp_file_repository.storage')

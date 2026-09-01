@@ -14,6 +14,7 @@
 
 import pytest
 from unittest.mock import patch, MagicMock, ANY
+from azure.core.exceptions import ResourceExistsError
 from azure.storage.blob import BlobServiceClient, ContainerClient, BlobClient
 from codemie.repository.azure_file_repository import AzureFileRepository
 
@@ -24,6 +25,25 @@ def setup_repository() -> tuple[AzureFileRepository, MagicMock]:
         mock_blob_service_client.return_value = MagicMock(spec=BlobServiceClient)
         repository = AzureFileRepository(connection_string="fake_connection_string")
         yield repository, mock_blob_service_client.return_value
+
+
+def test_get_container_falls_back_when_created_concurrently(
+    setup_repository: tuple[AzureFileRepository, MagicMock],
+) -> None:
+    """Two upload threads racing to create a brand-new container: the loser's create_container
+    call raises ResourceExistsError, which must be swallowed instead of propagating, falling back
+    to the already-obtained container_client reference."""
+    repository, mock_blob_service_client = setup_repository
+
+    mock_container_client = MagicMock(spec=ContainerClient)
+    mock_container_client.get_container_properties.side_effect = Exception("ContainerNotFound")
+    mock_blob_service_client.get_container_client.return_value = mock_container_client
+    mock_blob_service_client.create_container.side_effect = ResourceExistsError("already exists")
+
+    container_client = repository._get_container("owner")
+
+    mock_blob_service_client.create_container.assert_called_once_with("owner")
+    assert container_client is mock_container_client
 
 
 @patch('azure.storage.blob.ContainerClient.get_blob_client', autospec=True)

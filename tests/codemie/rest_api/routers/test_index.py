@@ -28,6 +28,7 @@ from codemie.rest_api.routers.index import router
 from codemie.service.datasource.file_datasource_service import _validate_json_file as validate_json_file
 from codemie.rest_api.security.authentication import authenticate
 from codemie.rest_api.security.user import User
+from codemie.service.datasource.zip_utils import ZipExtractionError
 
 DEMO = "demo"
 
@@ -1156,6 +1157,70 @@ def test_post_file_datasource_invalid_guardrail_assignments_raises_400(
 
     assert response.status_code == 400
     assert response.json()['error']['message'] == "Invalid guardrail_assignments parameter"
+
+
+@patch('codemie.rest_api.routers.index._kb_demo_user_check')
+@patch('codemie.rest_api.routers.index._index_unique_check')
+@patch('codemie.rest_api.routers.index.FileRepositoryFactory.get_current_repository')
+@patch('codemie.rest_api.routers.index.FileDatasourceProcessor')
+def test_post_file_datasource_multiple_files_all_forwarded(
+    mock_processor_cls, mock_file_repo_factory, mock_unique_check, mock_demo_check, auth_headers
+):
+    """Multiple files are all uploaded and forwarded to the processor via process_files_batch."""
+    written_objects = {}
+
+    def fake_write_file(name, mime_type, owner, content):
+        obj = MagicMock()
+        obj.name = name
+        obj.owner = owner
+        written_objects[name] = obj
+        return obj
+
+    mock_file_repo_factory.return_value.write_file.side_effect = fake_write_file
+
+    mock_processor = MagicMock()
+    mock_processor.started_message = f"Indexing of {_FILE_DS_NAME} has started in the background"
+    mock_processor_cls.return_value = mock_processor
+
+    response = app_client.post(
+        _FILE_POST_URL,
+        params={"name": _FILE_DS_NAME, "project_name": _FILE_DS_PROJECT, "description": _FILE_DS_DESCRIPTION},
+        files=[
+            ("files", ("a.txt", b"file a", "text/plain")),
+            ("files", ("b.txt", b"file b", "text/plain")),
+            ("files", ("c.txt", b"file c", "text/plain")),
+        ],
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    _, kwargs = mock_processor_cls.call_args
+    assert kwargs["uploaded_files"] == ["a.txt", "b.txt", "c.txt"]
+    assert len(kwargs["files_paths"]) == 3
+
+
+@patch('codemie.rest_api.routers.index._kb_demo_user_check')
+@patch('codemie.rest_api.routers.index._index_unique_check')
+@patch('codemie.rest_api.routers.index.FileDatasourceService.process_files_batch')
+def test_post_file_datasource_zip_extraction_error_raises_422(
+    mock_process_batch, mock_unique_check, mock_demo_check, auth_headers
+):
+    """A ZipExtractionError from process_files_batch still surfaces as HTTP 422."""
+    mock_process_batch.side_effect = ZipExtractionError(
+        message="ZIP archive contained no extractable files",
+        detail="The archive was empty.",
+        help_text="Ensure the archive contains at least one supported file and try again.",
+    )
+
+    response = app_client.post(
+        _FILE_POST_URL,
+        params={"name": _FILE_DS_NAME, "project_name": _FILE_DS_PROJECT, "description": _FILE_DS_DESCRIPTION},
+        files=[("files", ("empty.zip", b"PK\x05\x06" + b"\x00" * 18, "application/zip"))],
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 422
+    assert response.json()['error']['message'] == "ZIP archive contained no extractable files"
 
 
 # ---------------------------------------------------------------------------

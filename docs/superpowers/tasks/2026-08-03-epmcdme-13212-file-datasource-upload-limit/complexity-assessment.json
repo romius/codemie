@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "task": "Make the File Datasource 10-file upload limit configurable (default 10) and add batch processing for file upload to support hundreds of files without performance degradation.",
+  "generated": "2026-08-03T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 20,
+  "size": "M",
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Four distinct components requiring coordination: (1) two unrelated request model classes (IndexKnowledgeBaseFileRequest and UpdateKnowledgeBaseFileRequest) with no shared base class, (2) dual config systems (env var in config.py + YAML model in datasources_config.py + datasources-config.yaml), (3) FileDatasourceService upload loop, (4) FileDatasourceProcessor and FileDatasourceUpdateProcessor — the update processor overrides process() verbatim so base changes do not propagate automatically."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "~10-11 modified files across 6+ directories: index.py, config.py, datasources_config.py, datasources-config.yaml, file_datasource_service.py, file_datasource_processor.py, file_datasource_update_processor.py, plus test_index_models.py, test_file_datasource_service.py, test_file_datasource_processor.py, and possibly test_update_file_datasource_use_case.py."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "Four layers: API (request model validators in rest_api/models/index.py), Service (FileDatasourceService upload batching), Workflow/Processor (FileDatasourceProcessor and FileDatasourceUpdateProcessor batch size), Config/Infrastructure (app config.py env var + YAML config). No DB schema migration, no cross-system calls."
+    }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from S (2) to M (3): performance/scalability is an explicit primary concern — batch processing is required to prevent performance impact when uploading hundreds of files."
+  ],
+  "split_recommendation": null
+}

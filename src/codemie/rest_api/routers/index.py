@@ -2058,7 +2058,6 @@ def index_knowledge_base_files(
     raw_request: Request,
     request: IndexKnowledgeBaseFileRequest = Depends(),
 ):
-    files_paths = []
     _index_unique_check(request.project_name, request.name)
 
     _kb_demo_user_check(raw_request.state.user)
@@ -2066,22 +2065,18 @@ def index_knowledge_base_files(
     parsed_guardrail_assignments = FileDatasourceService.parse_guardrail_assignments(request.guardrail_assignments)
 
     file_repo = FileRepositoryFactory.get_current_repository()
-    uploaded_files = []
 
-    for file in request.files:
-        try:
-            file_paths, file_names = FileDatasourceService._process_upload_file(
-                file, raw_request.state.user.id, file_repo
-            )
-        except ZipExtractionError as exc:
-            raise ExtendedHTTPException(
-                code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                message=str(exc),
-                details=exc.detail,
-                help=exc.help_text,
-            ) from exc
-        files_paths.extend(file_paths)
-        uploaded_files.extend(file_names)
+    try:
+        files_paths, uploaded_files = FileDatasourceService.process_files_batch(
+            request.files, raw_request.state.user.id, file_repo
+        )
+    except ZipExtractionError as exc:
+        raise ExtendedHTTPException(
+            code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            message=str(exc),
+            details=exc.detail,
+            help=exc.help_text,
+        ) from exc
 
     file_data_source_processor = FileDatasourceProcessor(
         datasource_name=request.name,

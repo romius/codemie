@@ -1,0 +1,100 @@
+{
+  "task": "Make the File Datasource 10-file upload limit configurable via env var (default 10) and add concurrent batch processing for file uploads to support hundreds of files without performance degradation.",
+  "generated": "2026-08-04T00:00:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 4,
+      "label": "L",
+      "affected": "Config (FILE_DATASOURCE_MAX_UPLOAD_COUNT env var), IndexKnowledgeBaseFileRequest validator, UpdateKnowledgeBaseFileRequest validator, FileDatasourceService (process_files_batch + upload_and_prepare_files), AzureFileRepository (thread-safety), GCPFileRepository (thread-safety), FileSystemRepository (thread-safety)",
+      "layers": "API, Service, Repository, Config/Infra"
+    },
+    "requirements_clarity": {
+      "score": 2,
+      "label": "S",
+      "status": "Clear",
+      "gaps": "Original plan anticipated a YAML config change; implementation simplified to a single env var in Config — a pragmatic narrowing that was resolved without ambiguity."
+    },
+    "technical_risk": {
+      "score": 4,
+      "label": "L",
+      "risk_factors": "Concurrent file uploads via ThreadPoolExecutor introduce race conditions in container/bucket creation across three storage backends; correct error handling required for mid-batch failures and rollback",
+      "mitigation": "ThreadPoolExecutor capped at max_workers=min(3, len(files)); ResourceExistsError/Conflict caught on container creation in AzureFileRepository and GCPFileRepository; rollback logic added in _write_extracted_files_with_rollback"
+    },
+    "file_change_estimate": {
+      "score": 4,
+      "label": "L",
+      "modified_files": 10,
+      "modified_file_list": [
+        "src/codemie/configs/config.py",
+        "src/codemie/rest_api/models/index.py",
+        "src/codemie/rest_api/routers/index.py",
+        "src/codemie/repository/azure_file_repository.py",
+        "src/codemie/repository/file_system_repository.py",
+        "src/codemie/repository/gcp_file_repository.py",
+        "src/codemie/service/datasource/file_datasource_service.py",
+        "tests/codemie/configs/test_config.py",
+        "tests/codemie/rest_api/routers/test_index.py",
+        "tests/codemie/service/datasource/test_file_datasource_service.py"
+      ],
+      "new_files": 4,
+      "new_file_list": [
+        "tests/codemie/repository/test_azure_file_repository.py",
+        "tests/codemie/repository/test_file_system_repository.py",
+        "tests/codemie/repository/test_gcp_file_repository.py",
+        "tests/codemie/rest_api/models/test_index_models.py"
+      ],
+      "affected_dirs": [
+        "src/codemie/configs",
+        "src/codemie/rest_api/models",
+        "src/codemie/rest_api/routers",
+        "src/codemie/repository",
+        "src/codemie/service/datasource",
+        "tests/codemie/configs",
+        "tests/codemie/repository",
+        "tests/codemie/rest_api/models",
+        "tests/codemie/rest_api/routers",
+        "tests/codemie/service/datasource"
+      ]
+    },
+    "dependencies": {
+      "score": 2,
+      "label": "S",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 4,
+      "label": "L",
+      "layers_changed": ["API", "Service", "Repository", "Config/Infra"],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 20,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 19,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Four distinct components required coordination: (1) Config — one env var added; (2) two API request model validators updated to reference the config value; (3) FileDatasourceService — new process_files_batch() using ThreadPoolExecutor and upload_and_prepare_files() helper; (4) three repository implementations (Azure, GCP, filesystem) required thread-safety fixes to handle concurrent container/bucket creation from the new batch worker threads."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "Base M (3) — ThreadPoolExecutor concurrency is a standard stdlib pattern. Bumped to L (4) by the 'Performance/Scalability as primary concern' red flag: the ticket explicitly required batch processing to support hundreds of files without degradation, and the implementation introduced concurrent I/O with race-condition handling and mid-batch rollback logic across three storage backends."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "14 implementation files changed (excluding 5 planning docs): 7 source files modified, 3 test files modified, and 4 new test files created covering the three repository classes and request model validators. 10 distinct directories spanned."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "Four layers touched: API layer (request model validators + router handler), Service layer (FileDatasourceService batch logic), Repository layer (thread-safety in all three storage backends), and Config/Infra layer (new env var). No DB schema migration; no external service calls added."
+    }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from M (3) to L (4): 'Performance/Scalability as primary concern' — batch processing required to prevent performance degradation when uploading hundreds of files is an explicit primary requirement."
+  ],
+  "split_recommendation": null
+}

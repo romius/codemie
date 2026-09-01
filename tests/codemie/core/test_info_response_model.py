@@ -18,7 +18,7 @@ from codemie.core.models import InfoResponse
 
 
 def test_info_response_has_no_deployed_at_field():
-    resp = InfoResponse(message="Codemie", version="1.0.0", description="desc")
+    resp = InfoResponse(message="Codemie", version="1.0.0", description="desc", file_datasource_max_upload_count=10)
     data = resp.model_dump(by_alias=True)
     assert "deployedAt" not in data
     assert "deployed_at" not in data
