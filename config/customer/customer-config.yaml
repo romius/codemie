@@ -107,15 +107,6 @@ components:
       url: "http://localhost:4173/assets/AngularUpgradeAppRemote.js"
       type: "module"
       description: ""
-  - id: "applications:test-mate"
-    settings:
-      enabled: true
-      name: "AI TestMate"
-      url: "/aitestmate"
-      type: "link"
-      description: "Autonomous GenAI solution that automatically generates and commits unit tests, increasing coverage and reducing team effort in software development."
-      created_by: "DPEO"
-      icon_url: "https://github.com/alk-epam/test-repo/blob/0f6b0e1dde1df59f92aa95a5a40afbb78da87531/ai_testmate_small.png?raw=true"
   - id: "aiAdoption"
     settings:
       enabled: true
