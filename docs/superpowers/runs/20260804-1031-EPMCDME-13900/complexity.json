@@ -1,0 +1,14 @@
+{
+  "score": 16,
+  "breakdown": {
+    "component_scope": 4,
+    "requirements_clarity": 2,
+    "technical_risk": 3,
+    "file_change_estimate": 3,
+    "dependencies": 1,
+    "affected_layers": 3
+  },
+  "routing": "brainstorming",
+  "source": "agent",
+  "rationale": "Three distinct components touched across three layers: models.py (MCPErrorCategory enum + MCPBridgeError exception), client.py (raise typed exception with category assignment), and toolkit_service.py (MCPServerTester.test() category-specific hint branching + _sanitize_exception_for_log() update). Coordination is required across all three but scope is contained within the MCP subsystem. The key risk is subtle: MCPBridgeError must NOT subclass ValueError because _sanitize_exception_for_log() in toolkit_service.py strips ValueError message bodies to the type name only, which would silently reintroduce the diagnostic gap this task is meant to fix."
+}

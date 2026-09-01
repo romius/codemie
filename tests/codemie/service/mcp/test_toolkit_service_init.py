@@ -126,3 +126,24 @@ class TestMCPToolkitServiceInitialization(unittest.TestCase):
 
         # Verify that _instances_cache is empty
         self.assertEqual(len(MCPToolkitService._instances_cache), 0)
+
+
+class TestSanitizeExceptionForLog:
+    """Verify _sanitize_exception_for_log handles MCPBridgeError without stripping the message."""
+
+    def test_mcp_bridge_error_preserves_message_and_status(self):
+        from codemie.service.mcp.models import MCPBridgeError
+        from codemie.service.mcp.toolkit_service import MCPToolkitService
+
+        err = MCPBridgeError("Failed to create MCP client: McpError: Connection closed", status_code=500)
+        result = MCPToolkitService._sanitize_exception_for_log(err)
+        assert "Connection closed" in result
+        assert "500" in result
+
+    def test_plain_value_error_is_stripped_to_type_name(self):
+        from codemie.service.mcp.toolkit_service import MCPToolkitService
+
+        err = ValueError("sensitive data here")
+        result = MCPToolkitService._sanitize_exception_for_log(err)
+        assert result == "ValueError"
+        assert "sensitive" not in result

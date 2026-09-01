@@ -1,4 +1,4 @@
-# Copyright 2026 EPAM Systems, Inc. (“EPAM”)
+# Copyright 2026 EPAM Systems, Inc. ("EPAM")
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,8 +16,61 @@ from codemie.configs import logger
 from codemie.core.exceptions import MCPAuthenticationRequiredException
 from codemie.rest_api.models.assistant import MCPServerDetails, MCPServerCheckRequest
 from codemie.rest_api.security.user import User
+from codemie.service.mcp.models import MCPErrorCategory, MCPToolLoadException
 from codemie.service.mcp.toolkit_service import MCPToolkitService
 from codemie.service.security.token_providers.base_provider import BrokerAuthRequiredException
+
+
+def _get_server_command(mcp_server: MCPServerDetails) -> str | None:
+    """Return the MCP server's launch command, checking top-level field before config."""
+    if mcp_server.command:
+        return mcp_server.command
+    if mcp_server.config and mcp_server.config.command:
+        return mcp_server.config.command
+    return None
+
+
+def _build_hint_for_category(category: MCPErrorCategory, mcp_server: MCPServerDetails) -> str:
+    """Return a category-specific diagnostic hint for the user."""
+    command = _get_server_command(mcp_server)
+    is_npx = command == "npx"
+
+    if category == MCPErrorCategory.CONNECTION_CLOSED:
+        if is_npx:
+            return (
+                "The npx server closed the MCP connection. Common causes:\n"
+                "1. npm may write progress or error output to stdout — "
+                "MCP requires clean stdout (only JSON-RPC messages). "
+                "Run 'npx <package> --version' locally to check for unexpected output.\n"
+                "2. The package may not exist or may require a specific environment. "
+                "Confirm the package name and that all required environment variables are set.\n"
+                "3. If this server downloads packages on first use, the MCP bridge's "
+                "MCP_CONNECT_INIT_TIMEOUT (default 30s) may expire before initialization completes."
+            )
+        return "Check that the server process starts correctly and produces only valid MCP JSON-RPC output."
+
+    if category == MCPErrorCategory.TIMEOUT:
+        return (
+            "The MCP bridge timed out waiting for server initialization. "
+            "If this server downloads packages on first use, "
+            "increase MCP_CONNECT_INIT_TIMEOUT on the bridge service."
+        )
+
+    if category == MCPErrorCategory.STARTUP_FAILURE:
+        return (
+            "The server process failed to start. "
+            "Verify the command path, that all required environment variables are set "
+            "in the MCP server configuration, and that the package or binary is accessible."
+        )
+
+    if category == MCPErrorCategory.AUTH_REQUIRED:
+        return (
+            "Authentication is required. "
+            "Check that authentication tokens or credentials are present "
+            "in the MCP server environment configuration."
+        )
+
+    return "Please, check the configuration."
 
 
 class MCPServerTester:
@@ -46,5 +99,8 @@ class MCPServerTester:
             raise
         except MCPAuthenticationRequiredException:
             raise
+        except MCPToolLoadException as e:
+            hint = _build_hint_for_category(e.category, self.mcp_server)
+            return False, f"{e}.\n{hint}"
         except Exception as e:
             return False, f"{e}.\nPlease, check the configuration."

@@ -851,3 +851,124 @@ class TestIntegration:
         assert "Special chars: " in special_content.text
         assert "Special chars: " in special_content.data
         assert special_content.mimeType == "text/plain"
+
+
+class TestMCPErrorClassification:
+    """Tests for MCPErrorCategory, classify_mcp_error, and MCPBridgeError."""
+
+    def test_connection_closed_text_classifies_as_connection_closed(self):
+        from codemie.service.mcp.models import MCPErrorCategory, classify_mcp_error
+
+        assert (
+            classify_mcp_error("Failed to create MCP client: McpError: Connection closed")
+            == MCPErrorCategory.CONNECTION_CLOSED
+        )
+
+    def test_mcperror_text_classifies_as_connection_closed(self):
+        from codemie.service.mcp.models import MCPErrorCategory, classify_mcp_error
+
+        assert classify_mcp_error("McpError: something went wrong") == MCPErrorCategory.CONNECTION_CLOSED
+
+    def test_timed_out_text_classifies_as_timeout(self):
+        from codemie.service.mcp.models import MCPErrorCategory, classify_mcp_error
+
+        assert classify_mcp_error("Request timed out after 30s") == MCPErrorCategory.TIMEOUT
+
+    def test_timeout_text_classifies_as_timeout(self):
+        from codemie.service.mcp.models import MCPErrorCategory, classify_mcp_error
+
+        assert classify_mcp_error("gateway timeout waiting for server") == MCPErrorCategory.TIMEOUT
+
+    def test_status_504_overrides_connection_closed_text(self):
+        """Bridge 504 timeout response body often contains 'connection closed' -- must classify as TIMEOUT."""
+        from codemie.service.mcp.models import MCPErrorCategory, classify_mcp_error
+
+        assert classify_mcp_error("McpError: Connection closed", status_code=504) == MCPErrorCategory.TIMEOUT
+
+    def test_status_408_classifies_as_timeout(self):
+        from codemie.service.mcp.models import MCPErrorCategory, classify_mcp_error
+
+        assert classify_mcp_error("request timeout", status_code=408) == MCPErrorCategory.TIMEOUT
+
+    def test_enoent_classifies_as_startup_failure(self):
+        from codemie.service.mcp.models import MCPErrorCategory, classify_mcp_error
+
+        assert classify_mcp_error("ENOENT: no such file or directory") == MCPErrorCategory.STARTUP_FAILURE
+
+    def test_command_not_found_classifies_as_startup_failure(self):
+        from codemie.service.mcp.models import MCPErrorCategory, classify_mcp_error
+
+        assert classify_mcp_error("command not found: node") == MCPErrorCategory.STARTUP_FAILURE
+
+    def test_cannot_find_module_classifies_as_startup_failure(self):
+        from codemie.service.mcp.models import MCPErrorCategory, classify_mcp_error
+
+        assert classify_mcp_error("Cannot find module 'some-mcp-server'") == MCPErrorCategory.STARTUP_FAILURE
+
+    def test_npm_err_classifies_as_startup_failure(self):
+        from codemie.service.mcp.models import MCPErrorCategory, classify_mcp_error
+
+        assert classify_mcp_error("npm err: missing peer dependency") == MCPErrorCategory.STARTUP_FAILURE
+
+    def test_npx_not_found_classifies_as_startup_failure(self):
+        from codemie.service.mcp.models import MCPErrorCategory, classify_mcp_error
+
+        assert classify_mcp_error("npx: not found") == MCPErrorCategory.STARTUP_FAILURE
+
+    def test_status_401_with_uninformative_text_classifies_as_auth_required(self):
+        from codemie.service.mcp.models import MCPErrorCategory, classify_mcp_error
+
+        assert classify_mcp_error("Unauthorized", status_code=401) == MCPErrorCategory.AUTH_REQUIRED
+
+    def test_unknown_text_and_no_status_classifies_as_unknown(self):
+        from codemie.service.mcp.models import MCPErrorCategory, classify_mcp_error
+
+        assert classify_mcp_error("something completely unexpected") == MCPErrorCategory.UNKNOWN
+
+    def test_classification_is_case_insensitive(self):
+        from codemie.service.mcp.models import MCPErrorCategory, classify_mcp_error
+
+        assert classify_mcp_error("CONNECTION CLOSED") == MCPErrorCategory.CONNECTION_CLOSED
+        assert classify_mcp_error("TIMED OUT") == MCPErrorCategory.TIMEOUT
+        assert classify_mcp_error("ENOENT") == MCPErrorCategory.STARTUP_FAILURE
+
+    def test_mcp_bridge_error_is_not_value_error(self):
+        from codemie.service.mcp.models import MCPBridgeError
+
+        err = MCPBridgeError("some error", status_code=500)
+        assert not isinstance(err, ValueError)
+        assert isinstance(err, Exception)
+
+    def test_mcp_bridge_error_preserves_message_and_status_code(self):
+        from codemie.service.mcp.models import MCPBridgeError
+
+        err = MCPBridgeError("McpError: Connection closed", status_code=500)
+        assert str(err) == "McpError: Connection closed"
+        assert err.status_code == 500
+
+    def test_mcp_tool_load_exception_category_from_plain_exception(self):
+        from codemie.service.mcp.models import MCPErrorCategory, MCPToolLoadException
+
+        original = Exception("Failed to create MCP client: McpError: Connection closed")
+        exc = MCPToolLoadException("my-server", original)
+        assert exc.category == MCPErrorCategory.CONNECTION_CLOSED
+
+    def test_mcp_tool_load_exception_category_from_bridge_error_504(self):
+        from codemie.service.mcp.models import MCPErrorCategory, MCPBridgeError, MCPToolLoadException
+
+        original = MCPBridgeError("McpError: Connection closed", status_code=504)
+        exc = MCPToolLoadException("my-server", original)
+        assert exc.category == MCPErrorCategory.TIMEOUT
+
+    def test_mcp_tool_load_exception_category_from_bridge_error_500_connection_closed(self):
+        from codemie.service.mcp.models import MCPErrorCategory, MCPBridgeError, MCPToolLoadException
+
+        original = MCPBridgeError("Failed to create MCP client: McpError: Connection closed", status_code=500)
+        exc = MCPToolLoadException("my-server", original)
+        assert exc.category == MCPErrorCategory.CONNECTION_CLOSED
+
+    def test_mcp_tool_load_exception_category_defaults_to_unknown(self):
+        from codemie.service.mcp.models import MCPErrorCategory, MCPToolLoadException
+
+        exc = MCPToolLoadException("my-server", Exception("unexpected error"))
+        assert exc.category == MCPErrorCategory.UNKNOWN

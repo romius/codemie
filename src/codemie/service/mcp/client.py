@@ -39,6 +39,7 @@ from codemie.enterprise.mcp_auth.dependencies import (
 )
 from codemie.service.security.token_providers.base_provider import BrokerAuthRequiredException
 from codemie.service.mcp.models import (
+    MCPBridgeError,
     MCPServerConfig,
     MCPListToolsResponse,
     MCPToolDefinition,
@@ -181,7 +182,8 @@ class MCPConnectClient:
                         auth_location=config.BROKER_AUTH_LOCATION_URL,
                         details=f"HTTP {e.response.status_code}",
                     ) from e
-                raise ValueError(_error_message_from_http_status_error(e)) from e
+                error_text = _error_message_from_http_status_error(e)
+                raise MCPBridgeError(error_text, e.response.status_code) from e
 
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse response as JSON: {e}")

@@ -30,6 +30,7 @@ from codemie.core.exceptions import MCPAuthenticationRequiredException
 from codemie.enterprise.mcp_auth.dependencies import MCPPostAuth401Result
 from codemie.service.mcp.client import BUCKET_KEY, MCPConnectClient, MCP_CONNECT_BUCKET_PLACEHOLDER
 from codemie.service.mcp.models import (
+    MCPBridgeError,
     MCPServerConfig,
     MCPToolDefinition,
     MCPToolInvocationResponse,
@@ -222,7 +223,7 @@ class TestMCPConnectClientListTools:
         with patch("codemie.service.mcp.client.httpx.AsyncClient") as mock_client:
             mock_client.return_value.__aenter__.return_value.post = AsyncMock(return_value=mock_http_response)
 
-            with pytest.raises(ValueError, match="Test error message"):
+            with pytest.raises(MCPBridgeError, match="Test error message"):
                 await client.list_tools(server_config)
 
     @pytest.mark.asyncio
@@ -1584,3 +1585,56 @@ class TestInitTimeoutInPayload:
             call_kwargs = mock_client.return_value.__aenter__.return_value.post.call_args
             posted_json = call_kwargs.kwargs["json"]
             assert "init_timeout_seconds" not in posted_json
+
+
+class TestMCPBridgeError:
+    """Verify that list_tools raises MCPBridgeError (not ValueError) on bridge HTTP errors."""
+
+    @pytest.mark.asyncio
+    async def test_list_tools_raises_mcp_bridge_error_not_value_error(self, server_config):
+        """list_tools must raise MCPBridgeError, not ValueError, on bridge HTTP 500."""
+        client = MCPConnectClient()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_response.reason_phrase = "Internal Server Error"
+        mock_response.text = '{"error": "Test error message"}'
+        mock_response.json.return_value = {"error": "Test error message"}
+        mock_request = MagicMock()
+
+        http_error = httpx.HTTPStatusError("Error", request=mock_request, response=mock_response)
+        mock_http_response = MagicMock()
+        mock_http_response.raise_for_status.side_effect = http_error
+
+        with patch("codemie.service.mcp.client.httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.post = AsyncMock(return_value=mock_http_response)
+
+            with pytest.raises(MCPBridgeError, match="Test error message") as exc_info:
+                await client.list_tools(server_config)
+
+        assert exc_info.value.status_code == 500
+        assert not isinstance(exc_info.value, ValueError)
+
+    @pytest.mark.asyncio
+    async def test_list_tools_bridge_error_preserves_status_code(self, server_config):
+        """MCPBridgeError.status_code reflects the HTTP status from the bridge response."""
+        client = MCPConnectClient()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 502
+        mock_response.reason_phrase = "Bad Gateway"
+        mock_response.text = "upstream connect error"
+        mock_response.json.side_effect = json.JSONDecodeError("Expecting value", "", 0)
+        mock_request = MagicMock()
+
+        http_error = httpx.HTTPStatusError("Error", request=mock_request, response=mock_response)
+        mock_http_response = MagicMock()
+        mock_http_response.raise_for_status.side_effect = http_error
+
+        with patch("codemie.service.mcp.client.httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.post = AsyncMock(return_value=mock_http_response)
+
+            with pytest.raises(MCPBridgeError) as exc_info:
+                await client.list_tools(server_config)
+
+        assert exc_info.value.status_code == 502

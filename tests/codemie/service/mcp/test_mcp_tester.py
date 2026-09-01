@@ -19,9 +19,10 @@ from unittest.mock import Mock, patch
 import pytest
 
 from codemie.core.exceptions import MCPAuthenticationRequiredException
-from codemie.rest_api.models.assistant import MCPServerCheckRequest, MCPServerDetails
+from codemie.rest_api.models.assistant import MCPServerCheckRequest, MCPServerConfig, MCPServerDetails
 from codemie.rest_api.security.user import User
-from codemie.service.mcp.mcp_tester import MCPServerTester
+from codemie.service.mcp.mcp_tester import MCPServerTester, _build_hint_for_category, _get_server_command
+from codemie.service.mcp.models import MCPBridgeError, MCPErrorCategory, MCPToolLoadException
 from codemie.service.security.token_providers.base_provider import BrokerAuthRequiredException
 
 _PATCH_TARGET = "codemie.service.mcp.toolkit_service.MCPToolkitService.get_mcp_server_tools"
@@ -100,3 +101,118 @@ class TestMCPServerTesterTest:
             tester.test()
 
         assert mock_get_tools.call_args.kwargs.get("mcp_server_single_usage") is True
+
+
+class TestGetServerCommand:
+    def test_returns_top_level_command(self):
+        server = MCPServerDetails(name="test-server", command="npx")
+        assert _get_server_command(server) == "npx"
+
+    def test_falls_back_to_config_command(self):
+        server = MCPServerDetails(name="test-server", config=MCPServerConfig(command="uvx"))
+        assert _get_server_command(server) == "uvx"
+
+    def test_returns_none_when_both_absent(self):
+        server = MCPServerDetails(name="test-server")
+        assert _get_server_command(server) is None
+
+
+class TestBuildHintForCategory:
+    def test_connection_closed_with_npx_mentions_stdout(self):
+        server = MCPServerDetails(name="test-server", command="npx")
+        hint = _build_hint_for_category(MCPErrorCategory.CONNECTION_CLOSED, server)
+        assert "stdout" in hint.lower()
+
+    def test_connection_closed_with_npx_mentions_mcp_connect_init_timeout(self):
+        server = MCPServerDetails(name="test-server", command="npx")
+        hint = _build_hint_for_category(MCPErrorCategory.CONNECTION_CLOSED, server)
+        assert "MCP_CONNECT_INIT_TIMEOUT" in hint
+
+    def test_connection_closed_without_npx_is_generic(self):
+        server = MCPServerDetails(name="test-server", command="uvx")
+        hint = _build_hint_for_category(MCPErrorCategory.CONNECTION_CLOSED, server)
+        assert "stdout" not in hint.lower()
+        assert "MCP_CONNECT_INIT_TIMEOUT" not in hint
+
+    def test_timeout_mentions_mcp_connect_init_timeout(self):
+        server = MCPServerDetails(name="test-server", command="npx")
+        hint = _build_hint_for_category(MCPErrorCategory.TIMEOUT, server)
+        assert "MCP_CONNECT_INIT_TIMEOUT" in hint
+
+    def test_startup_failure_mentions_env_vars_or_command(self):
+        server = MCPServerDetails(name="test-server", command="npx")
+        hint = _build_hint_for_category(MCPErrorCategory.STARTUP_FAILURE, server)
+        assert "env" in hint.lower() or "command" in hint.lower() or "variable" in hint.lower()
+
+    def test_auth_required_mentions_authentication(self):
+        server = MCPServerDetails(name="test-server", command="npx")
+        hint = _build_hint_for_category(MCPErrorCategory.AUTH_REQUIRED, server)
+        assert "auth" in hint.lower() or "token" in hint.lower() or "credential" in hint.lower()
+
+    def test_unknown_returns_generic_fallback(self):
+        server = MCPServerDetails(name="test-server")
+        hint = _build_hint_for_category(MCPErrorCategory.UNKNOWN, server)
+        assert "Please, check the configuration." in hint
+
+
+class TestMCPServerTesterHintIntegration:
+    """EPMCDME-13900: MCPServerTester.test() must build a category-specific hint
+    when an MCPToolLoadException propagates from get_mcp_server_tools."""
+
+    def test_mcp_tool_load_exception_uses_category_hint(self, tester):
+        original = MCPBridgeError("simulated bridge error", status_code=500)
+        exc = MCPToolLoadException("Test MCP", original)
+        exc.category = MCPErrorCategory.TIMEOUT
+
+        with patch(_PATCH_TARGET, side_effect=exc):
+            success, message = tester.test()
+
+        assert success is False
+        assert "MCP_CONNECT_INIT_TIMEOUT" in message
+
+
+class TestMCPServerTesterNpxRegression:
+    """AC5 regression: exercises MCPServerDetails with command='npx' through the full hint path."""
+
+    @pytest.fixture
+    def npx_tester(self, mock_user):
+        server = MCPServerDetails(name="Test MCP", command="npx")
+        request = MCPServerCheckRequest(mcp_server=server)
+        return MCPServerTester(request=request, user=mock_user)
+
+    def test_bridge_500_connection_closed_npx_returns_npx_hint(self, npx_tester):
+        original = MCPBridgeError("Failed to create MCP client: McpError: Connection closed", status_code=500)
+        exc = MCPToolLoadException("Test MCP", original)
+
+        with patch(_PATCH_TARGET, side_effect=exc):
+            success, message = npx_tester.test()
+
+        assert success is False
+        assert exc.category == MCPErrorCategory.CONNECTION_CLOSED
+        assert "stdout" in message.lower()
+
+    def test_bridge_504_connection_closed_body_npx_returns_timeout_hint(self, npx_tester):
+        """Primary npx failure mode: bridge 504 with 'connection closed' body must classify
+        as TIMEOUT (status-code-first rule) and return the MCP_CONNECT_INIT_TIMEOUT hint."""
+        original = MCPBridgeError("McpError: Connection closed", status_code=504)
+        exc = MCPToolLoadException("Test MCP", original)
+
+        with patch(_PATCH_TARGET, side_effect=exc):
+            success, message = npx_tester.test()
+
+        assert success is False
+        assert exc.category == MCPErrorCategory.TIMEOUT
+        assert "MCP_CONNECT_INIT_TIMEOUT" in message
+
+    def test_bridge_500_enoent_npx_returns_startup_failure_hint(self, npx_tester):
+        original = MCPBridgeError(
+            "ENOENT: no such file or directory, open '/tmp/node_modules/some-mcp'", status_code=500
+        )
+        exc = MCPToolLoadException("Test MCP", original)
+
+        with patch(_PATCH_TARGET, side_effect=exc):
+            success, message = npx_tester.test()
+
+        assert success is False
+        assert exc.category == MCPErrorCategory.STARTUP_FAILURE
+        assert "env" in message.lower() or "command" in message.lower() or "variable" in message.lower()

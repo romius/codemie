@@ -54,7 +54,7 @@ from codemie.service.security.principal_token_resolver import resolve_current_be
 from codemie.service.security.token_exchange_service import token_exchange_service
 from codemie.service.security.token_providers.base_provider import BrokerAuthRequiredException
 from codemie.rest_api.security.user import UserContext
-from codemie.service.mcp.models import MCPServerConfig, MCPToolLoadException, MCPExecutionContext
+from codemie.service.mcp.models import MCPBridgeError, MCPServerConfig, MCPToolLoadException, MCPExecutionContext
 from codemie.service.mcp.toolkit import MCPToolkit, MCPToolkitFactory, MCPTool, ContextAwareMCPTool
 from codemie.service.settings.base_settings import SearchFields
 
@@ -719,6 +719,8 @@ class MCPToolkitService:
             )
         if isinstance(exc, httpx.RequestError):
             return f"{exc}: url={cls._sanitize_url_for_log(str(exc.request.url))}"
+        if isinstance(exc, MCPBridgeError):
+            return f"MCPBridgeError: {exc} (status_code={exc.status_code})"
         return type(exc).__name__
 
     @classmethod

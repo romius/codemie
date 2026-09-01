@@ -24,12 +24,64 @@ and serialization/deserialization of data.
 """
 
 import os
+from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from codemie.configs.mcp_commands_config import mcp_commands_config
 from codemie.rest_api.security.user import UserContext
+
+
+class MCPErrorCategory(str, Enum):
+    CONNECTION_CLOSED = "CONNECTION_CLOSED"
+    TIMEOUT = "TIMEOUT"
+    STARTUP_FAILURE = "STARTUP_FAILURE"
+    AUTH_REQUIRED = "AUTH_REQUIRED"
+    UNKNOWN = "UNKNOWN"
+
+
+def classify_mcp_error(error_text: str, status_code: int | None = None) -> MCPErrorCategory:
+    """Classify a bridge error into a diagnostic category.
+
+    Status-code checks run before text matching: a bridge 504 response body
+    typically contains 'connection closed', which would be misclassified as
+    CONNECTION_CLOSED without this precedence rule.
+    """
+    lower = error_text.lower()
+
+    if status_code in {408, 504}:
+        return MCPErrorCategory.TIMEOUT
+
+    if "connection closed" in lower or "mcperror" in lower:
+        return MCPErrorCategory.CONNECTION_CLOSED
+
+    if "timed out" in lower or "timeout" in lower or "did not respond" in lower:
+        return MCPErrorCategory.TIMEOUT
+
+    if any(
+        marker in lower
+        for marker in ("enoent", "no such file", "command not found", "cannot find module", "npm err", "npx: not found")
+    ):
+        return MCPErrorCategory.STARTUP_FAILURE
+
+    if status_code in {401, 403}:
+        return MCPErrorCategory.AUTH_REQUIRED
+
+    return MCPErrorCategory.UNKNOWN
+
+
+class MCPBridgeError(Exception):
+    """Raised by MCPConnectClient when the MCP-Connect bridge returns a non-auth HTTP error.
+
+    Does NOT subclass ValueError. _sanitize_exception_for_log() in toolkit_service.py
+    strips all ValueError message bodies to just the type name; this class stays as a
+    plain Exception so that handler can preserve the full message text.
+    """
+
+    def __init__(self, message: str, status_code: int) -> None:
+        super().__init__(message)
+        self.status_code: int = status_code
 
 
 class MCPExecutionContext(BaseModel):
@@ -484,6 +536,8 @@ class MCPToolLoadException(Exception):
         self.original_error = original_error
         self.assistant_name = assistant_name
         self.assistant_id = assistant_id
+        _status_code = getattr(original_error, "status_code", None)
+        self.category: MCPErrorCategory = classify_mcp_error(str(original_error), _status_code)
         super().__init__(self._build_message())
 
     def _build_message(self) -> str:

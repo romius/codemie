@@ -1,0 +1,35 @@
+{
+  "gate": "code-review.final",
+  "decision": "approve",
+  "confidence": "high",
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "minor",
+      "file": "tests/codemie/service/mcp/test_mcp_tester.py",
+      "line": 38,
+      "title": "Helper function renamed from plan spec",
+      "description": "The plan (Task 4, Step 1) defines the helper as _make_tester_for_mcp_tool_load_exception but the implementation uses _make_tester_with_exc. This is a test-internal name only and has no functional impact, but it creates a discrepancy between the plan document and the actual code.",
+      "suggestion": "No change required for correctness. Consider updating the plan document if it is used as reference for future reviewers."
+    },
+    {
+      "id": "CR-002",
+      "severity": "nit",
+      "file": "tests/codemie/service/mcp/test_toolkit_service_init.py",
+      "line": 131,
+      "title": "Mixed test-class styles in one file",
+      "description": "TestMCPToolkitServiceInitialization inherits unittest.TestCase; the new TestSanitizeExceptionForLog is a plain pytest-style class. Both are valid and pytest collects both, but the file now mixes two styles.",
+      "suggestion": "Acceptable per project policy (new tests use pytest style). No change needed unless the project later standardises the file."
+    },
+    {
+      "id": "CR-003",
+      "severity": "nit",
+      "file": "src/codemie/service/mcp/client.py",
+      "line": 179,
+      "title": "BrokerAuthRequiredException only raised on HTTP 401, not 403",
+      "description": "classify_mcp_error maps status_code 403 to AUTH_REQUIRED (priority 5), but client.py only raises BrokerAuthRequiredException for status_code 401. A bridge 403 response will correctly reach the MCPBridgeError path and classify as AUTH_REQUIRED provided its body text does not match a higher-priority pattern. This is a pre-existing asymmetry not introduced by this PR, and the spec does not require 403 to raise BrokerAuthRequiredException.",
+      "suggestion": "No action required for this PR. Document the 401/403 asymmetry in a follow-up if it becomes a support issue."
+    }
+  ],
+  "summary": "All four spec deliverables are correctly implemented: MCPErrorCategory enum and classify_mcp_error with status-code-first priority, MCPBridgeError as a plain Exception subclass (not ValueError), MCPToolLoadException.category auto-classification, client.py raising MCPBridgeError, toolkit_service.py preserving the full bridge error message in logs, and mcp_tester.py routing MCPToolLoadException to category-specific hints. The critical design constraint — MCPBridgeError must not subclass ValueError — is satisfied. The 504/CONNECTION_CLOSED classification ambiguity is resolved correctly by the status-code-first check. Test coverage matches spec requirements: 20 tests in TestMCPErrorClassification, 2 in TestMCPBridgeError, 2 in TestSanitizeExceptionForLog, 17 across four classes in test_mcp_tester.py. Three nit/minor findings were noted, none blocking approval."
+}

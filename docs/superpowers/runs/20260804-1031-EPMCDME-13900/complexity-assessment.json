@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "task": "Add MCPErrorCategory enum and MCPBridgeError exception for typed error classification, inject category-specific diagnostic hints in MCPServerTester.test(), fix the ValueError sanitizer gap in toolkit_service.py, and add regression tests for all new error paths.",
+  "generated": "2026-08-04T10:31:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 16,
+  "size": "M",
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Three distinct components touched across three layers: models.py (MCPErrorCategory enum + MCPBridgeError exception), client.py (raise typed exception with category assignment), and toolkit_service.py (MCPServerTester.test() category-specific hint branching + _sanitize_exception_for_log() update). Coordination is required across all three but scope is contained within the MCP subsystem."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "The key risk is subtle: MCPBridgeError must NOT subclass ValueError because _sanitize_exception_for_log() in toolkit_service.py strips ValueError message bodies to the type name only, which would silently reintroduce the diagnostic gap this task is meant to fix. The pattern itself (enum + typed exception) is standard Python, but getting the inheritance chain wrong produces a hard-to-detect regression."
+    }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}
