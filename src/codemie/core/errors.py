@@ -35,6 +35,7 @@ from codemie.core.error_constants import (
     AGENT_ERROR_FRIENDLY_MESSAGES,
     BUDGET_MESSAGE_KEY,
     CURRENT_COST_KEY,
+    GUARDRAIL_ERROR_TYPE_TO_ERROR_CODE,
     LITE_LLM_EXC_TYPE_TO_ERROR_CODE,
     LITELLM_ERROR_FRIENDLY_MESSAGES,
     LITELLM_ERROR_KEYWORDS,
@@ -447,7 +448,10 @@ class LiteLLMErrorClassifier:
     def _get_error_code(self, inner) -> ErrorCode | None:
         error_code = None
         if isinstance(inner.message, GuardrailErrorModel):
-            error_code = ErrorCode.LITE_LLM_CONTENT_POLICY_VIOLATION_ERROR
+            error_code = GUARDRAIL_ERROR_TYPE_TO_ERROR_CODE.get(
+                inner.message.error_type.upper(),
+                ErrorCode.LITE_LLM_CONTENT_POLICY_VIOLATION_ERROR,
+            )
         elif pre_error_code := LITE_LLM_EXC_TYPE_TO_ERROR_CODE.get(inner.type_, None):
             error_code = pre_error_code
         else:

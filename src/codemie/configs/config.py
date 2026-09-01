@@ -871,6 +871,9 @@ class Config(BaseSettings):
     LITELLM_MSG_CONTENT_POLICY: str = (
         "The request was rejected due to the LLM provider's content policy. Please modify your input and try again."
     )
+    LITELLM_MSG_LANGUAGE_VALIDATION: str = (
+        "Sorry, I currently support only English. Please ask your question in this language."
+    )
     LITELLM_MSG_AUTHENTICATION: str = "LLM authentication failed. Please verify your credentials or contact support."
     LITELLM_MSG_PERMISSION_DENIED: str = (
         "Access to the LLM model was denied. Please check your permissions or contact support."

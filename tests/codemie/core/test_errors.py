@@ -81,6 +81,35 @@ class TestLiteLLMErrorClassifier:
         assert result.lite_llm_error is not None
         assert result.lite_llm_error.error_code == ErrorCode.LITE_LLM_CONTENT_POLICY_VIOLATION_ERROR
 
+    def test_classify_language_validation_guardrail_uses_dedicated_error_code(self):
+        """LANGUAGE_VALIDATION guardrail payload maps to LITE_LLM_LANGUAGE_VALIDATION_ERROR, not content policy."""
+        guardrail = {
+            "error_type": "LANGUAGE_VALIDATION",
+            "reason": "Input language not supported. Please use English: права как получить",
+            "guardrail": "language_validation",
+            "stage": "pre_call",
+            "version": "1.2.7",
+        }
+        exc_dict = {
+            "error": {
+                "message": json.dumps(guardrail),
+                "type": "None",
+                "param": "None",
+                "code": "400",
+            }
+        }
+        exc_str = json.dumps(exc_dict)
+        classifier = LiteLLMErrorClassifier()
+        result = classifier.classify(Exception(exc_str))
+
+        assert result is not None
+        assert result.category == ErrorCategory.LITE_LLM
+        assert result.lite_llm_error is not None
+        assert result.lite_llm_error.error_code == ErrorCode.LITE_LLM_LANGUAGE_VALIDATION_ERROR
+        assert result.lite_llm_error.message == (
+            "Sorry, I currently support only English. Please ask your question in this language."
+        )
+
     def test_classify_parses_json_structured_rate_limit_error(self):
         """Parse JSON-structured error with rate limit in message (keyword fallback)."""
         exc_str = (

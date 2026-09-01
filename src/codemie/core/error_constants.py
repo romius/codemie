@@ -125,6 +125,7 @@ class ErrorCode(str, Enum):
     LITE_LLM_BUDGET_EXCEEDED_ERROR = "lite_llm_budget_exceeded_error"
     LITE_LLM_CONTEXT_WINDOW_EXCEEDED_ERROR = "lite_llm_context_window_exceeded_error"
     LITE_LLM_CONTENT_POLICY_VIOLATION_ERROR = "lite_llm_content_policy_violation_error"
+    LITE_LLM_LANGUAGE_VALIDATION_ERROR = "lite_llm_language_validation_error"
     LITE_LLM_INTERNAL_SERVER_ERROR = "lite_llm_internal_server_error"
     LITE_LLM_NOT_FOUND_ERROR = "lite_llm_not_found_error"
     LITE_LLM_PERMISSION_DENIED_ERROR = "lite_llm_permission_denied_error"
@@ -223,6 +224,11 @@ LITE_LLM_EXC_TYPE_TO_ERROR_CODE: dict[str, ErrorCode] = {
     "InternalServerError": ErrorCode.LITE_LLM_INTERNAL_SERVER_ERROR,
 }
 
+# Guardrail error_type string -> ErrorCode; fallback = CONTENT_POLICY for unknown types.
+GUARDRAIL_ERROR_TYPE_TO_ERROR_CODE: dict[str, ErrorCode] = {
+    "LANGUAGE_VALIDATION": ErrorCode.LITE_LLM_LANGUAGE_VALIDATION_ERROR,
+}
+
 # Message keywords (lowercase) for LiteLLM error secondary classification.
 LITELLM_ERROR_KEYWORDS: dict[ErrorCode, list[str]] = {
     ErrorCode.LITE_LLM_CONTEXT_WINDOW_EXCEEDED_ERROR: [
@@ -289,6 +295,7 @@ LITELLM_ERROR_FRIENDLY_MESSAGES: dict[ErrorCode, str] = {
     ErrorCode.LITE_LLM_BAD_REQUEST_ERROR: config.LITELLM_MSG_INVALID_REQUEST,
     ErrorCode.LITE_LLM_CONTEXT_WINDOW_EXCEEDED_ERROR: config.LITELLM_MSG_CONTEXT_LENGTH,
     ErrorCode.LITE_LLM_CONTENT_POLICY_VIOLATION_ERROR: config.LITELLM_MSG_CONTENT_POLICY,
+    ErrorCode.LITE_LLM_LANGUAGE_VALIDATION_ERROR: config.LITELLM_MSG_LANGUAGE_VALIDATION,
     ErrorCode.LITE_LLM_AUTHENTICATION_ERROR: config.LITELLM_MSG_AUTHENTICATION,
     ErrorCode.LITE_LLM_PERMISSION_DENIED_ERROR: config.LITELLM_MSG_PERMISSION_DENIED,
     ErrorCode.LITE_LLM_NOT_FOUND_ERROR: config.LITELLM_MSG_INVALID_REQUEST,
