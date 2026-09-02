@@ -30,6 +30,7 @@ from codemie.service.aws_bedrock.bedrock_orchestration_service import BedrockOrc
 from codemie.service.settings.settings import SettingsService
 from codemie.service.settings.settings_index_service import SettingsIndexService
 from codemie.service.settings.settings_request_validator import (
+    validate_credential_type_not_deprecated,
     validate_git_request,
     validate_litellm_request,
     validate_ms_teams_request,
@@ -91,6 +92,7 @@ def create_project_setting(request: SettingRequest, user: User = Depends(authent
     Create project-specific setting
     """
     _check_permission(user, request.project_name)
+    validate_credential_type_not_deprecated(request)
 
     if request.credential_type == CredentialTypes.SCHEDULER:
         validate_scheduler_request(request)
@@ -143,6 +145,8 @@ def update_project_setting(request: SettingRequest, setting_id: str, user: User 
     """
     Update project setting
     """
+    validate_credential_type_not_deprecated(request)
+
     try:
         setting_ability = SettingsService.get_setting_ability(
             credential_id=setting_id,

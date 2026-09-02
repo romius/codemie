@@ -1,0 +1,3 @@
+{"gate_id":"spec.approved","mode":"hitl","decision":"approve","confidence":"high","rationale":"User approved via AskUserQuestion after spec.md written.","ts":"2026-07-31T00:00:00Z"}
+{"gate_id":"plan.approved","mode":"hitl","decision":"approve","confidence":"high","rationale":"User approved via AskUserQuestion after plan.md written.","ts":"2026-07-31T00:00:00Z"}
+{"gate_id":"code-review.final","mode":"hitl","decision":"approve","confidence":"high","rationale":"3-lens review returned 7 findings, all triaged to dismiss/defer after verification (see code-review-final.json).","ts":"2026-07-31T00:00:00Z"}

@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "task": "Deprecate ZephyrSquad integration in the CodeMie backend by adding a deprecated flag to ToolMetadata/Tool, marking ZEPHYR_SQUAD_TOOL deprecated, and blocking create/update in user_settings and project_settings routers via ExtendedHTTPException(HTTP_410_GONE) with no DB migration.",
+  "generated": "2026-07-31T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 1, "label": "XS" },
+    "technical_risk":       { "score": 2, "label": "S" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 12,
+  "size": "S",
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Four distinct components touched: ToolMetadata/Tool model (codemie_tools/base/models.py), ZEPHYR_SQUAD_TOOL definition (tools_vars.py), and two API routers (user_settings.py, project_settings.py). Coordination is needed across model and API layers but the pattern is fully established."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "Approximately 7 files modified: models.py, tools_vars.py, user_settings.py, project_settings.py, test_user_settings.py, test_project_settings.py, test_qa_toolkit.py. No new files needed. Spans codemie_tools/base/, codemie_tools/qa/, codemie/rest_api/routers/, and tests/."
+    }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "task": "Deprecate ZephyrSquad integration by adding a deprecated flag to ToolMetadata/Tool models, marking ZEPHYR_SQUAD_TOOL deprecated, and blocking create/update in both routers via HTTP 410 Gone.",
+  "generated": "2026-07-31T00:00:00Z",
+  "mode": "actual",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 1, "label": "XS" },
+    "technical_risk":       { "score": 2, "label": "S" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 13,
+  "size": "S",
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Four components touched: ToolMetadata and Tool models (models.py), ZEPHYR_SQUAD_TOOL definition (tools_vars.py), project_settings router, and user_settings router. Coordination is across model and API layers but the pattern was straightforward and fully established."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "Eight source+test files actually changed: models.py, tools_vars.py, project_settings.py, user_settings.py, test_project_settings.py, test_user_settings.py, test_models_deprecated_flag.py (new), test_qa_toolkit.py. Eight files sits at the low end of L (8-10), one step above the initial M estimate of 7 files."
+    }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null,
+  "delta_from_initial": {
+    "file_change_estimate": "bumped M→L: predicted 7 files, actual 8 source+test files (test_models_deprecated_flag.py was new, not counted in initial estimate)",
+    "total": "+1 (12→13)",
+    "size": "unchanged (S)"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "gate_id": "code-review.final",
+  "run_dir": "docs/superpowers/tasks/2026-07-31-deprecate-zephyrsquad/",
+  "generated": "2026-07-31T00:00:00Z",
+  "decision": "approve",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    { "id": "AC1", "status": "pass", "note": "ToolMetadata and Tool gain `deprecated: Optional[bool] = False`; ZEPHYR_SQUAD_TOOL sets `deprecated=True`; Tool.from_metadata propagates; test_qa_toolkit.py asserts True for ZephyrSquad and False for the other four QA tools." },
+    { "id": "AC2", "status": "pass", "note": "create_user_setting elif guard raises ExtendedHTTPException(HTTP_410_GONE); test_create_user_setting_zephyr_squad_blocked asserts 410 + message." },
+    { "id": "AC3", "status": "pass", "note": "update_user_setting has the identical guard; test_update_user_setting_zephyr_squad_blocked asserts 410. Acceptance-lens concern about omitting credential_type in the PUT body was verified false: SettingRequest.credential_type is a required (non-Optional) Pydantic field; a body omitting it is rejected with 422 before the guard runs." },
+    { "id": "AC4", "status": "pass", "note": "Same guard in create_project_setting and update_project_setting with matching tests. Same Pydantic-required-field guarantee applies." },
+    { "id": "AC5", "status": "pass", "note": "GET routes untouched; no migration; CredentialTypes.ZEPHYR_SQUAD retained so existing rows deserialize normally." },
+    { "id": "AC6", "status": "pass", "note": "test_qa_toolkit.py extended (not broken); tool count and name membership assertions still valid." },
+    { "id": "AC7", "status": "pass", "note": "Four negative-case tests present (create+update × user+project). Additional model-level tests cover the deprecated field default and propagation." }
+  ],
+  "standards_review": [
+    { "check": "commit-format", "status": "pass", "note": "Commit `EPMCDME-10913: Deprecate ZephyrSquad integration (backend)` matches `<TICKET-ID>: Description` per .ai-run/guides/standards/git-workflow.md." },
+    { "check": "code-quality", "status": "pass", "note": "Ruff fast-fix + pytest pre-commit hook passed. No unused imports; no new lints." },
+    { "check": "security", "status": "pass", "note": "No secrets, no auth changes, no unsafe input handling. The new endpoint responses expose no user data. ExtendedHTTPException envelope matches project convention." }
+  ],
+  "findings": [],
+  "rationale": "Small, additive, additive-only backend deprecation. Diff is 199 lines across 4 source and 4 test files, following existing per-credential-type router-guard pattern (LiteLLM/Git/Webhook precedent) and existing model-field-addition pattern. Pre-commit hook (ruff + tests + sonar) green; 51 targeted tests green including new coverage. Three-lens review returned 7 nominally-major findings; all triaged as dismiss/defer after verification:\n\n- 2 findings on `Optional[bool] = False` typing: matches the existing field-declaration convention throughout ToolMetadata/Tool (`Optional[str] = ''`, `Optional[bool] = False`); tightening it would deviate from local style with no runtime benefit given the default. Dismiss.\n- 1 finding on serialization surface: the field is intentionally exposed in `GET /v1/tools` per AC1; not-excluding is the requirement, not a defect. Dismiss.\n- 1 finding on message wording (\"read-only\"): the block on POST+PUT is exactly what makes existing rows read-only; message is accurate. Dismiss.\n- 2 findings on guard ordering (before ownership/project-access checks): deprecation is universal and by design credential-type-driven; no data disclosure (tool catalog is public via `GET /v1/tools`). Dismiss.\n- 1 finding on PUT bypass by omitting `credential_type`: false positive; `credential_type: CredentialTypes` is a required Pydantic field on `SettingRequest`, so a body without it is rejected with 422 before reaching the guard. Verified against src/codemie/rest_api/models/settings.py:225. Dismiss.\n- 1 finding on test style (using `pytest.raises(ExtendedHTTPException)` rather than asserting on the ASGI response envelope): established project convention — every existing router-test in test_user_settings.py / test_project_settings.py uses this pattern. Defer as a broader project-wide test refactor.\n\n0 blocking findings survive."
+}

@@ -494,6 +494,9 @@ async def test_admin_create_litellm_unchanged_when_personal_feature_disabled(
     mock_create_setting.assert_called_once()
 
 
+ZEPHYR_SQUAD_DEPRECATION_MESSAGE = "ZephyrSquad integration is deprecated"
+
+
 @pytest.mark.anyio
 @patch('codemie.service.settings.settings.SettingsService.create_setting')
 @patch("codemie.rest_api.security.idp.local.LocalIdp.authenticate")
@@ -539,4 +542,54 @@ async def test_update_user_setting_rejects_ms_teams(mock_authenticate, mock_get_
 
     assert excinfo.value.code == status.HTTP_400_BAD_REQUEST
     mock_get_setting_ability.assert_not_called()
+    mock_update_settings.assert_not_called()
+
+
+@pytest.mark.anyio
+@patch("codemie.service.settings.settings.SettingsService.create_setting")
+@patch("codemie.rest_api.security.idp.local.LocalIdp.authenticate")
+async def test_create_user_setting_zephyr_squad_blocked(mock_authenticate, mock_create_setting):
+    mock_authenticate.return_value = User(id="user123", username="testuser")
+
+    request_data = {
+        "project_name": "test_project",
+        "alias": "old-zephyr",
+        "credential_type": "ZephyrSquad",
+        "credential_values": [{"key": "api_key", "value": "x"}],
+    }
+    transport = ASGITransport(app=app)
+
+    with pytest.raises(ExtendedHTTPException) as excinfo:
+        async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+            await ac.post("/v1/settings/user", headers={"user-id": "user123"}, json=request_data)
+
+    assert excinfo.value.code == status.HTTP_410_GONE
+    assert excinfo.value.message == ZEPHYR_SQUAD_DEPRECATION_MESSAGE
+    mock_create_setting.assert_not_called()
+
+
+@pytest.mark.anyio
+@patch("codemie.service.settings.settings.SettingsService.update_settings")
+@patch("codemie.rest_api.security.idp.local.LocalIdp.authenticate")
+async def test_update_user_setting_zephyr_squad_blocked(mock_authenticate, mock_update_settings):
+    mock_authenticate.return_value = User(id="user123", username="testuser")
+
+    request_data = {
+        "project_name": "test_project",
+        "alias": "old-zephyr",
+        "credential_type": "ZephyrSquad",
+        "credential_values": [{"key": "api_key", "value": "x"}],
+    }
+    transport = ASGITransport(app=app)
+
+    with pytest.raises(ExtendedHTTPException) as excinfo:
+        async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+            await ac.put(
+                "/v1/settings/user/setting_123",
+                headers={"user-id": "user123"},
+                json=request_data,
+            )
+
+    assert excinfo.value.code == status.HTTP_410_GONE
+    assert excinfo.value.message == ZEPHYR_SQUAD_DEPRECATION_MESSAGE
     mock_update_settings.assert_not_called()

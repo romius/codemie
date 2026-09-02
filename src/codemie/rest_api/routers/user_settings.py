@@ -31,6 +31,7 @@ from codemie.rest_api.security.authentication import authenticate, User
 from codemie.rest_api.models.settings import SettingRequest, Settings, SettingType, TestSettingRequest
 from codemie_tools.base.models import CredentialTypes
 from codemie.service.settings.settings_request_validator import (
+    validate_credential_type_not_deprecated,
     validate_git_request,
     validate_litellm_request,
     validate_ms_teams_request,
@@ -129,6 +130,8 @@ def create_user_setting(request: SettingRequest, user: User = Depends(authentica
     """
     Save user-specific settings to DB
     """
+    validate_credential_type_not_deprecated(request)
+
     if request.credential_type == CredentialTypes.SCHEDULER:
         validate_scheduler_request(request)
     elif request.credential_type == CredentialTypes.LITE_LLM:
@@ -170,6 +173,8 @@ def update_user_setting(request: SettingRequest, setting_id: str, user: User = D
     """
     Update user-specific settings
     """
+    validate_credential_type_not_deprecated(request)
+
     if request.credential_type == CredentialTypes.SCHEDULER:
         validate_scheduler_request(request)
     elif request.credential_type == CredentialTypes.LITE_LLM:

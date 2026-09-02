@@ -44,4 +44,5 @@ ZEPHYR_SQUAD_TOOL = ToolMetadata(
     """.strip(),
     settings_config=True,
     config_class=ZephyrSquadConfig,
+    deprecated=True,
 )
