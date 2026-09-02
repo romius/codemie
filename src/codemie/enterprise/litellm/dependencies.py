@@ -343,9 +343,12 @@ def _dispatch_soft_limit_notification(
     available (sync contexts, or cross-loop calls from LangChain sync bridges);
     the soft-limit metric is emitted by the caller and is unaffected either way.
     """
-    from codemie.configs import logger
+    from codemie.configs import config, logger
 
     if budget_id is None:
+        return
+
+    if not config.BUDGET_SOFT_LIMIT_NOTIFICATION_ENABLED:
         return
 
     try:

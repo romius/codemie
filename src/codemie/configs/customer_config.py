@@ -27,6 +27,7 @@ CONFIG_IDS = {
     "idpProvider": "idpProvider",
     "mcpAuthOrigin": "mcpAuthOrigin",
     "chatContextualNaming": "features:chatContextualNaming",
+    "budgetSoftLimitNotification": "features:budgetSoftLimitNotification",
 }
 
 
@@ -175,6 +176,13 @@ class CustomerConfig(BaseModel):
             Component(
                 id=CONFIG_IDS["chatContextualNaming"],
                 settings=ComponentSetting(enabled=config.CHAT_CONTEXTUAL_NAMING_ENABLED),
+            )
+        )
+
+        runtime_config.append(
+            Component(
+                id=CONFIG_IDS["budgetSoftLimitNotification"],
+                settings=ComponentSetting(enabled=config.BUDGET_SOFT_LIMIT_NOTIFICATION_ENABLED),
             )
         )
 

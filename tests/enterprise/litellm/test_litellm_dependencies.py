@@ -658,7 +658,9 @@ class TestSoftLimitNotificationHook:
                     "codemie.service.budget.budget_notification_service.notify_soft_limit_reached",
                     new_callable=MagicMock,
                 ) as notify_mock,
+                patch("codemie.configs.config") as mock_cfg,
             ):
+                mock_cfg.BUDGET_SOFT_LIMIT_NOTIFICATION_ENABLED = True
                 from codemie.enterprise.litellm.dependencies import check_user_budget
 
                 # Ensure the mock returns a coroutine that create_task can accept.

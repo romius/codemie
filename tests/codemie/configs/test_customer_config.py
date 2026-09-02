@@ -116,6 +116,7 @@ class TestCustomerConfig(unittest.TestCase):
             mock_config.IDP_PROVIDER = "local"
             mock_config.CALLBACK_API_BASE_URL = "http://localhost:8080"
             mock_config.CHAT_CONTEXTUAL_NAMING_ENABLED = False
+            mock_config.BUDGET_SOFT_LIMIT_NOTIFICATION_ENABLED = False
 
             config = CustomerConfig()
             enabled_components = config.get_enabled_components()
@@ -253,6 +254,7 @@ class TestRuntimeFeatures(unittest.TestCase):
         mock_config.IDP_PROVIDER = "local"
         mock_config.CALLBACK_API_BASE_URL = "http://localhost:8080"
         mock_config.CHAT_CONTEXTUAL_NAMING_ENABLED = False
+        mock_config.BUDGET_SOFT_LIMIT_NOTIFICATION_ENABLED = False
 
         config = CustomerConfig()
         components = config.get_enabled_components()
@@ -281,6 +283,7 @@ class TestRuntimeFeatures(unittest.TestCase):
         mock_config.IDP_PROVIDER = "local"
         mock_config.CALLBACK_API_BASE_URL = "http://localhost:8080"
         mock_config.CHAT_CONTEXTUAL_NAMING_ENABLED = False
+        mock_config.BUDGET_SOFT_LIMIT_NOTIFICATION_ENABLED = False
 
         config = CustomerConfig()
         components = config.get_enabled_components()
@@ -333,6 +336,7 @@ class TestRuntimeFeatures(unittest.TestCase):
         mock_config.IDP_PROVIDER = "local"
         mock_config.CALLBACK_API_BASE_URL = "http://localhost:8080"
         mock_config.CHAT_CONTEXTUAL_NAMING_ENABLED = False
+        mock_config.BUDGET_SOFT_LIMIT_NOTIFICATION_ENABLED = False
 
         config = CustomerConfig()
         components = config.get_enabled_components()
@@ -380,6 +384,7 @@ class TestRuntimeFeatures(unittest.TestCase):
         mock_config.IDP_PROVIDER = "local"
         mock_config.CALLBACK_API_BASE_URL = "http://localhost:8080"
         mock_config.CHAT_CONTEXTUAL_NAMING_ENABLED = False
+        mock_config.BUDGET_SOFT_LIMIT_NOTIFICATION_ENABLED = False
 
         config = CustomerConfig()
         components = config.get_enabled_components()
