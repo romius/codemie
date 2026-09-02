@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "task": "Fix parent workflow abort to also abort in-progress sub-workflow child executions, covering the store method, two UI call sites, and the WorkflowExecutionState type extension.",
+  "generated": "2026-09-01T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 2, "label": "S" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 14,
+  "size": "S",
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Three named production components touched: workflowExecutions.ts (store method), WorkflowExecutionHeader.tsx, and WorkflowExecutionStateControls.tsx, plus WorkflowExecutionState type in workflow.ts — 2 layers (Store/API + UI) with a soft external backend pre-condition."
+    },
+    {
+      "dimension": "requirements_clarity",
+      "reason": "The three frontend touch points are explicitly named, but the key pre-condition — whether the backend will expose sub_execution_id on execution state records — is unconfirmed, creating a gap that must be resolved before implementation can be finalized."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "The abort pattern is well-established in the codebase, but abortWorkflowExecution has no existing unit tests and the backend coordination dependency introduces uncertainty about final scope; untested extension of a core store method elevates risk marginally above S."
+    }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

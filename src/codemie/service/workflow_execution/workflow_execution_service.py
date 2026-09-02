@@ -33,6 +33,12 @@ from codemie.service.monitoring.workflow_monitoring_service import WorkflowMonit
 REFRESH_WAIT_FOR = 'wait_for'
 EXECUTION_ID_KEYWORD = 'execution_id.keyword'
 
+_TERMINAL_STATUSES = {
+    WorkflowExecutionStatusEnum.SUCCEEDED,
+    WorkflowExecutionStatusEnum.FAILED,
+    WorkflowExecutionStatusEnum.ABORTED,
+}
+
 
 class WorkflowExecutionService:
     def __init__(
@@ -148,6 +154,46 @@ class WorkflowExecutionService:
             request_id=self.workflow_execution_id,
         )
         request_summary_manager.clear_summary(self.workflow_execution_id)
+        self._abort_active_sub_execution()
+
+    def _abort_active_sub_execution(self) -> None:
+        """Cascade abort to the active sub-workflow child execution, if one is running.
+
+        Uses a deferred import of WorkflowService to avoid a circular dependency
+        between workflow_service and workflow_execution_service.
+        """
+        if not self.workflow_execution:
+            return
+        child_execution_id = self.workflow_execution.active_sub_execution_id
+        if not child_execution_id:
+            return
+        try:
+            from codemie.service.workflow_service import WorkflowService  # deferred: avoids circular import
+
+            child_execution = WorkflowService.find_workflow_execution_by_id(child_execution_id)
+            if not child_execution:
+                logger.warning(
+                    f"Sub-workflow execution {child_execution_id} not found during parent abort "
+                    f"(parent: {self.workflow_execution_id}); skipping cascade."
+                )
+                return
+            if child_execution.overall_status in _TERMINAL_STATUSES:
+                return
+            child_workflow_config = WorkflowService().get_workflow(child_execution.workflow_id)
+            WorkflowExecutionService(
+                workflow_config=child_workflow_config,
+                workflow_execution_id=child_execution_id,
+                user=self.user,
+            ).abort()
+            logger.info(
+                f"Cascade-aborted sub-workflow execution {child_execution_id} "
+                f"(parent: {self.workflow_execution_id})."
+            )
+        except Exception as exc:
+            logger.error(
+                f"Failed to cascade-abort sub-workflow execution {child_execution_id} "
+                f"(parent: {self.workflow_execution_id}): {exc}"
+            )
 
     def interrupt(self, interrupted_state: str, checkpoint_state: Optional[dict] = None):
         with self.workflow_execution_lock:

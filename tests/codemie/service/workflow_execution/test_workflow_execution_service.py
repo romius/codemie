@@ -430,6 +430,111 @@ class TestSendInterruptedEvent:
         assert payload["workflow_state"]["event_type"] == "state_interrupted"
         assert payload["workflow_state"]["id"] == "predecessor-uuid"
 
+
+class TestAbortSubWorkflowCascade:
+    """_abort_active_sub_execution cascades abort to the active child execution."""
+
+    def test_cascades_to_in_progress_child(self, service):
+        service.workflow_execution.active_sub_execution_id = "child-exec-001"
+
+        child_execution = MagicMock()
+        child_execution.overall_status = WorkflowExecutionStatusEnum.IN_PROGRESS
+        child_execution.workflow_id = "child-wf-id"
+
+        child_svc = MagicMock()
+
+        with (
+            patch("codemie.service.workflow_service.WorkflowService") as mock_ws,
+            patch(
+                "codemie.service.workflow_execution.workflow_execution_service.WorkflowExecutionService",
+                return_value=child_svc,
+            ),
+        ):
+            mock_ws.find_workflow_execution_by_id.return_value = child_execution
+            mock_ws.return_value.get_workflow.return_value = MagicMock()
+            service._abort_active_sub_execution()
+
+        child_svc.abort.assert_called_once()
+
+    def test_no_cascade_when_no_active_sub_execution(self, service):
+        service.workflow_execution.active_sub_execution_id = None
+
+        with patch("codemie.service.workflow_service.WorkflowService") as mock_ws:
+            service._abort_active_sub_execution()
+
+        mock_ws.find_workflow_execution_by_id.assert_not_called()
+
+    def test_no_cascade_when_child_already_aborted(self, service):
+        service.workflow_execution.active_sub_execution_id = "child-exec-002"
+
+        child_execution = MagicMock()
+        child_execution.overall_status = WorkflowExecutionStatusEnum.ABORTED
+
+        with (
+            patch("codemie.service.workflow_service.WorkflowService") as mock_ws,
+            patch(
+                "codemie.service.workflow_execution.workflow_execution_service.WorkflowExecutionService",
+            ) as mock_svc_cls,
+        ):
+            mock_ws.find_workflow_execution_by_id.return_value = child_execution
+            service._abort_active_sub_execution()
+
+        mock_svc_cls.assert_not_called()
+
+    def test_no_cascade_when_child_succeeded(self, service):
+        service.workflow_execution.active_sub_execution_id = "child-exec-003"
+
+        child_execution = MagicMock()
+        child_execution.overall_status = WorkflowExecutionStatusEnum.SUCCEEDED
+
+        with (
+            patch("codemie.service.workflow_service.WorkflowService") as mock_ws,
+            patch(
+                "codemie.service.workflow_execution.workflow_execution_service.WorkflowExecutionService",
+            ) as mock_svc_cls,
+        ):
+            mock_ws.find_workflow_execution_by_id.return_value = child_execution
+            service._abort_active_sub_execution()
+
+        mock_svc_cls.assert_not_called()
+
+    def test_no_cascade_when_child_failed(self, service):
+        service.workflow_execution.active_sub_execution_id = "child-exec-005"
+
+        child_execution = MagicMock()
+        child_execution.overall_status = WorkflowExecutionStatusEnum.FAILED
+
+        with (
+            patch("codemie.service.workflow_service.WorkflowService") as mock_ws,
+            patch(
+                "codemie.service.workflow_execution.workflow_execution_service.WorkflowExecutionService",
+            ) as mock_svc_cls,
+        ):
+            mock_ws.find_workflow_execution_by_id.return_value = child_execution
+            service._abort_active_sub_execution()
+
+        mock_svc_cls.assert_not_called()
+
+    def test_child_abort_error_does_not_propagate(self, service):
+        service.workflow_execution.active_sub_execution_id = "child-exec-004"
+
+        child_execution = MagicMock()
+        child_execution.overall_status = WorkflowExecutionStatusEnum.IN_PROGRESS
+        child_execution.workflow_id = "child-wf-id"
+
+        with (
+            patch("codemie.service.workflow_service.WorkflowService") as mock_ws,
+            patch(
+                "codemie.service.workflow_execution.workflow_execution_service.WorkflowExecutionService",
+                side_effect=RuntimeError("db down"),
+            ),
+        ):
+            mock_ws.find_workflow_execution_by_id.return_value = child_execution
+            mock_ws.return_value.get_workflow.return_value = MagicMock()
+            service._abort_active_sub_execution()  # must not raise
+
+
+class TestSendInterruptedEventExtended:
     def test_with_predecessor_output(self, service):
         mock_queue = MagicMock()
         service.thought_queue = mock_queue
