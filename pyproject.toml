@@ -39,6 +39,7 @@ langchain-aws = "1.4.3"
 langchain-elasticsearch = "1.0.0"
 langchain-google-vertexai = "3.2.3"
 langgraph = "1.1.6"
+a2ui-agent-sdk = "0.5.0"
 langgraph-checkpoint = "^3.0.1"
 pdfplumber = "^0.11.9"
 langgraph-bigtool = "0.0.3"
@@ -115,7 +116,6 @@ langchain-google-community = "3.0.5"
 langchain-openai = "^1.2.1"
 litellm = "1.84"
 langchain-tavily = "^0.2.13"
-regex = "^2024.9.11"  # match-time timeout for bounded regex validation (ReDoS defense) in core/interactive.py
 markdownify = "^1.2.0"
 markitdown = {extras = ["all"], version = "^0.1.2"}
 matplotlib = "3.10.8"
@@ -272,6 +272,8 @@ ignore-packages = [
     "codemie-sdk-python", # UNKNOWN
     "codemie-enterprise", # UNKNOWN
     "email-validator", # The Unlicense (Unlicense)
+    "a2ui-agent-sdk", # UNKNOWN, it is Apache License 2.0
+    "a2ui-core", # UNKNOWN, it is Apache License 2.0
 ]
 allow-only = """
     3-Clause BSD License;\
@@ -286,6 +288,7 @@ allow-only = """
     Apache-2.0 OR MIT;\
     BSD 3-Clause OR Apache-2.0;\
     BSD License;\
+    BSD;\
     BSD-2-Clause;\
     BSD-2-Clause AND Apache-2.0 WITH LLVM-exception;\
     BSD-3-Clause;\

@@ -1,0 +1,63 @@
+{
+  "run_id": "20260804-1149-interactive-protocol-research",
+  "mode": "autonomous",
+  "scope_override": "research-only — user explicitly limited the run to analysis/research (no implementation); phases 5-10 out of scope for this run",
+  "started_at": "2026-08-04T08:49:17Z",
+  "task_input": "Заменить самописный протокол интерактивных элементов чата (кнопки, инпуты, датапикеры, радиобатоны, чекбоксы) на общепринятую технологию/протокол (например A2UI). Требуется: проанализировать объём и сложность необходимых изменений, исследовать общедоступные технологии-кандидаты. Пользователь просит задавать уточняющие вопросы в процессе ресёрча.",
+  "branch": null,
+  "repos": [
+    "codemie",
+    "codemie-ui"
+  ],
+  "work_item": {
+    "canonical_path": null,
+    "run_mirror": "docs/superpowers/runs/20260804-1149-interactive-protocol-research/work-item.md",
+    "event_ledger": "docs/superpowers/runs/20260804-1149-interactive-protocol-research/work-item-events.jsonl"
+  },
+  "current_phase": 4,
+  "status": "completed",
+  "escalate_on": [
+    "security",
+    "breaking-change",
+    "requirements.ambiguous",
+    "spec.clarification"
+  ],
+  "phases": {
+    "0": {
+      "status": "completed",
+      "note": "guides+doctor OK in codemie and codemie-ui; sdlc memory empty"
+    },
+    "1": {
+      "status": "completed"
+    },
+    "2": {
+      "status": "skipped",
+      "note": "research-only run — no feature branch needed"
+    },
+    "3": {
+      "status": "completed"
+    },
+    "4": {
+      "status": "completed",
+      "note": "analysis.md finalized; packaging: S-0 React upgrade prerequisite + S-1 atomic migration story; Jira deferred by user"
+    },
+    "5": {
+      "status": "out-of-scope"
+    },
+    "6": {
+      "status": "out-of-scope"
+    },
+    "7": {
+      "status": "out-of-scope"
+    },
+    "8": {
+      "status": "out-of-scope"
+    },
+    "9": {
+      "status": "out-of-scope"
+    },
+    "10": {
+      "status": "out-of-scope"
+    }
+  }
+}

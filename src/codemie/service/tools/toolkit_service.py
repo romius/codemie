@@ -599,34 +599,35 @@ class ToolkitService:
         )
 
         tools = cls._append_workspace_image_tool_if_enabled(tools, assistant, request, user)
-        return cls._append_request_user_input_tool_if_enabled(tools, assistant, thread_generator)
+        return cls._append_request_user_input_tool_if_enabled(tools, assistant, thread_generator, request, is_react)
 
     @classmethod
-    def _append_request_user_input_tool_if_enabled(cls, tools, assistant, thread_generator):
-        """Register the interactive input tool when the assistant enables any interactive feature.
+    def _append_request_user_input_tool_if_enabled(
+        cls, tools, assistant, thread_generator, request=None, is_react: bool = True
+    ):
+        """Register the interactive input tool when the assistant enables interactive features.
 
-        Gated by the platform-level ``features:interactiveElements`` customer flag so a disabled
-        deployment removes the tool from the catalog entirely, not just from the UI.
+        Four gates: the assistant's ``interactive_enabled`` switch, a streaming execution
+        path, the platform-level ``features:interactiveElements`` customer flag, and the
+        client's declared A2UI catalog support (``a2ui_supported_catalogs`` on the chat
+        request) — clients that cannot render A2UI (stale tabs, IDE) get no tool and the
+        agent asks in plain text.
         """
-        interactive_config = getattr(assistant, "interactive_features", None)
+        declared = getattr(request, "a2ui_supported_catalogs", None) or []
         if (
-            interactive_config
-            and interactive_config.any_enabled()
+            getattr(assistant, "interactive_enabled", False)
             and thread_generator is not None
             and customer_config.is_feature_enabled("interactiveElements")
         ):
             from codemie.agents.tools.interactive.request_user_input import RequestUserInputTool
-            from codemie.core.interactive import enabled_element_types
+            from codemie.core.a2ui.config import client_supports_catalog
 
-            catalog = customer_config.get_feature_setting("interactiveElements", "catalog", None)
-            # A catalog override can leave the feature flags on while resolving to zero
-            # allowed element types; constructing the tool would then raise. Skip instead
-            # (fail-closed, like render_interactive_elements_prompt) so a misconfigured
-            # catalog never 500s every chat for the assistant.
-            if enabled_element_types(interactive_config, catalog):
-                tools.append(
-                    RequestUserInputTool(config=interactive_config, thread_generator=thread_generator, catalog=catalog)
-                )
+            if client_supports_catalog(declared):
+                # `return_direct` routes on the tool name and cannot tell a rejected
+                # surface from an accepted one, so on the graph runtime the tool ends the
+                # turn itself and a refusal can go back to the model. The classic executor
+                # understands no such control flow and keeps the flag.
+                tools.append(RequestUserInputTool(thread_generator=thread_generator, return_direct=is_react))
         return tools
 
     @classmethod

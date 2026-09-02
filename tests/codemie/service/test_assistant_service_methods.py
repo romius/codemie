@@ -454,7 +454,6 @@ class TestPrepareSystemPrompt:
 
         assistant = Mock(spec=Assistant)
         assistant.skill_ids = []
-        assistant.interactive_features = None
         user = Mock(spec=User)
         user.id = 'user-123'
         user.username = "test@email.com"
@@ -507,7 +506,6 @@ class TestPrepareSystemPrompt:
 
         assistant = Mock(spec=Assistant)
         assistant.skill_ids = []
-        assistant.interactive_features = None
         user = Mock(spec=User)
         user.id = 'user-123'
         user.username = "test@email.com"
@@ -532,7 +530,6 @@ class TestPrepareSystemPrompt:
 
         assistant = Mock(spec=Assistant)
         assistant.skill_ids = []
-        assistant.interactive_features = None
         assistant.suggested_json_prompt = "JSON format: {schema}"
 
         user = Mock(spec=User)
@@ -763,7 +760,6 @@ class TestPrepareWorkflowSystemPrompt:
 
         assistant = Mock(spec=Assistant)
         assistant.skill_ids = []
-        assistant.interactive_features = None
         user = Mock(spec=User)
 
         # Act
@@ -793,7 +789,6 @@ class TestPrepareWorkflowSystemPrompt:
 
         assistant = Mock(spec=Assistant)
         assistant.skill_ids = []
-        assistant.interactive_features = None
         user = Mock(spec=User)
         user.id = 'user-123'
         user.username = "test@email.com"
@@ -858,7 +853,6 @@ class TestPrepareWorkflowSystemPrompt:
 
         assistant = Mock(spec=Assistant)
         assistant.skill_ids = []
-        assistant.interactive_features = None
         user = Mock(spec=User)
         user.id = 'user-123'
         user.username = "test@email.com"
@@ -1000,28 +994,56 @@ class TestInteractivePromptGating:
     @patch('codemie.service.assistant_service.AssistantService.get_system_prompt')
     def test_prompt_injected_only_with_thread_generator(self, mock_get_prompt):
         from unittest.mock import MagicMock, patch as _patch
-        from codemie.core.interactive import InteractiveFeaturesConfig
         from codemie.service.assistant_service import AssistantService
 
         mock_get_prompt.return_value = "Base"
         assistant = Mock(spec=Assistant)
         assistant.skill_ids = []
-        assistant.interactive_features = InteractiveFeaturesConfig(action_buttons=True)
+        assistant.interactive_enabled = True
         user = Mock(spec=User)
         user.id = "u"
         user.username = "u@e.com"
-        request = AssistantChatRequest(text="hi", file_names=[])
+        from codemie.core.a2ui.catalog import CATALOG_ID
+
+        request = AssistantChatRequest(text="hi", file_names=[], a2ui_supported_catalogs=[CATALOG_ID])
+        request_no_catalog = AssistantChatRequest(text="hi", file_names=[])
 
         flag = MagicMock()
         flag.is_feature_enabled.return_value = True
         with _patch("codemie.service.assistant_service.customer_config", flag):
             # Non-streaming (no thread_generator): tool absent -> prompt must NOT advertise it
             without = AssistantService._prepare_system_prompt(assistant, user, request, None)
-            # Streaming (thread_generator present): prompt advertises the tool
+            # Client did not declare A2UI support (stale tab / IDE): no section either
+            without_catalog = AssistantService._prepare_system_prompt(assistant, user, request_no_catalog, MagicMock())
+            # Streaming + declared catalog: prompt advertises the tool
             with_tg = AssistantService._prepare_system_prompt(assistant, user, request, MagicMock())
 
         assert "request_user_input" not in without
+        assert "request_user_input" not in without_catalog
         assert "request_user_input" in with_tg
+
+    @patch('codemie.service.assistant_service.AssistantService.get_system_prompt')
+    def test_prompt_absent_when_interactive_disabled(self, mock_get_prompt):
+        from unittest.mock import MagicMock, patch as _patch
+        from codemie.service.assistant_service import AssistantService
+
+        mock_get_prompt.return_value = "Base"
+        assistant = Mock(spec=Assistant)
+        assistant.skill_ids = []
+        assistant.interactive_enabled = False
+        user = Mock(spec=User)
+        user.id = "u"
+        user.username = "u@e.com"
+        from codemie.core.a2ui.catalog import CATALOG_ID
+
+        request = AssistantChatRequest(text="hi", file_names=[], a2ui_supported_catalogs=[CATALOG_ID])
+
+        flag = MagicMock()
+        flag.is_feature_enabled.return_value = True
+        with _patch("codemie.service.assistant_service.customer_config", flag):
+            prompt = AssistantService._prepare_system_prompt(assistant, user, request, MagicMock())
+
+        assert "request_user_input" not in prompt
 
 
 class TestApplyMarketplaceToolMappingsWorkflowScope:

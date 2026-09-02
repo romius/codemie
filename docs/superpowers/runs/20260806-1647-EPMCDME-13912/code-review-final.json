@@ -1,0 +1,100 @@
+{
+  "decision": "request-changes",
+  "rationale": "Three lenses ran on the backend half (blind, edge-case with repo access, acceptance against spec). All three converged on a critical wire-contract defect (CR-001) and on the loss of server-side answer validation (CR-003). The edge-case lens verified several findings empirically against the real validator/converter rather than by reading code. CR-001 was fixed inline during the review (commit 'Fix capability field wire alias') and is recorded here as resolved-during-review for the audit trail. One blind/edge-case finding (customer-config test banner) was DISMISSED after verification: the file is an uncommitted local working-tree edit that is not part of the branch; it appeared only because the reviewed diff was initially built with 'git diff BASE' instead of 'BASE..HEAD' — the diff was rebuilt correctly. Deferred (not emitted as findings, recorded here): wire-level names leak outside the adapter module (v1.0-readiness weaker than spec §2.1 claims, adapter.wrap_chunk is dead code); the BE<->FE contract freshness test skips in backend CI rather than failing; the tool raises a generic ValueError instead of the SDK's VALIDATION_FAILED shape; convert_history failure logs omit the conversation id. Frontend half is reviewed separately. Coverage note: the backend diff is ~5.7k lines — large but reviewed in full by all three lenses.",
+  "confidence": "high",
+  "risk_flags": ["security", "data-loss", "breaking-change"],
+  "business_review": [
+    {"id": "AC-2.1-emission", "criterion": "request_user_input emits A2UI envelopes as dedicated NDJSON chunks; turn ends (return_direct); invalid surface never emitted", "status": "pass", "notes": "adapter.build_surface_envelopes + tool execute; turn-end contract pinned by test"},
+    {"id": "AC-2.2-gating", "criterion": "Four gates: assistant boolean, streaming path, platform flag, client catalog declaration", "status": "pass", "notes": "was FAIL during review (wire alias made gate 4 unsatisfiable); fixed inline as CR-001"},
+    {"id": "AC-2.3-catalog", "criterion": "One static catalog, all 18 Basic Catalog components, official catalogId, SDK-generated prompt and validation", "status": "pass", "notes": "core/a2ui/catalog.py; 18-name set asserted"},
+    {"id": "AC-2.6-authz", "criterion": "Ownership 403 before any surface-existence disclosure", "status": "pass", "notes": "_load_authorized_history; dedicated test"},
+    {"id": "AC-2.6-once-only", "criterion": "Double-answer protection with strict history-index re-answer exception", "status": "pass", "notes": "strict equality; bypass-attempt test present"},
+    {"id": "AC-2.6-semantic", "criterion": "Every answer re-validated: values within declared options, length caps, date ranges, selection caps, no extra keys", "status": "fail", "notes": "CR-003: only envelope shape + byte cap are checked; data model never compared against the stored surface"},
+    {"id": "AC-2.6-catalog-source", "criterion": "Catalog resolved from the server-stored surface, never client input", "status": "partial", "notes": "extra keys rejected so no catalogId can be smuggled, but the returned stored envelopes are discarded by the caller (CR-003 fix should consume them)"},
+    {"id": "AC-2.7-history", "criterion": "Envelopes persisted raw and versioned; request/answer materialized into LLM history; turn-based with no resume endpoint", "status": "pass", "notes": "serve_data interception, GeneratedMessage fields, materializers"},
+    {"id": "AC-2.8-flag", "criterion": "Assistant flag migrated to boolean with backfill", "status": "pass", "notes": "e7f8a9b0c1d2 with SQL backfill"},
+    {"id": "AC-2.8-converter", "criterion": "Deterministic, reversible, idempotent history converter with counts", "status": "partial", "notes": "CR-005: synthesized ids can collide with legacy ids, producing invalid envelopes counted as 'converted'"},
+    {"id": "AC-3-contract", "criterion": "BE subset of FE registry + same catalogId guarded by contract test", "status": "partial", "notes": "subset+catalogId asserted against a vendored manifest; freshness check skips when the sibling repo is absent (deferred)"},
+    {"id": "AC-4-wire", "criterion": "Chunk/envelope wire shape one envelope per line", "status": "pass", "notes": "adapter tests"},
+    {"id": "AC-5-capability", "criterion": "Request-level a2ui_supported_catalogs declaration", "status": "pass", "notes": "was FAIL (alias); fixed inline as CR-001 with wire-level regression tests"}
+  ],
+  "standards_review": [
+    {"standard": "Commit format (EPMCDME-XXXXX: Capital sentence)", "status": "pass", "notes": "all branch commits follow the convention"},
+    {"standard": "Code quality (ruff check/format)", "status": "pass", "notes": "ruff clean across src and tests"},
+    {"standard": "Security patterns (input validation, authz ordering, no secrets)", "status": "fail", "notes": "authz ordering correct; input validation incomplete — see CR-002, CR-003, CR-004"},
+    {"standard": "Test-first evidence per task", "status": "pass", "notes": "evidence files present for all tasks with red/green excerpts"}
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/codemie/core/models.py",
+      "line": 584,
+      "problem": "a2ui_supported_catalogs had no explicit alias, so its wire name was a2UiSupportedCatalogs while the frontend sends a2uiSupportedCatalogs; the value was silently dropped and the capability gate could never open.",
+      "impact": "Feature dead end-to-end in production while all backend tests stayed green (tests built the model by python field name).",
+      "recommendation": "Add alias plus wire-level regression tests including an end-to-end gate test built from the frontend payload.",
+      "status": "RESOLVED during review (commit 'EPMCDME-13912: Fix capability field wire alias')"
+    },
+    {
+      "id": "CR-002",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/agents/tools/interactive/request_user_input.py",
+      "line": 71,
+      "problem": "The agent-authored surface lost the removed breadth/size bounds (legacy enforced MAX_SURFACE_ELEMENTS=100 and MAX_PAYLOAD_BYTES=65536); only SDK nesting-depth validation remains.",
+      "impact": "Measured: 3000 Text components (775 KB) validate clean in 2.85 s, are streamed, persisted into conversations.history and re-serialized into the prompt on every later turn — permanent token/storage bloat from one steered tool call.",
+      "recommendation": "Cap len(components) and the serialized size of components+data_model in execute() before building envelopes; raise ValueError so the model can retry with a smaller surface."
+    },
+    {
+      "id": "CR-003",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/service/conversation/a2ui_intake.py",
+      "line": 69,
+      "problem": "No semantic validation of the submitted data model or action name against the stored surface: option membership, selection caps, length caps, date bounds, regex checks and unknown data-model keys are all unchecked, and action.name is never matched to a Button in the surface. validate_a2ui_intake returns the stored surface envelopes but the caller discards them.",
+      "impact": "Spec §2.6 requires the ported anti-tampering checks. As shipped, a client can submit values and action names the surface never offered, and up to 64 KB of attacker-chosen text is replayed into the LLM prompt under a trusted '[Structured response to surface ...]' framing.",
+      "recommendation": "Consume the returned surface envelopes, index components by id, and re-validate the data model against them (allowed keys, option subset, selection cap, string length, date bounds, validationRegexp) plus action.name against Button event names; add a test per check."
+    },
+    {
+      "id": "CR-004",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/rest_api/handlers/assistant_handlers.py",
+      "line": 132,
+      "problem": "_validate_a2ui_action returns immediately when a2ui_action is None, but conversation_service persists a2ui_data_model unconditionally.",
+      "impact": "A request carrying a2uiDataModel without a2uiAction bypasses ownership re-check, surface existence, already-answered and the 64 KB cap; a multi-MB blob is written into conversation history and re-serialized on every conversation GET.",
+      "recommendation": "Validate when either field is present, and reject (or drop) a data model submitted without a matching action."
+    },
+    {
+      "id": "CR-005",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/core/a2ui/legacy_converter.py",
+      "line": 1017,
+      "problem": "Synthesized component ids (root, <button>-label, <parent>-c<i>) can collide with agent-authored legacy ids, and convert_history never validates its own output — a message only counts as failed when conversion raises.",
+      "impact": "Verified against the real validator: legacy surfaces with an element id 'root', or an id colliding with '<btn>-label', produce 'Duplicate component ID' envelopes that are written to the database and logged as successfully converted; the renderer cannot render them and reverse_request returns an empty surface for those rows.",
+      "recommendation": "Validate converted envelopes inside convert_message/convert_history and count validation errors as failed (leave the message untouched, log the conversation id); de-collide synthesized ids against existing ones."
+    },
+    {
+      "id": "CR-006",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/external/alembic/versions/d1c2b3a4e5f6_drop_interactive_features_from_assistants.py",
+      "line": 29,
+      "problem": "Rolling back the release destroys the assistant toggle: d1c2 downgrade re-adds interactive_features as empty JSONB, then e7f8 downgrade drops interactive_enabled with no reverse backfill.",
+      "impact": "After a rollback every assistant that had interactive features enabled reads as disabled, with no recovery short of a DB restore.",
+      "recommendation": "Make d1c2 downgrade reconstruct the JSONB from interactive_enabled before the boolean is dropped (or defer the drop to a later release)."
+    },
+    {
+      "id": "CR-007",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/external/alembic/versions/f1a2b3c4d5e6_convert_interactive_history_to_a2ui.py",
+      "line": 6,
+      "problem": "GeneratedMessage no longer declares the legacy fields and the whole history list is re-dumped on every update, so the first new turn in a legacy conversation silently erases interactive_request/interactive_response.",
+      "impact": "The migration's downgrade predicate requires those legacy fields, so downgrade becomes a no-op for any conversation touched after deploy; worse, a conversation continued before the migration job runs loses its interactive history in both protocols.",
+      "recommendation": "Keep the legacy fields on GeneratedMessage as deprecated pass-through until the downgrade window closes, or document the migration as one-way and gate the deploy so it completes before chat traffic is served."
+    }
+  ]
+}

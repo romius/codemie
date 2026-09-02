@@ -48,7 +48,6 @@ from codemie.rest_api.models.base import (
     PydanticListType,
 )
 from codemie.rest_api.models.guardrail import GuardrailAssignmentItem, GuardrailEntity
-from codemie.core.interactive import InteractiveFeaturesConfig
 from codemie.rest_api.models.hedging import HedgingConfig
 from codemie.rest_api.models.index import IndexInfo, IndexTypeByContextTypeMapping
 from codemie.rest_api.models.settings import SettingsBase
@@ -339,7 +338,7 @@ class AssistantRequest(BaseModel):
     smart_tool_selection_enabled: Optional[bool] = False
     file_attachment_enabled: Optional[bool] = None
     hedging_config: Optional[HedgingConfig] = None
-    interactive_features: Optional[InteractiveFeaturesConfig] = None
+    interactive_enabled: bool = False
     mcp_servers: list[MCPServerDetails] = Field(default_factory=list)
     assistant_ids: list[str] = Field(default_factory=list)
     enabled_builtin_subagents: list[BuiltinSubagent] = Field(
@@ -666,9 +665,7 @@ class AssistantBase(CommonBaseModel, Owned):
     smart_tool_selection_enabled: Optional[bool] = False
     file_attachment_enabled: Optional[bool] = SQLField(default=None)
     hedging_config: Optional[HedgingConfig] = SQLField(default=None, sa_column=Column(PydanticType(HedgingConfig)))
-    interactive_features: Optional[InteractiveFeaturesConfig] = SQLField(
-        default=None, sa_column=Column(PydanticType(InteractiveFeaturesConfig))
-    )
+    interactive_enabled: bool = SQLField(default=False, sa_column_kwargs={"server_default": "false"})
     context: list[Context] = SQLField(default_factory=list, sa_column=Column(PydanticListType(Context)))
     user_abilities: Optional[list[Action]] = SQLField(default=None, sa_column=Column(JSONB))
     mcp_servers: list[MCPServerDetails] = SQLField(

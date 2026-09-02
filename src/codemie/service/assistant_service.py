@@ -28,7 +28,6 @@ from codemie.configs import config
 from codemie.configs.logger import logger
 from codemie.configs.customer_config import customer_config
 from codemie.core.dependecies import get_disable_prompt_cache, set_disable_prompt_cache
-from codemie.core.interactive import render_interactive_elements_prompt
 from codemie.core.models import AssistantChatRequest, IdeChatRequest, ToolConfig
 from codemie.core.template_security import render_system_prompt_template, TemplateSecurityError
 from codemie.core.thread import MessageQueue
@@ -451,19 +450,19 @@ Instead, leverage the schema's data to generate deeper insights and improve tool
             output_schema_prompt = cls.suggested_json_prompt.format(schema=schema)
             system_prompt = f"{system_prompt}\n{output_schema_prompt}"
 
-        interactive_config = getattr(assistant, "interactive_features", None)
         if (
-            interactive_config
-            and interactive_config.any_enabled()
+            getattr(assistant, "interactive_enabled", False)
             and customer_config.is_feature_enabled("interactiveElements")
-            # Only advertise request_user_input when it is actually registered — the
-            # tool needs the stream (thread_generator) to deliver its request chunk,
-            # so gating here mirrors _append_request_user_input_tool_if_enabled and
-            # avoids telling the model to call a tool that is absent in non-streaming paths.
+            # Mirrors _append_request_user_input_tool_if_enabled: only advertise the
+            # tool when it is actually registered (streaming path + A2UI-capable client).
             and thread_generator is not None
         ):
-            catalog = customer_config.get_feature_setting("interactiveElements", "catalog", None)
-            system_prompt = f"{system_prompt}{render_interactive_elements_prompt(interactive_config, catalog)}"
+            from codemie.core.a2ui.catalog import render_prompt_section
+            from codemie.core.a2ui.config import client_supports_catalog
+
+            declared = getattr(request, "a2ui_supported_catalogs", None)
+            if client_supports_catalog(declared):
+                system_prompt = f"{system_prompt}\n\n{render_prompt_section()}"
 
         return system_prompt
 

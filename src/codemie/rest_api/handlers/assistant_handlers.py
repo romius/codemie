@@ -29,7 +29,6 @@ from fastapi import BackgroundTasks, Request, status
 from starlette.responses import StreamingResponse
 
 from codemie.chains.base import Thought, StreamedGenerationResult
-from codemie.core.interactive import InteractiveRequest
 from codemie.configs import config, logger
 from codemie.configs.customer_config import customer_config
 from codemie.core.ability import Ability, Action
@@ -87,7 +86,7 @@ class ChatHistoryData:
     thoughts: List[Thought]
     status: ConversationStatus = ConversationStatus.SUCCESS
     user_message_received_at: datetime | None = None
-    interactive_request: InteractiveRequest | None = None
+    a2ui_envelopes: List[dict] | None = None
 
 
 class AssistantRequestHandler(ABC):
@@ -118,27 +117,54 @@ class AssistantRequestHandler(ABC):
         """
         pass
 
-    def _validate_interactive_response(self, request: AssistantChatRequest) -> None:
-        """Validate an incoming interactive response against the stored conversation history."""
-        if request.interactive_response is None:
-            return
-        from codemie.service.conversation.interactive_intake import validate_interactive_intake
+    def _load_authorized_history(self, conversation_id: str | None) -> list:
+        """Resolve the stored conversation history, enforcing ownership FIRST.
 
-        conversation = Conversation.find_by_id(request.conversation_id) if request.conversation_id else None
+        The 403 is raised BEFORE any history read, so structured-answer intake cannot
+        become an existence/answered-state oracle for another user's conversation.
+        """
+        conversation = Conversation.find_by_id(conversation_id) if conversation_id else None
         if conversation and not Ability(self.user).can(Action.READ, conversation):
-            # Verify ownership BEFORE reading history, so intake cannot become an
-            # existence/answered-state oracle for another user's conversation.
             raise ExtendedHTTPException(
                 code=status.HTTP_403_FORBIDDEN,
                 message=ACCESS_DENIED_MESSAGE,
-                details=f"You don't have permission to access conversation {request.conversation_id}.",
+                details=f"You don't have permission to access conversation {conversation_id}.",
             )
-        history = conversation.history if conversation else []
-        # A re-submit replaces the turn at request.history_index (like editing the
-        # previous request); pass it so a response being overwritten there is not
-        # treated as "already answered".
-        validate_interactive_intake(
-            history, request.interactive_response, replacing_history_index=request.history_index
+        return conversation.history if conversation else []
+
+    def _validate_a2ui_action(self, request: AssistantChatRequest) -> None:
+        """Validate incoming A2UI answer fields against the stored conversation history.
+
+        Runs whenever ANY A2UI answer field is present: the conversation service persists
+        ``a2ui_data_model`` unconditionally, so a data model submitted without its action
+        would otherwise reach conversation history without ownership, surface-existence,
+        already-answered or size checks.
+        """
+        if request.a2ui_action is None and request.a2ui_data_model is None:
+            return
+        from codemie.service.conversation.a2ui_intake import validate_a2ui_intake
+
+        if request.a2ui_action is None:
+            raise ExtendedHTTPException(
+                code=422,
+                message="A2UI data model requires the matching A2UI action",
+                details="a2uiDataModel was submitted without a2uiAction; the answered surface cannot be resolved.",
+            )
+        history = self._load_authorized_history(request.conversation_id)
+        # Re-answer semantics: request.history_index marks the exact turn being
+        # replaced by this submit (like editing the previous request).
+        # The return value is the server's own stored record of the answered surface —
+        # the answer was validated against it, and it is the only trusted description of
+        # what was asked (the client action carries no catalog or component identity).
+        surface_envelopes = validate_a2ui_intake(
+            history,
+            request.a2ui_action,
+            request.a2ui_data_model,
+            replacing_history_index=request.history_index,
+        )
+        logger.debug(
+            f"A2UI answer accepted for conversation {request.conversation_id} "
+            f"against {len(surface_envelopes)} stored surface envelopes."
         )
 
     def _populate_conversation_history(self, request: AssistantChatRequest) -> None:
@@ -403,7 +429,7 @@ class AssistantRequestHandler(ABC):
             thoughts=self._filter_thoughts(data.thoughts),
             status=data.status,
             user_message_received_at=data.user_message_received_at,
-            interactive_request=data.interactive_request,
+            a2ui_envelopes=data.a2ui_envelopes,
             request_id=self.request_uuid,
             background_tasks=self.background_tasks,
         )
@@ -480,8 +506,8 @@ class StandardAssistantHandler(AssistantRequestHandler):
         self.background_tasks = background_tasks
         self._sync_uploaded_files_to_workspace(request)
 
-        # Validate structured interactive responses against the stored conversation
-        self._validate_interactive_response(request)
+        # Validate structured A2UI answers against the stored conversation
+        self._validate_a2ui_action(request)
 
         # Populate conversation history if conversation_id is provided
         self._populate_conversation_history(request)
@@ -651,6 +677,20 @@ class StandardAssistantHandler(AssistantRequestHandler):
             time_elapsed=time() - execution_start,
         )
 
+    @staticmethod
+    def _read_streamed_chunk(value: str, response, a2ui_envelopes: List[dict]):
+        """Interpret one streamed chunk, returning the result the history should record.
+
+        Two things are read out of the same line: the latest generated result, and any A2UI
+        envelope, which is appended rather than replacing anything — one interactive surface
+        arrives as several ordered envelopes and the turn keeps all of them.
+        """
+        generation_result = json.loads(value, object_hook=lambda d: SimpleNamespace(**d))
+        if getattr(generation_result, "a2ui", None) is not None:
+            # Re-parse as a plain dict — envelopes are persisted raw (versioned)
+            a2ui_envelopes.append(json.loads(value)["a2ui"])
+        return generation_result if generation_result.generated is not None else response
+
     def _serve_data(
         self,
         stream,
@@ -674,19 +714,16 @@ class StandardAssistantHandler(AssistantRequestHandler):
 
         # We pass an empty string to avoid sending the default None value in the chat history.
         response = StreamedGenerationResult(generated="")
-        interactive_request = None
+        # One interactive surface streams as 2-3 A2UI envelopes (createSurface →
+        # updateComponents → [updateDataModel]); accumulate the whole ordered turn.
+        a2ui_envelopes: List[dict] = []
         while True:
             value = generator_queue.queue.get()
             if isinstance(value, BaseException):
                 generator_queue.queue.task_done()
                 raise value
             if value is not StopIteration:
-                generation_result = json.loads(value, object_hook=lambda d: SimpleNamespace(**d))
-                if generation_result.generated is not None:
-                    response = generation_result
-                if getattr(generation_result, "interactive_request", None) is not None:
-                    # Re-parse as a plain dict so the typed model survives persistence
-                    interactive_request = InteractiveRequest(**json.loads(value)["interactive_request"])
+                response = self._read_streamed_chunk(value, response, a2ui_envelopes)
                 yield value
                 generator_queue.queue.task_done()
                 continue
@@ -698,7 +735,7 @@ class StandardAssistantHandler(AssistantRequestHandler):
                     response=response.generated,
                     thoughts=generator_queue.thoughts,
                     user_message_received_at=user_message_received_at,
-                    interactive_request=interactive_request,
+                    a2ui_envelopes=a2ui_envelopes or None,
                 )
             )
             final_chunk = self._build_final_chunk(agent, execution_start, include_tool_errors, error_detail_level)
@@ -987,8 +1024,8 @@ class A2AAssistantHandler(AssistantRequestHandler):
         self.background_tasks = background_tasks
         self._sync_uploaded_files_to_workspace(request)
 
-        # Validate structured interactive responses against the stored conversation
-        self._validate_interactive_response(request)
+        # Validate structured A2UI answers against the stored conversation
+        self._validate_a2ui_action(request)
 
         # Populate conversation history if conversation_id is provided
         self._populate_conversation_history(request)

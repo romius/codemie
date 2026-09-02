@@ -27,7 +27,6 @@ from pydantic import BaseModel
 from sqlmodel import select, and_, func, or_, text, Session
 
 from codemie.chains.base import Thought
-from codemie.core.interactive import InteractiveRequest
 from codemie.clients.postgres import get_session
 from codemie.configs import config, logger
 from codemie.core.dependecies import get_stt_openai_client
@@ -216,7 +215,7 @@ class ConversationService:
         thoughts: List[Thought],
         status: ConversationStatus = ConversationStatus.SUCCESS,
         user_message_received_at: datetime | None = None,
-        interactive_request: InteractiveRequest | None = None,
+        a2ui_envelopes: list[dict] | None = None,
         request_id: Optional[str] = None,
         background_tasks: BackgroundTasks | None = None,
     ):
@@ -245,8 +244,11 @@ class ConversationService:
                 output_tokens=tokens_usage.output_tokens,
                 money_spent=tokens_usage.money_spent,
                 user_message_received_at=user_message_received_at,
-                interactive_request=interactive_request,
-                interactive_response=request.interactive_response,
+                a2ui_envelopes=a2ui_envelopes,
+                # getattr: the request-side A2UI intake fields arrive with the
+                # separate intake task; persistence stays additive until then.
+                a2ui_action=getattr(request, "a2ui_action", None),
+                a2ui_data_model=getattr(request, "a2ui_data_model", None),
             ),
             project=assistant.project,
             replace_latest_variant=replace_latest_variant,

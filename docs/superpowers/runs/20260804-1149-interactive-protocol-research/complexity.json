@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "source": "heuristic",
+  "score": 30,
+  "max": 36,
+  "routing": "brainstorming",
+  "size": "XL (epic)",
+  "signals": {
+    "affected_file_estimate": 30,
+    "keyword_signals": {
+      "security": true,
+      "auth": false,
+      "migration": true,
+      "breaking": true,
+      "provider": false,
+      "integration": true,
+      "refactor": true
+    },
+    "multi_repo": ["codemie", "codemie-ui"],
+    "notes": [
+      "Replacement of the entire agent↔UI interaction mechanism (not just the element vocabulary): emission tool, stream chunk, intake, turn-based materialization — per the user's answer",
+      "Data migration of the JSONB conversation history (interactive_request/response in the old format)",
+      "Pre-1.0 external dependency (A2UI v0.9.1/v1.0-RC) — breaking-changes risk accepted by the user",
+      "Synchronized changes to backend (~1000 lines of protocol code + ~1430 tests) and frontend (~1250 lines + ~1436 tests)",
+      "security: agent-authored UI, server-side re-validation of responses must be preserved/carried over"
+    ]
+  },
+  "implication_for_research_run": "Epic-sized scope with decomposition into stories; for this research run — a recommendation to create a Jira epic, with implementation in phases as separate runs"
+}

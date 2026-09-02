@@ -1,0 +1,96 @@
+{
+  "run_id": "20260806-1647-EPMCDME-13912",
+  "mode": "autonomous",
+  "started_at": "2026-08-06T13:47:13Z",
+  "task_input": "EPMCDME-13912: A2UI migration (everything except React upgrade). Backend: SDK integration + static catalog + envelope emission from request_user_input as new NDJSON chunk; capability gate a2ui_supported_catalogs; intake via action envelope + A2uiValidator + ported semantic checks; history materialization + envelope persistence; assistant flag to boolean; reversible JSONB history converter. Frontend: @a2ui/react v0_9 + factory/registry bindings for all 18 components over existing DS; chat integration; UX states. Sync: ENABLED_COMPONENTS(BE) subset of FE registry, contract test. Spec: docs/superpowers/tasks/2026-08-04-epmcdme-13910-a2ui-migration/spec.md",
+  "branch": "EPMCDME-13912",
+  "repos": [
+    "codemie",
+    "codemie-ui"
+  ],
+  "branch_note": "codemie-ui branched from EPMCDME-13911 (approved, unmerged due to code freeze); codemie from fresh main 6b12b3e2b",
+  "current_phase": 8,
+  "status": "manual-testing-in-progress",
+  "escalate_on": [
+    "security",
+    "breaking-change"
+  ],
+  "phases": {
+    "0": {
+      "status": "completed",
+      "note": "foundation verified in prior runs"
+    },
+    "1": {
+      "status": "completed",
+      "note": "requirements = EPMCDME-13912 checklist + story spec (validated with user)"
+    },
+    "2": {
+      "status": "completed",
+      "note": "branches created both repos; ui from prerequisite branch per user"
+    },
+    "3": {
+      "status": "completed",
+      "note": "complexity known: story-level XL, work plan pre-decomposed"
+    },
+    "4": {
+      "status": "skipped",
+      "note": "design = spec.md (validated)"
+    },
+    "5": {
+      "status": "completed",
+      "note": "plan = sub-task checklist BE-1..X-2"
+    },
+    "6": {
+      "status": "completed",
+      "note": "all tasks T-BE1..5, T-FE1..3, T-X1, T-X2 implemented with per-task evidence"
+    },
+    "7": {
+      "status": "completed",
+      "note": "three-lens review per repo + check round; verdicts in code-review-final.json (BE), code-review-fe.json (FE), code-review-check.json; 7 BE + 14 FE + 5 check-round findings, all resolved"
+    },
+    "8": {
+      "status": "completed",
+      "note": "qa-gates.json: BE ruff+pytest green (3 environment-blocked failures outside branch), FE typecheck/lint/tests/build green, secrets scan SKIPPED (gitleaks cannot read config in container); feature-verification 17/17 on the real end-to-end loop"
+    },
+    "8b": {
+      "status": "in-progress",
+      "note": "manual testing by the user; defects and their causes recorded in evidence/PHASE-manual-testing.json, spec.md updated for every behaviour change. The diff accumulated since code-review-final.json has NOT been reviewed yet \u2014 a check round is owed before the MR."
+    }
+  },
+  "phase6_progress": {
+    "done": {
+      "T-BE1": "3af66d4b4, 707ae0569, c8e3c03eb \u2014 a2ui module (catalog+adapter), tool envelope emission, capability gate + SDK prompt section",
+      "T-BE3": "7505edb07 \u2014 history persistence (a2ui_envelopes/a2ui_action/a2ui_data_model with explicit aliases) + materializers + serve_data interception",
+      "T-BE2": "62e6df263 \u2014 action intake: validate_a2ui_intake (unknown surface/once-only/strict re-answer/64KB cap), manual action-envelope validation (SDK has no client schema), ownership 403 via _load_authorized_history, wired in both handlers",
+      "T-BE4": "531d416d7 \u2014 assistants.interactive_enabled boolean + alembic e7f8a9b0c1d2 (backfill, old column kept until T-X2), gates read boolean, old->new sync in normalize_input_data",
+      "T-FE1": "20303dde9 \u2014 src/a2ui/: config, sanitizeUrl, factory (input/layout/media), registry (all 18 on DS), fallback, manifest",
+      "T-FE2": "9495b14fc \u2014 a2ui chunk handling, useA2uiSurface replay, ChatA2uiBlock with prefiltering, submitA2uiAction, unconditional a2uiSupportedCatalogs, displayText"
+    },
+    "remaining": {
+      "T-BE5": "reversible legacy->a2ui converter + alembic data migration (down_revision e7f8a9b0c1d2). Agent died twice (SSL, then session limit) at API-prototyping stage; working tree clean, nothing lost",
+      "T-FE3": "UX states over surfaces (active/submitted/stale/busy, prefill from stored data model, pressed-button marker, re-answer via Edit, user chip). Agent died at prefill-API research stage; tree clean",
+      "T-X1": "BE<->FE contract test (manifest: ENABLED_COMPONENTS subset of FE registry, catalogId equality) + assistant form switch on boolean",
+      "T-X2": "remove legacy protocol both repos (core/interactive.py protocol parts, legacy intake branches, InteractiveElements/*, types/entity/interactive.ts, drop interactive_features column) + guides update"
+    },
+    "known_preexisting_failures": [
+      "tests/codemie/service/mcp/test_toolkit_service_auth_resolver.py (2) \u2014 needs codemie_enterprise from private registry, unavailable locally",
+      "tests/codemie/rest_api/routers/test_oauth_redis_lazy_init.py::test_device_code_flow_works_while_pkce_disabled \u2014 reproduced on clean tree"
+    ],
+    "env_notes": [
+      "poetry.lock regeneration blocked by private GCP registry (codemie-enterprise) \u2014 lead does it at merge; a2ui-agent-sdk 0.5.0 already in pyproject, installed via poetry run pip install",
+      "local venv needed 'poetry run pip install greenlet' (was missing, unrelated to task)",
+      "config/customer/customer-config.yaml \u2014 user's local edit, never commit"
+    ]
+  },
+  "heads": {
+    "codemie": "919c512bd",
+    "codemie-ui": "9fe75824c"
+  },
+  "stop_condition": "user asked to stop before manual testing",
+  "not_pushed": true,
+  "owed_before_mr": [
+    "check-round review of everything after 2a7a4086d (backend) and a44d7d387 (frontend)",
+    "decision on surfacing tool_errors in the chat (platform-wide behaviour)",
+    "push both branches (gitbud needs VPN) and update from fresh main"
+  ]
+}

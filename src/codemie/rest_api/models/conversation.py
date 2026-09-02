@@ -22,7 +22,6 @@ from codemie_tools.base.models import Tool
 from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 from codemie.chains.base import Thought
-from codemie.core.interactive import InteractiveRequest, InteractiveResponse
 from codemie.clients.postgres import get_session
 from codemie.configs import config, logger
 from codemie.core.ability import Owned, Action
@@ -65,8 +64,9 @@ class ChatTurnData:
     file_names: list[str]
     money_spent: float
     user_message_received_at: datetime | None = None
-    interactive_request: Optional[InteractiveRequest] = None
-    interactive_response: Optional[InteractiveResponse] = None
+    a2ui_envelopes: Optional[list[dict]] = None
+    a2ui_action: Optional[dict] = None
+    a2ui_data_model: Optional[dict] = None
 
 
 class Operator(BaseModel):
@@ -131,9 +131,12 @@ class GeneratedMessage(ChatMessage):
     ## Workflow execution reference fields
     workflow_execution_ref: Optional[bool] = None  # Marker that this is a reference to workflow execution
     execution_id: Optional[str] = None  # Reference to WorkflowExecution.execution_id
-    ## Interactive element fields (assistant message carries the request, user message the response)
-    interactive_request: Optional[InteractiveRequest] = None
-    interactive_response: Optional[InteractiveResponse] = None
+    ## A2UI fields (assistant message carries the raw versioned surface envelopes,
+    ## user message the action envelope + resulting data model). Explicit aliases:
+    ## pydantic's to_camel would emit "a2Ui..." — the wire name is "a2ui...".
+    a2ui_envelopes: Optional[List[dict]] = Field(default=None, alias="a2uiEnvelopes")
+    a2ui_action: Optional[dict] = Field(default=None, alias="a2uiAction")
+    a2ui_data_model: Optional[dict] = Field(default=None, alias="a2uiDataModel")
 
     @classmethod
     @model_validator(mode="before")
@@ -331,7 +334,8 @@ class Conversation(BaseModelWithSQLSupport, Owned, table=True):
             file_names=turn.file_names,
             history_index=turn.history_index,
             message=turn.user_query,
-            interactive_response=turn.interactive_response,
+            a2ui_action=turn.a2ui_action,
+            a2ui_data_model=turn.a2ui_data_model,
         )
         assistant_message = GeneratedMessage(
             date=assistant_responded_at,
@@ -344,7 +348,7 @@ class Conversation(BaseModelWithSQLSupport, Owned, table=True):
             history_index=turn.history_index,
             thoughts=turn.thoughts,
             assistant_id=turn.assistant_id,
-            interactive_request=turn.interactive_request,
+            a2ui_envelopes=turn.a2ui_envelopes,
         )
         return user_message, assistant_message
 
@@ -611,24 +615,20 @@ class Conversation(BaseModelWithSQLSupport, Owned, table=True):
             match role:
                 case ChatRole.USER.value:
                     user_text = message.message or ""
-                    if message.interactive_response is not None:
-                        from codemie.service.conversation.interactive_intake import (
-                            materialize_interactive_message_text,
-                        )
+                    if message.a2ui_action is not None:
+                        from codemie.service.conversation.a2ui_intake import materialize_a2ui_action_text
 
-                        user_text = materialize_interactive_message_text(user_text, message.interactive_response)
+                        user_text = materialize_a2ui_action_text(
+                            user_text, message.a2ui_action, message.a2ui_data_model
+                        )
                     chat_message = ChatMessage(role=ChatRole.USER, message=user_text)
                     chat_messages.append(chat_message)
                 case ChatRole.ASSISTANT.value:
                     assistant_text = message.message or ""
-                    if message.interactive_request is not None:
-                        from codemie.service.conversation.interactive_intake import (
-                            materialize_interactive_request_text,
-                        )
+                    if message.a2ui_envelopes:
+                        from codemie.service.conversation.a2ui_intake import materialize_a2ui_request_text
 
-                        assistant_text = materialize_interactive_request_text(
-                            assistant_text, message.interactive_request
-                        )
+                        assistant_text = materialize_a2ui_request_text(assistant_text, message.a2ui_envelopes)
                     chat_message = ChatMessage(role=ChatRole.ASSISTANT, message=assistant_text)
                     chat_messages.append(chat_message)
                 case _:
