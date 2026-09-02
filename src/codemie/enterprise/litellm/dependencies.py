@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from functools import lru_cache
 from typing import TYPE_CHECKING, Optional
 
@@ -31,6 +32,13 @@ _LITELLM_NOT_AVAILABLE_MSG = "LiteLLM not available"
 
 # Global service registry (initialized at startup)
 _global_litellm_service: Optional["LiteLLMService"] = None
+
+# Strong references to fire-and-forget soft-limit notification tasks
+# (EPMCDME-13959 CR-001). The event loop only holds a weak reference to a
+# task, so an unreferenced ``create_task`` result can be garbage-collected
+# mid-execution. Adding tasks here — and discarding them on completion —
+# keeps them alive without leaking.
+_pending_notify_tasks: set[asyncio.Task] = set()
 
 
 def is_litellm_enabled() -> bool:
@@ -324,6 +332,100 @@ async def backfill_user_budget_assignments() -> None:
         raise
 
 
+def _dispatch_soft_limit_notification(
+    budget_id: str | None,
+    current_spend: float,
+    soft_limit: float,
+) -> None:
+    """Schedule the budget-owner email as a fire-and-forget task (EPMCDME-13959).
+
+    Never blocks and never raises. Skipped when no compatible event loop is
+    available (sync contexts, or cross-loop calls from LangChain sync bridges);
+    the soft-limit metric is emitted by the caller and is unaffected either way.
+    """
+    from codemie.configs import logger
+
+    if budget_id is None:
+        return
+
+    try:
+        loop = asyncio.get_running_loop()
+        from codemie.service.budget.budget_notification_service import notify_soft_limit_reached
+
+        task = loop.create_task(
+            notify_soft_limit_reached(
+                budget_id=budget_id,
+                current_spend=current_spend,
+                soft_limit=soft_limit,
+            )
+        )
+        # Retain a strong reference until the task completes: the event loop
+        # keeps only a weak one and would let it be garbage-collected.
+        _pending_notify_tasks.add(task)
+        task.add_done_callback(_pending_notify_tasks.discard)
+    except Exception as notify_exc:
+        logger.debug(f"budget_notify_skipped budget_id={budget_id!r} reason=dispatch_failed error={notify_exc}")
+
+
+def _report_hard_limit_exceeded(
+    user_email: str,
+    user_id: str | None,
+    budget_id: str | None,
+    current_spend: float,
+    hard_limit: float,
+) -> None:
+    """Log and emit the hard-budget-limit metric."""
+    from codemie.configs import logger
+    from codemie.service.monitoring.base_monitoring_service import send_log_metric
+    from codemie.service.monitoring.metrics_constants import LLM_HARD_BUDGET_LIMIT, MetricsAttributes
+
+    logger.warning(
+        f"budget_event=personal_budget_hard_limit_exceeded component=dependencies "
+        f"username={user_email!r} user_id={user_id!r} budget_id={budget_id!r} "
+        f"spend={current_spend!r} hard_limit={hard_limit!r}"
+    )
+    send_log_metric(
+        LLM_HARD_BUDGET_LIMIT,
+        attributes={
+            MetricsAttributes.USER_ID: user_id,
+            MetricsAttributes.USER_NAME: user_email,
+            MetricsAttributes.USER_EMAIL: user_email,
+            "hard_limit": hard_limit,
+            "spent": current_spend,
+        },
+    )
+
+
+def _report_soft_limit_exceeded(
+    user_email: str,
+    user_id: str | None,
+    budget_id: str | None,
+    current_spend: float,
+    soft_limit: float,
+) -> None:
+    """Log and emit the soft-budget-limit metric, then notify the budget owner."""
+    from codemie.configs import logger
+    from codemie.service.monitoring.base_monitoring_service import send_log_metric
+    from codemie.service.monitoring.metrics_constants import LLM_SOFT_BUDGET_LIMIT, MetricsAttributes
+
+    logger.warning(
+        f"budget_event=personal_budget_soft_limit_exceeded component=dependencies "
+        f"username={user_email!r} user_id={user_id!r} budget_id={budget_id!r} "
+        f"spend={current_spend!r} soft_limit={soft_limit!r}"
+    )
+    send_log_metric(
+        LLM_SOFT_BUDGET_LIMIT,
+        attributes={
+            MetricsAttributes.USER_ID: user_id,
+            MetricsAttributes.USER_NAME: user_email,
+            MetricsAttributes.USER_EMAIL: user_email,
+            "soft_limit": soft_limit,
+            "spent": current_spend,
+        },
+    )
+    _dispatch_soft_limit_notification(budget_id, current_spend, soft_limit)
+
+
 def check_user_budget(user_email: str, budget_id: str | None = None, user_id: str | None = None):
     """
     Check if user is within budget limits with caching and metrics.
@@ -353,12 +455,6 @@ def check_user_budget(user_email: str, budget_id: str | None = None, user_id: st
             pass
     """
     from codemie.configs import logger
-    from codemie.service.monitoring.base_monitoring_service import send_log_metric
-    from codemie.service.monitoring.metrics_constants import (
-        LLM_HARD_BUDGET_LIMIT,
-        LLM_SOFT_BUDGET_LIMIT,
-        MetricsAttributes,
-    )
 
     litellm = get_litellm_service_or_none()
     if litellm is None:
@@ -425,39 +521,11 @@ def check_user_budget(user_email: str, budget_id: str | None = None, user_id: st
 
         # Check hard budget limit
         if hard_limit is not None and current_spend >= hard_limit:
-            logger.warning(
-                f"budget_event=personal_budget_hard_limit_exceeded component=dependencies "
-                f"username={user_email!r} user_id={user_id!r} budget_id={budget_id!r} "
-                f"spend={current_spend!r} hard_limit={hard_limit!r}"
-            )
-            send_log_metric(
-                LLM_HARD_BUDGET_LIMIT,
-                attributes={
-                    MetricsAttributes.USER_ID: user_id,
-                    MetricsAttributes.USER_NAME: user_email,
-                    MetricsAttributes.USER_EMAIL: user_email,
-                    "hard_limit": hard_limit,
-                    "spent": current_spend,
-                },
-            )
+            _report_hard_limit_exceeded(user_email, user_id, budget_id, current_spend, hard_limit)
 
         # Check soft budget limit
         if soft_limit is not None and current_spend >= soft_limit:
-            logger.warning(
-                f"budget_event=personal_budget_soft_limit_exceeded component=dependencies "
-                f"username={user_email!r} user_id={user_id!r} budget_id={budget_id!r} "
-                f"spend={current_spend!r} soft_limit={soft_limit!r}"
-            )
-            send_log_metric(
-                LLM_SOFT_BUDGET_LIMIT,
-                attributes={
-                    MetricsAttributes.USER_ID: user_id,
-                    MetricsAttributes.USER_NAME: user_email,
-                    MetricsAttributes.USER_EMAIL: user_email,
-                    "soft_limit": soft_limit,
-                    "spent": current_spend,
-                },
-            )
+            _report_soft_limit_exceeded(user_email, user_id, budget_id, current_spend, soft_limit)
 
         return customer
 

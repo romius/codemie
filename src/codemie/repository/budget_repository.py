@@ -16,7 +16,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import func, or_, text
+from datetime import timedelta
+
+from sqlalchemy import func, or_, text, update as sa_update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -106,6 +108,39 @@ class BudgetRepository:
         data_stmt = base_stmt.order_by(Budget.created_at.desc()).offset(page * per_page).limit(per_page)
         result = await session.execute(data_stmt)
         return list(result.scalars().all()), total
+
+    async def try_claim_soft_limit_notification(
+        self,
+        session: AsyncSession,
+        *,
+        budget_id: str,
+        now: datetime,
+        window: timedelta,
+        notify_once: bool = False,
+    ) -> bool:
+        """Atomically claim the soft-limit notification slot for ``budget_id`` (EPMCDME-13959).
+
+        Uses a conditional UPDATE so concurrent callers race safely: exactly one
+        wins the slot when the dedup window has elapsed.
+
+        When ``notify_once`` is True the slot fires only if ``soft_limit_notified_at``
+        is NULL — i.e. exactly once per budget edit cycle, never repeating.
+
+        Returns True iff this call claimed the slot.
+        """
+        if notify_once:
+            condition = Budget.soft_limit_notified_at.is_(None)
+        else:
+            threshold = now - window
+            condition = or_(
+                Budget.soft_limit_notified_at.is_(None),
+                Budget.soft_limit_notified_at < threshold,
+            )
+        stmt = (
+            sa_update(Budget).where(Budget.budget_id == budget_id).where(condition).values(soft_limit_notified_at=now)
+        )
+        result = await session.execute(stmt)
+        return (result.rowcount or 0) == 1
 
     async def update(self, session: AsyncSession, budget_id: str, fields: dict) -> Budget:
         """Partial update: apply provided values in fields dict."""

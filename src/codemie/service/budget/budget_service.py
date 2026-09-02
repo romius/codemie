@@ -206,6 +206,7 @@ class BudgetService:
             budget_category=data.budget_category.value,
             provider_metadata=self._provider_metadata(data.budget_id),
             created_by=actor_id,
+            notification_owner_email=data.notification_owner_email,
         )
 
         try:
@@ -440,11 +441,23 @@ class BudgetService:
         """Build update dict from only the fields that were provided."""
         provided = data.model_fields_set
         fields: dict = {}
-        for field in ("name", "description", "soft_budget", "max_budget", "budget_duration"):
+        for field in (
+            "name",
+            "description",
+            "soft_budget",
+            "max_budget",
+            "budget_duration",
+            "notification_owner_email",
+            "soft_limit_notify_once",
+        ):
             if field in provided:
                 fields[field] = getattr(data, field)
         if "budget_category" in provided:
             fields["budget_category"] = new_category
+        # Reset soft-limit dedup when soft_budget or notification owner changes so the
+        # new value / new owner is notified on the next crossing (EPMCDME-13959).
+        if "soft_budget" in fields or "notification_owner_email" in fields:
+            fields["soft_limit_notified_at"] = None
         return fields
 
     async def _check_name_uniqueness(

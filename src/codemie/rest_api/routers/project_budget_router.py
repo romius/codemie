@@ -18,7 +18,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from codemie.clients.postgres import get_async_session
@@ -503,6 +503,14 @@ class ProjectBudgetGroupCreateRequest(BaseModel):
     categories: dict[str, CategoryBudgetSpec] = Field(
         description="Category distribution keyed by BudgetCategory value (platform/cli/premium_models)"
     )
+    notification_owner_email: Optional[EmailStr] = Field(
+        default=None,
+        description="Email notified when any category soft limit is reached. May be a group alias.",
+    )
+    soft_limit_notify_once: bool = Field(
+        default=False,
+        description="When true the soft-limit notification fires only once per budget edit cycle.",
+    )
 
 
 class CategoryBudgetSpecUpdate(BaseModel):
@@ -516,6 +524,8 @@ class ProjectBudgetGroupUpdateRequest(BaseModel):
     budget_duration: Optional[str] = Field(default=None, pattern=_DURATION_PATTERN)
     description: Optional[str] = Field(default=None, max_length=500)
     categories: Optional[dict[str, CategoryBudgetSpecUpdate]] = Field(default=None)
+    notification_owner_email: Optional[EmailStr] = Field(default=None)
+    soft_limit_notify_once: Optional[bool] = Field(default=None)
 
 
 class CategoryBudgetDetailResponse(BaseModel):
@@ -545,6 +555,8 @@ class ProjectBudgetGroupResponse(BaseModel):
     updated_at: Optional[datetime]
     deleted_at: Optional[datetime]
     categories: list[CategoryBudgetDetailResponse]
+    notification_owner_email: Optional[str] = None
+    soft_limit_notify_once: bool = False
 
     model_config = {'from_attributes': True}
 
@@ -575,6 +587,8 @@ def _build_project_budget_group_response(result: ProjectBudgetGroupFullResult) -
                 created_at=cat.budget.created_at,
             )
         )
+    # Derive group-level notification fields from the first category budget (all categories share them).
+    first_budget = result.categories[0].budget if result.categories else None
     return ProjectBudgetGroupResponse(
         group_id=result.group.id,
         project_name=result.group.project_name,
@@ -587,6 +601,8 @@ def _build_project_budget_group_response(result: ProjectBudgetGroupFullResult) -
         updated_at=result.group.updated_at,
         deleted_at=result.group.deleted_at,
         categories=categories,
+        notification_owner_email=first_budget.notification_owner_email if first_budget else None,
+        soft_limit_notify_once=first_budget.soft_limit_notify_once if first_budget else False,
     )
 
 

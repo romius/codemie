@@ -388,3 +388,103 @@ def test_budget_write_routes_keep_maintainer_dependency():
     for route in write_routes:
         dependency_calls = {dependency.call.__name__ for dependency in route.dependant.dependencies}
         assert "maintainer_access_only" in dependency_calls
+
+
+# ---------------------------------------------------------------------------
+# TestBudgetNotificationOwnerEmail (EPMCDME-13959)
+# ---------------------------------------------------------------------------
+
+
+class TestBudgetNotificationOwnerEmail:
+    @pytest.mark.asyncio
+    async def test_create_accepts_valid_notification_owner_email(self):
+        mock_session = AsyncMock()
+        mock_session.commit = AsyncMock()
+        budget_row = _make_budget_row(notification_owner_email="owner@example.com")
+        create_mock = AsyncMock(return_value=budget_row)
+
+        with (
+            _patch_litellm_enabled(),
+            _patch_session(mock_session),
+            patch(
+                "codemie.rest_api.routers.budget_router.budget_service.create_budget",
+                new=create_mock,
+            ),
+        ):
+            payload = BudgetCreateRequest(
+                budget_id="notify-1",
+                name="Notify 1",
+                soft_budget=10.0,
+                max_budget=100.0,
+                budget_duration="30d",
+                budget_category=BudgetCategory.PLATFORM,
+                notification_owner_email="owner@example.com",
+            )
+            result = await create_budget(payload=payload, user=_admin_user(), _=None)
+
+        assert result.notification_owner_email == "owner@example.com"
+        # Router forwards the parsed payload to the service.
+        called_payload = create_mock.await_args.kwargs.get("data") or create_mock.await_args.args[1]
+        assert called_payload.notification_owner_email == "owner@example.com"
+
+    def test_create_rejects_invalid_email_format(self):
+        with pytest.raises(ValueError):
+            BudgetCreateRequest(
+                budget_id="notify-2",
+                name="Notify 2",
+                soft_budget=10.0,
+                max_budget=100.0,
+                budget_duration="30d",
+                budget_category=BudgetCategory.PLATFORM,
+                notification_owner_email="not-an-email",
+            )
+
+    def test_create_defaults_notification_owner_email_to_none(self):
+        payload = BudgetCreateRequest(
+            budget_id="notify-3",
+            name="Notify 3",
+            soft_budget=10.0,
+            max_budget=100.0,
+            budget_duration="30d",
+            budget_category=BudgetCategory.PLATFORM,
+        )
+        assert payload.notification_owner_email is None
+
+    @pytest.mark.asyncio
+    async def test_update_can_set_and_clear_notification_owner_email(self):
+        mock_session = AsyncMock()
+        mock_session.commit = AsyncMock()
+        set_row = _make_budget_row(notification_owner_email="team@example.com")
+        cleared_row = _make_budget_row(notification_owner_email=None)
+
+        with (
+            _patch_litellm_enabled(),
+            _patch_session(mock_session),
+            patch(
+                "codemie.rest_api.routers.budget_router.budget_service.update_budget",
+                new=AsyncMock(return_value=set_row),
+            ),
+        ):
+            result_set = await update_budget(
+                budgetId="test-budget",
+                payload=BudgetUpdateRequest(notification_owner_email="team@example.com"),
+                user=_admin_user(),
+                _=None,
+            )
+        assert result_set.notification_owner_email == "team@example.com"
+
+        with (
+            _patch_litellm_enabled(),
+            _patch_session(mock_session),
+            patch(
+                "codemie.rest_api.routers.budget_router.budget_service.update_budget",
+                new=AsyncMock(return_value=cleared_row),
+            ),
+        ):
+            result_cleared = await update_budget(
+                budgetId="test-budget",
+                payload=BudgetUpdateRequest(notification_owner_email=None),
+                user=_admin_user(),
+                _=None,
+            )
+        assert result_cleared.notification_owner_email is None

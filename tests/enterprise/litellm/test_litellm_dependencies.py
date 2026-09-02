@@ -598,3 +598,108 @@ class TestGetKeySpendingInfo:
             result = get_key_spending_info(["key-1"])
 
             assert result == []
+
+
+class TestSoftLimitNotificationHook:
+    """EPMCDME-13959: fire-and-forget notifier hook added to check_user_budget."""
+
+    @pytest.mark.skipif(not HAS_LITELLM, reason="Enterprise package not installed - LiteLLM not available")
+    def test_soft_limit_hook_does_not_raise_without_running_loop(self):
+        """No event loop → hook swallows RuntimeError and metric emission is unaffected."""
+        mock_customer = CustomerInfo(
+            user_id="test-user",
+            spend=90.0,
+            litellm_budget_table=BudgetTable(
+                budget_id="budget-1", soft_budget=80.0, max_budget=200.0, budget_duration="30d"
+            ),
+        )
+        mock_service = MagicMock()
+        mock_service._get_cached_customer.return_value = mock_customer
+
+        with (
+            patch(
+                "codemie.enterprise.litellm.dependencies.get_litellm_service_or_none",
+                return_value=mock_service,
+            ),
+            patch("codemie.service.monitoring.base_monitoring_service.send_log_metric") as send_metric,
+        ):
+            from codemie.enterprise.litellm.dependencies import check_user_budget
+
+            # Must not raise even though we are in a sync context (no loop running).
+            result = check_user_budget("test-user", budget_id="budget-1", user_id="u1")
+
+        assert result is mock_customer
+        # Existing metric emission is preserved.
+        assert send_metric.call_count >= 1
+
+    @pytest.mark.skipif(not HAS_LITELLM, reason="Enterprise package not installed - LiteLLM not available")
+    def test_soft_limit_hook_schedules_task_when_loop_running(self):
+        """With a running event loop, the notifier is scheduled via create_task."""
+        import asyncio
+
+        mock_customer = CustomerInfo(
+            user_id="test-user",
+            spend=90.0,
+            litellm_budget_table=BudgetTable(
+                budget_id="budget-1", soft_budget=80.0, max_budget=200.0, budget_duration="30d"
+            ),
+        )
+        mock_service = MagicMock()
+        mock_service._get_cached_customer.return_value = mock_customer
+
+        async def _run():
+            with (
+                patch(
+                    "codemie.enterprise.litellm.dependencies.get_litellm_service_or_none",
+                    return_value=mock_service,
+                ),
+                patch("codemie.service.monitoring.base_monitoring_service.send_log_metric"),
+                patch(
+                    "codemie.service.budget.budget_notification_service.notify_soft_limit_reached",
+                    new_callable=MagicMock,
+                ) as notify_mock,
+            ):
+                from codemie.enterprise.litellm.dependencies import check_user_budget
+
+                # Ensure the mock returns a coroutine that create_task can accept.
+                async def _noop(**kwargs):
+                    return None
+
+                notify_mock.side_effect = _noop
+
+                result = check_user_budget("test-user", budget_id="budget-1", user_id="u1")
+
+                # Yield control so the scheduled task runs.
+                await asyncio.sleep(0)
+
+                assert result is mock_customer
+                notify_mock.assert_called_once()
+                assert notify_mock.call_args.kwargs.get("budget_id") == "budget-1"
+
+        asyncio.run(_run())
+
+    @pytest.mark.skipif(not HAS_LITELLM, reason="Enterprise package not installed - LiteLLM not available")
+    def test_soft_limit_hook_skipped_when_no_budget_id(self):
+        """When budget_id is None, the hook is a no-op (no task, no error)."""
+        mock_customer = CustomerInfo(
+            user_id="test-user",
+            spend=90.0,
+            litellm_budget_table=BudgetTable(
+                budget_id="budget-1", soft_budget=80.0, max_budget=200.0, budget_duration="30d"
+            ),
+        )
+        mock_service = MagicMock()
+        mock_service._get_cached_customer.return_value = mock_customer
+
+        with (
+            patch(
+                "codemie.enterprise.litellm.dependencies.get_litellm_service_or_none",
+                return_value=mock_service,
+            ),
+            patch("codemie.service.monitoring.base_monitoring_service.send_log_metric"),
+        ):
+            from codemie.enterprise.litellm.dependencies import check_user_budget
+
+            result = check_user_budget("test-user", budget_id=None, user_id="u1")
+
+        assert result is mock_customer

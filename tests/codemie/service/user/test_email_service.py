@@ -261,3 +261,94 @@ class TestEmailServiceSingleton:
 
         # Assert
         assert result is True
+
+
+class TestBudgetSoftLimitNotificationEmail:
+    """EPMCDME-13959: budget soft-limit email notification."""
+
+    @pytest.mark.asyncio
+    async def test_send_budget_soft_limit_notification_calls_send_email(self):
+        svc = EmailService()
+        with patch.object(svc, "send_email", new=AsyncMock(return_value=True)) as m:
+            ok = await svc.send_budget_soft_limit_notification(
+                email="owner@example.com",
+                budget_name="Platform",
+                budget_id="platform",
+                current_spend=85.0,
+                soft_limit=80.0,
+            )
+
+        assert ok is True
+        m.assert_awaited_once()
+        # Positional args: (to, subject, html_body)
+        call_args, _ = m.call_args
+        to, subject, body = call_args
+        assert to == "owner@example.com"
+        assert "Platform" in subject
+        assert "soft limit" in subject.lower()
+        assert "platform" in body
+        assert "85" in body
+        assert "80" in body
+
+    @pytest.mark.asyncio
+    async def test_send_budget_soft_limit_notification_propagates_smtp_errors(self):
+        svc = EmailService()
+        with patch.object(svc, "send_email", new=AsyncMock(side_effect=RuntimeError("smtp down"))):
+            with pytest.raises(RuntimeError):
+                await svc.send_budget_soft_limit_notification(
+                    email="owner@example.com",
+                    budget_name="Platform",
+                    budget_id="platform",
+                    current_spend=85.0,
+                    soft_limit=80.0,
+                )
+
+    @pytest.mark.asyncio
+    async def test_html_special_chars_in_budget_name_are_escaped(self):
+        """CR-003: admin-controlled budget_name must be HTML-escaped in the email body."""
+        svc = EmailService()
+        with patch.object(svc, "send_email", new=AsyncMock(return_value=True)) as m:
+            await svc.send_budget_soft_limit_notification(
+                email="owner@example.com",
+                budget_name="</p><script>alert(1)</script><p>",
+                budget_id="platform",
+                current_spend=85.0,
+                soft_limit=80.0,
+            )
+        (_, _, body), _ = m.call_args
+        # Raw payload must NOT appear in the body.
+        assert "<script>alert(1)</script>" not in body
+        # Escaped form MUST appear.
+        assert "&lt;script&gt;alert(1)&lt;/script&gt;" in body
+
+    @pytest.mark.asyncio
+    async def test_html_special_chars_in_budget_id_are_escaped(self):
+        """CR-003: budget_id is also admin-controlled — must be escaped in the body."""
+        svc = EmailService()
+        with patch.object(svc, "send_email", new=AsyncMock(return_value=True)) as m:
+            await svc.send_budget_soft_limit_notification(
+                email="owner@example.com",
+                budget_name="Platform",
+                budget_id="p<x>",
+                current_spend=85.0,
+                soft_limit=80.0,
+            )
+        (_, _, body), _ = m.call_args
+        assert "p<x>" not in body
+        assert "p&lt;x&gt;" in body
+
+    @pytest.mark.asyncio
+    async def test_crlf_in_budget_name_is_stripped_from_subject(self):
+        """CR-004: CR/LF must be stripped from the Subject header to prevent MIME header smuggling."""
+        svc = EmailService()
+        with patch.object(svc, "send_email", new=AsyncMock(return_value=True)) as m:
+            await svc.send_budget_soft_limit_notification(
+                email="owner@example.com",
+                budget_name="Attack\r\nBcc: attacker@evil.com",
+                budget_id="platform",
+                current_spend=85.0,
+                soft_limit=80.0,
+            )
+        (_, subject, _), _ = m.call_args
+        assert "\r" not in subject
+        assert "\n" not in subject

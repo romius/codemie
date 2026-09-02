@@ -18,7 +18,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 
 from codemie.clients.postgres import get_async_session
 from codemie.configs.budget_config import budget_config
@@ -55,6 +55,14 @@ class BudgetCreateRequest(BaseModel):
     max_budget: float = Field(gt=0)
     budget_duration: str = Field(pattern=r"^\d+[dhm]$", description="e.g. '30d'")
     budget_category: BudgetCategory
+    notification_owner_email: Optional[EmailStr] = Field(
+        default=None,
+        description="Email to notify when the soft limit is reached. May be a group alias.",
+    )
+    soft_limit_notify_once: bool = Field(
+        default=False,
+        description="When true the soft-limit notification fires only once per budget edit cycle (no repeats).",
+    )
 
 
 class BudgetUpdateRequest(BaseModel):
@@ -66,6 +74,8 @@ class BudgetUpdateRequest(BaseModel):
     max_budget: Optional[float] = Field(default=None, gt=0)
     budget_duration: Optional[str] = Field(default=None, pattern=r"^\d+[dhm]$")
     budget_category: Optional[BudgetCategory] = None
+    notification_owner_email: Optional[EmailStr] = Field(default=None)
+    soft_limit_notify_once: Optional[bool] = Field(default=None)
 
 
 class BudgetResponse(BaseModel):
@@ -81,6 +91,7 @@ class BudgetResponse(BaseModel):
     created_at: datetime
     updated_at: Optional[datetime]
     is_preconfigured: bool = False
+    notification_owner_email: Optional[str] = None
 
     model_config = {"from_attributes": True}
 

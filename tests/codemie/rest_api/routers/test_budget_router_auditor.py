@@ -78,6 +78,10 @@ class TestBudgetRouterAuditor:
         fake_budget.created_by = "admin"
         fake_budget.created_at = datetime(2026, 1, 1)
         fake_budget.updated_at = None
+        # BudgetResponse is built with from_attributes, so every response field
+        # must be set explicitly: an unset attribute on a MagicMock resolves to
+        # a child mock and fails validation.
+        fake_budget.notification_owner_email = None
         mock_service.get_budget = AsyncMock(return_value=fake_budget)
 
         auditor = _make_auditor()

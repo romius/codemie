@@ -92,6 +92,12 @@ class Budget(SQLModel, table=True):
         foreign_key=BUDGET_ID_FOREIGN_KEY,
     )
     owner_user_id: Optional[str] = Field(default=None, nullable=True, max_length=36, foreign_key=USER_ID_FOREIGN_KEY)
+    notification_owner_email: Optional[str] = Field(default=None, nullable=True, max_length=320)
+    soft_limit_notify_once: bool = Field(default=False, nullable=False, sa_column_kwargs={"server_default": "false"})
+    soft_limit_notified_at: Optional[datetime] = Field(
+        sa_column=Column(TIMESTAMP(timezone=True), nullable=True),
+        default=None,
+    )
     project_name: Optional[str] = Field(
         default=None, nullable=True, max_length=100, foreign_key=APPLICATION_ID_FOREIGN_KEY
     )

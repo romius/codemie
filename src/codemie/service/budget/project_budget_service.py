@@ -1804,6 +1804,8 @@ class ProjectBudgetService:
                 budget_duration=data.budget_duration,
                 budget_category=cat_key,
                 created_by=actor_id,
+                notification_owner_email=getattr(data, "notification_owner_email", None),
+                soft_limit_notify_once=getattr(data, "soft_limit_notify_once", False),
             )
             budget = await budget_repository.insert(session, budget)
 
@@ -1898,6 +1900,64 @@ class ProjectBudgetService:
         groups = await project_budget_group_repository.list_by_project(session, project_name)
         return [await self._load_group_full_result(session, g) for g in groups]
 
+    @staticmethod
+    def _collect_updated_group_fields(data: "ProjectBudgetGroupUpdateRequest") -> list[str]:
+        return sorted(
+            f
+            for f in (
+                "name",
+                "description",
+                "budget_duration",
+                "total_amount",
+                "categories",
+                "notification_owner_email",
+                "soft_limit_notify_once",
+            )
+            if getattr(data, f, None) is not None
+        )
+
+    @staticmethod
+    def _has_group_notification_update(data: "ProjectBudgetGroupUpdateRequest") -> bool:
+        return (
+            getattr(data, "notification_owner_email", None) is not None
+            or getattr(data, "soft_limit_notify_once", None) is not None
+        )
+
+    async def _apply_group_notification_updates(
+        self,
+        session: AsyncSession,
+        data: "ProjectBudgetGroupUpdateRequest",
+        current_result: ProjectBudgetGroupFullResult,
+    ) -> None:
+        notif_fields: dict = {}
+        if data.notification_owner_email is not None:
+            notif_fields["notification_owner_email"] = data.notification_owner_email
+        if data.soft_limit_notify_once is not None:
+            notif_fields["soft_limit_notify_once"] = data.soft_limit_notify_once
+        for cat_result in current_result.categories:
+            await budget_repository.update(session, cat_result.budget.budget_id, notif_fields)
+
+    @staticmethod
+    def _effective_group_notification_settings(
+        data: "ProjectBudgetGroupUpdateRequest",
+        first_budget: Budget | None,
+    ) -> tuple[str | None, bool]:
+        if getattr(data, "notification_owner_email", None) is not None:
+            notif_email: str | None = data.notification_owner_email
+        elif first_budget is not None:
+            notif_email = first_budget.notification_owner_email
+        else:
+            notif_email = None
+
+        if getattr(data, "soft_limit_notify_once", None) is not None:
+            notify_once: bool = data.soft_limit_notify_once
+        elif first_budget is not None:
+            notify_once = first_budget.soft_limit_notify_once
+        else:
+            notify_once = False
+
+        return notif_email, notify_once
+
     async def update_project_budget_group(
         self,
         session: AsyncSession,
@@ -1914,15 +1974,11 @@ class ProjectBudgetService:
         if group is None or group.deleted_at is not None:
             raise ExtendedHTTPException(code=404, message=f"Project budget group not found: {group_id}")
 
-        updated_fields = sorted(
-            field
-            for field in ("name", "description", "budget_duration", "total_amount", "categories")
-            if getattr(data, field, None) is not None
-        )
-
+        updated_fields = self._collect_updated_group_fields(data)
         await self._update_group_scalar_fields(session, group_id, data)
 
-        if data.categories is None and data.total_amount is None:
+        has_notification_update = self._has_group_notification_update(data)
+        if data.categories is None and data.total_amount is None and not has_notification_update:
             logger.info(
                 f"budget_event=project_budget_group_update_completed component=project_budget_service "
                 f"project_name={group.project_name!r} group_id={group_id!r} "
@@ -1934,13 +1990,36 @@ class ProjectBudgetService:
         current_by_cat: dict[str, ProjectBudgetGroupCategoryResult] = {
             r.assignment.budget_category: r for r in current_result.categories
         }
+
+        if has_notification_update:
+            await self._apply_group_notification_updates(session, data, current_result)
+
+        first_budget = current_result.categories[0].budget if current_result.categories else None
+        eff_notif_email, eff_notify_once = self._effective_group_notification_settings(data, first_budget)
         eff_total = data.total_amount if data.total_amount is not None else current_result.total_amount
         eff_duration = data.budget_duration if data.budget_duration is not None else group.budget_duration
+
+        if data.categories is None and data.total_amount is None:
+            # Notification-only update — return after applying the bulk update above.
+            logger.info(
+                f"budget_event=project_budget_group_update_completed component=project_budget_service "
+                f"project_name={group.project_name!r} group_id={group_id!r} "
+                f"updated_fields={updated_fields!r} actor_id={actor_id!r} domain=budget_management"
+            )
+            return await self._load_group_full_result(session, group)
 
         if data.categories is not None:
             self._validate_group_categories(data.categories, eff_total)
             await self._update_group_categories(
-                session, group, data.categories, current_by_cat, eff_total, eff_duration, actor_id
+                session,
+                group,
+                data.categories,
+                current_by_cat,
+                eff_total,
+                eff_duration,
+                actor_id,
+                notification_owner_email=eff_notif_email,
+                soft_limit_notify_once=eff_notify_once,
             )
 
         await session.refresh(group)
@@ -1997,6 +2076,8 @@ class ProjectBudgetService:
         eff_total: float,
         eff_duration: str,
         actor_id: str,
+        notification_owner_email: str | None = None,
+        soft_limit_notify_once: bool = False,
     ) -> None:
         """Process per-category updates: delete (pct=0), update existing, or create new."""
         from codemie.service.settings.settings import SettingsService
@@ -2030,6 +2111,8 @@ class ProjectBudgetService:
                     provider,
                     actor_id,
                     enforce_limit=enforce_limit,
+                    notification_owner_email=notification_owner_email,
+                    soft_limit_notify_once=soft_limit_notify_once,
                 )
 
     @staticmethod
@@ -2072,6 +2155,8 @@ class ProjectBudgetService:
         provider: Any,
         actor_id: str,
         enforce_limit: bool = True,
+        notification_owner_email: str | None = None,
+        soft_limit_notify_once: bool = False,
     ) -> None:
         """Create a brand-new budget + assignment for a category added to an existing group."""
         budget_id = f"{group.project_name}-{cat_key}-{uuid.uuid4().hex[:8]}"
@@ -2085,6 +2170,8 @@ class ProjectBudgetService:
             budget_duration=eff_duration,
             budget_category=cat_key,
             created_by=actor_id,
+            notification_owner_email=notification_owner_email,
+            soft_limit_notify_once=soft_limit_notify_once,
         )
         budget = await budget_repository.insert(session, budget)
         assignment = ProjectBudgetAssignment(

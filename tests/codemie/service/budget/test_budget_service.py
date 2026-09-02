@@ -934,3 +934,271 @@ async def test_reset_user_budget_spending_rolls_back_session_on_marker_failure()
         )
 
     session.rollback.assert_awaited_once()
+
+
+class TestBudgetModelNotificationFields:
+    def test_budget_carries_notification_fields(self):
+        now = datetime(2026, 8, 14, tzinfo=timezone.utc)
+        b = Budget(
+            budget_id="b1",
+            name="B1",
+            soft_budget=100.0,
+            max_budget=200.0,
+            budget_duration="30d",
+            budget_category=BudgetCategory.PLATFORM.value,
+            created_by="alice",
+            notification_owner_email="owner@example.com",
+            soft_limit_notified_at=now,
+        )
+        assert b.notification_owner_email == "owner@example.com"
+        assert b.soft_limit_notified_at == now
+
+    def test_budget_notification_fields_default_none(self):
+        b = Budget(
+            budget_id="b2",
+            name="B2",
+            soft_budget=100.0,
+            max_budget=200.0,
+            budget_duration="30d",
+            budget_category=BudgetCategory.PLATFORM.value,
+            created_by="alice",
+        )
+        assert b.notification_owner_email is None
+        assert b.soft_limit_notified_at is None
+
+
+# ---------------------------------------------------------------------------
+# TestNotificationOwnerPersistence + TestSoftLimitNotifiedAtReset (EPMCDME-13959)
+# ---------------------------------------------------------------------------
+
+
+class TestBuildUpdateFieldsNotificationOwner:
+    """Focused unit tests for the _build_update_fields helper + dedup reset."""
+
+    def test_build_update_fields_includes_notification_owner_email_when_provided(self):
+        from codemie.rest_api.routers.budget_router import BudgetUpdateRequest
+
+        data = BudgetUpdateRequest(notification_owner_email="team@example.com")
+        fields = BudgetService._build_update_fields(data, new_category=BudgetCategory.PLATFORM.value)
+        assert fields.get("notification_owner_email") == "team@example.com"
+
+    def test_build_update_fields_includes_explicit_null_notification_owner_email(self):
+        from codemie.rest_api.routers.budget_router import BudgetUpdateRequest
+
+        data = BudgetUpdateRequest(notification_owner_email=None)
+        # `notification_owner_email` was explicitly set (even to None) → in model_fields_set
+        assert "notification_owner_email" in data.model_fields_set
+        fields = BudgetService._build_update_fields(data, new_category=BudgetCategory.PLATFORM.value)
+        assert "notification_owner_email" in fields
+        assert fields["notification_owner_email"] is None
+
+    def test_build_update_fields_omits_notification_owner_email_when_not_provided(self):
+        from codemie.rest_api.routers.budget_router import BudgetUpdateRequest
+
+        data = BudgetUpdateRequest(name="new-name")
+        fields = BudgetService._build_update_fields(data, new_category=BudgetCategory.PLATFORM.value)
+        assert "notification_owner_email" not in fields
+
+
+class TestCreateBudgetPersistsNotificationOwner:
+    @pytest.mark.asyncio
+    async def test_create_budget_passes_notification_owner_email_to_model(self):
+        """The Budget row constructed in create_budget must carry notification_owner_email."""
+        from codemie.rest_api.routers.budget_router import BudgetCreateRequest
+
+        service = _make_service()
+        request = BudgetCreateRequest(
+            budget_id="notify-b1",
+            name="Notify B1",
+            soft_budget=10.0,
+            max_budget=100.0,
+            budget_duration="30d",
+            budget_category=BudgetCategory.PLATFORM,
+            notification_owner_email="owner@example.com",
+        )
+        captured: dict[str, Budget] = {}
+
+        async def _fake_insert(session, budget):
+            captured["budget"] = budget
+            return budget
+
+        provider_state = SimpleNamespace(
+            provider="litellm",
+            provider_budget_ref="notify-b1",
+            budget_reset_at=None,
+            sync_status="ok",
+        )
+        fake_provider = MagicMock()
+        fake_provider.provider_name = "litellm"
+        fake_provider.ensure_global_budget = AsyncMock(return_value=provider_state)
+
+        with (
+            patch("codemie.service.budget.budget_service.budget_repository") as repo,
+            patch(
+                "codemie.service.budget.budget_service.get_active_provider",
+                return_value=fake_provider,
+            ),
+            patch(
+                "codemie.service.budget.budget_service.activity_event_repository.async_insert",
+                new=AsyncMock(),
+            ),
+        ):
+            repo.get_by_id = AsyncMock(return_value=None)
+            repo.get_by_name = AsyncMock(return_value=None)
+            repo.insert = AsyncMock(side_effect=_fake_insert)
+            repo.update = AsyncMock(side_effect=lambda s, bid, fields: captured["budget"])
+
+            await service.create_budget(session=AsyncMock(), data=request, actor_id="admin-1")
+
+        assert captured["budget"].notification_owner_email == "owner@example.com"
+
+
+class TestUpdateBudgetResetsSoftLimitNotifiedAt:
+    """update_budget must clear soft_limit_notified_at when soft_budget or owner email change."""
+
+    @pytest.mark.asyncio
+    async def test_soft_budget_change_clears_notified_at(self):
+        from codemie.rest_api.routers.budget_router import BudgetUpdateRequest
+
+        service = _make_service()
+        existing = _make_budget(
+            soft_budget=50.0,
+            soft_limit_notified_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        )
+        captured: dict = {"calls": []}
+
+        async def _fake_repo_update(session, budget_id, fields):
+            captured["calls"].append(dict(fields))
+            for k, v in fields.items():
+                setattr(existing, k, v)
+            return existing
+
+        provider_state = SimpleNamespace(
+            provider="litellm",
+            provider_budget_ref=existing.budget_id,
+            budget_reset_at=None,
+            sync_status="ok",
+        )
+        fake_provider = MagicMock()
+        fake_provider.provider_name = "litellm"
+        fake_provider.ensure_global_budget = AsyncMock(return_value=provider_state)
+        fake_provider.update_global_budget = AsyncMock(return_value=provider_state)
+
+        with (
+            patch("codemie.service.budget.budget_service.budget_repository") as repo,
+            patch(
+                "codemie.service.budget.budget_service.get_active_provider",
+                return_value=fake_provider,
+            ),
+            patch(
+                "codemie.service.budget.budget_service.activity_event_repository.async_insert",
+                new=AsyncMock(),
+            ),
+            patch(
+                "codemie.service.budget.budget_service.budget_config.predefined_budgets",
+                new=[],
+            ),
+        ):
+            repo.get_by_id = AsyncMock(return_value=existing)
+            repo.get_by_name = AsyncMock(return_value=None)
+            repo.update = AsyncMock(side_effect=_fake_repo_update)
+            repo.count_assignments = AsyncMock(return_value=0)
+
+            await service.update_budget(
+                session=AsyncMock(),
+                budget_id=existing.budget_id,
+                data=BudgetUpdateRequest(soft_budget=75.0),
+                actor_id="admin-1",
+            )
+
+        # First repo.update call is the main update payload; second is provider_metadata sync.
+        primary = captured["calls"][0]
+        assert "soft_limit_notified_at" in primary
+        assert primary["soft_limit_notified_at"] is None
+
+    @pytest.mark.asyncio
+    async def test_notification_owner_email_change_clears_notified_at(self):
+        from codemie.rest_api.routers.budget_router import BudgetUpdateRequest
+
+        service = _make_service()
+        existing = _make_budget(
+            notification_owner_email="old@example.com",
+            soft_limit_notified_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        )
+        captured: dict = {"calls": []}
+
+        async def _fake_repo_update(session, budget_id, fields):
+            captured["calls"].append(dict(fields))
+            for k, v in fields.items():
+                setattr(existing, k, v)
+            return existing
+
+        with (
+            patch("codemie.service.budget.budget_service.budget_repository") as repo,
+            patch(
+                "codemie.service.budget.budget_service.activity_event_repository.async_insert",
+                new=AsyncMock(),
+            ),
+            patch(
+                "codemie.service.budget.budget_service.budget_config.predefined_budgets",
+                new=[],
+            ),
+        ):
+            repo.get_by_id = AsyncMock(return_value=existing)
+            repo.get_by_name = AsyncMock(return_value=None)
+            repo.update = AsyncMock(side_effect=_fake_repo_update)
+            repo.count_assignments = AsyncMock(return_value=0)
+
+            await service.update_budget(
+                session=AsyncMock(),
+                budget_id=existing.budget_id,
+                data=BudgetUpdateRequest(notification_owner_email="new@example.com"),
+                actor_id="admin-1",
+            )
+
+        primary = captured["calls"][0]
+        assert primary.get("notification_owner_email") == "new@example.com"
+        assert "soft_limit_notified_at" in primary
+        assert primary["soft_limit_notified_at"] is None
+
+    @pytest.mark.asyncio
+    async def test_unrelated_change_preserves_notified_at(self):
+        from codemie.rest_api.routers.budget_router import BudgetUpdateRequest
+
+        service = _make_service()
+        existing = _make_budget(
+            soft_limit_notified_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        )
+        captured: dict = {"calls": []}
+
+        async def _fake_repo_update(session, budget_id, fields):
+            captured["calls"].append(dict(fields))
+            for k, v in fields.items():
+                setattr(existing, k, v)
+            return existing
+
+        with (
+            patch("codemie.service.budget.budget_service.budget_repository") as repo,
+            patch(
+                "codemie.service.budget.budget_service.activity_event_repository.async_insert",
+                new=AsyncMock(),
+            ),
+            patch(
+                "codemie.service.budget.budget_service.budget_config.predefined_budgets",
+                new=[],
+            ),
+        ):
+            repo.get_by_id = AsyncMock(return_value=existing)
+            repo.get_by_name = AsyncMock(return_value=None)
+            repo.update = AsyncMock(side_effect=_fake_repo_update)
+            repo.count_assignments = AsyncMock(return_value=0)
+
+            await service.update_budget(
+                session=AsyncMock(),
+                budget_id=existing.budget_id,
+                data=BudgetUpdateRequest(description="A new description"),
+                actor_id="admin-1",
+            )
+
+        primary = captured["calls"][0]
+        assert "soft_limit_notified_at" not in primary
