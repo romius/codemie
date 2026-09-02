@@ -1,0 +1,35 @@
+{{- if .Values.hpa.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "codemie.fullname" . }}
+  labels:
+    {{- include "codemie.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    {{- if .Values.argoRollout.enabled }}
+    apiVersion: argoproj.io/v1alpha1
+    kind: Rollout
+    {{- else }}
+    apiVersion: apps/v1
+    kind: Deployment
+    {{- end }}
+    name: {{ include "codemie.fullname" . }}
+  minReplicas: {{ .Values.hpa.minReplicas }}
+  maxReplicas: {{ .Values.hpa.maxReplicas }}
+  metrics:
+  # Utilization is measured against the codemie container's own CPU request,
+  # so sidecars do not dilute the signal.
+  - type: ContainerResource
+    containerResource:
+      name: cpu
+      container: {{ .Chart.Name }}
+      target:
+        type: Utilization
+        averageUtilization: {{ .Values.hpa.targetCPUUtilizationPercentage }}
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: {{ .Values.hpa.scaleUpStabilizationWindowSeconds }}
+    scaleDown:
+      stabilizationWindowSeconds: {{ .Values.hpa.scaleDownStabilizationWindowSeconds }}
+{{- end }}

@@ -49,6 +49,12 @@ A Helm chart for AI/Run API
 | features.tools.code_executor.rbac.namespace | string | `""` | Specify name to use a separate namespace for scheduling code_executor pods. Empty means the same namespace as CodeMie |
 | fullnameOverride | string | `""` |  |
 | hostAliases | list | `[]` | Mapping between IP and hostnames that will be injected as entries in the pod's hosts files |
+| hpa.enabled | bool | `false` | Enable the HorizontalPodAutoscaler for the codemie-api rollout/deployment |
+| hpa.maxReplicas | int | `2` | Maximum number of codemie-api pods |
+| hpa.minReplicas | int | `1` | Minimum number of codemie-api pods |
+| hpa.scaleDownStabilizationWindowSeconds | int | `900` | Time window CPU must stay below target before pods are removed |
+| hpa.scaleUpStabilizationWindowSeconds | int | `60` | Time window the CPU target must be exceeded before pods are added |
+| hpa.targetCPUUtilizationPercentage | int | `70` | Target CPU utilization of the codemie container, as a percentage of its CPU request |
 | image.pullPolicy | string | `"IfNotPresent"` | Image pull policy for the AI/Run API |
 | image.repository | string | `""` | Repository to use for the AI/Run API |
 | image.tag | string | `""` | Tag to use for the AI/Run API. Overrides the image tag whose default is the chart appVersion |

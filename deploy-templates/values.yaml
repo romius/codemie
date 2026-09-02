@@ -490,6 +490,21 @@ readinessProbe:
   # -- Number of seconds after which the probe times out
   timeoutSeconds: 1
 
+## HPA for the main codemie-api workload
+hpa:
+  # -- Enable the HorizontalPodAutoscaler for the codemie-api rollout/deployment
+  enabled: false
+  # -- Minimum number of codemie-api pods
+  minReplicas: 1
+  # -- Maximum number of codemie-api pods
+  maxReplicas: 2
+  # -- Target CPU utilization of the codemie container, as a percentage of its CPU request
+  targetCPUUtilizationPercentage: 70
+  # -- Time window the CPU target must be exceeded before pods are added
+  scaleUpStabilizationWindowSeconds: 60
+  # -- Time window CPU must stay below target before pods are removed
+  scaleDownStabilizationWindowSeconds: 900
+
 # -- Resource limits and requests for the AI/Run API pods
 resources:
   limits:
