@@ -513,10 +513,8 @@ def _resolve_tracking_identity(
 
 
 def _is_cli_request(request_info: dict) -> bool:
-    return bool(request_info.get(CODEMIE_CLI)) or request_info.get(CLIENT_TYPE) in {
-        "codemie-cli",
-        "codemie_cli",
-    }
+    client_type = (request_info.get(CLIENT_TYPE) or "").lower()
+    return client_type in {"codemie-cli", "codemie_cli"}
 
 
 def _resolve_cli_tracking_identity(
