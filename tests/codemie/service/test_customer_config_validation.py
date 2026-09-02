@@ -17,6 +17,7 @@ import pytest
 from codemie.core.exceptions import ExtendedHTTPException
 from codemie.service.customer_config_declarations import (
     CHAT_DISCLAIMER,
+    RELEASE_NOTES_RECENT_COUNT,
     FieldDeclaration,
     FieldType,
     SettingDeclaration,
@@ -198,3 +199,33 @@ def test_an_empty_optional_value_skips_the_pattern_check():
     )
 
     assert validate_and_sanitize(declaration, {"url": ""})["url"] == ""
+
+
+@pytest.mark.parametrize("value", ["0", "01", "1.5", "-1", "abc", "5 "])
+def test_rejects_a_non_positive_integer_recent_release_count(value):
+    with pytest.raises(ExtendedHTTPException) as error:
+        validate_and_sanitize(RELEASE_NOTES_RECENT_COUNT, {"recentReleaseCount": value})
+
+    assert error.value.code == 400
+    assert "positive integer" in str(error.value.details)
+
+
+@pytest.mark.parametrize("value", ["1", "10", "999"])
+def test_accepts_a_positive_integer_recent_release_count(value):
+    result = validate_and_sanitize(RELEASE_NOTES_RECENT_COUNT, {"recentReleaseCount": value})
+
+    assert result == {"recentReleaseCount": value}
+
+
+def test_recent_release_count_is_optional_and_empty_skips_the_pattern():
+    result = validate_and_sanitize(RELEASE_NOTES_RECENT_COUNT, {"recentReleaseCount": ""})
+
+    assert result == {"recentReleaseCount": ""}
+
+
+def test_rejects_a_recent_release_count_longer_than_its_max_length():
+    with pytest.raises(ExtendedHTTPException) as error:
+        validate_and_sanitize(RELEASE_NOTES_RECENT_COUNT, {"recentReleaseCount": "99999"})
+
+    assert error.value.code == 400
+    assert "exceeds its limit" in str(error.value.details)

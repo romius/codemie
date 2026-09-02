@@ -253,6 +253,11 @@ components:
       enabled: false
       text: ""
 
+  - id: "releaseNotesRecentCount"
+    settings:
+      enabled: true
+      recentReleaseCount: "10"
+
   - id: "bannerMessage"
     settings:
       enabled: false

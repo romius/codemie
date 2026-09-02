@@ -126,7 +126,23 @@ CHAT_DISCLAIMER = SettingDeclaration(
     ],
 )
 
-DECLARATIONS: tuple[SettingDeclaration, ...] = (CHAT_DISCLAIMER,)
+RELEASE_NOTES_RECENT_COUNT = SettingDeclaration(
+    component_id="releaseNotesRecentCount",
+    label="Release Notes: Recent releases count",
+    description="Number of releases shown before archiving into accordion groups.",
+    fields=[
+        FieldDeclaration(
+            name="recentReleaseCount",
+            type=FieldType.INPUT,
+            label="Recent release count",
+            max_length=4,
+            pattern=r"^[1-9][0-9]*$",
+            pattern_message="Must be a positive integer",
+        ),
+    ],
+)
+
+DECLARATIONS: tuple[SettingDeclaration, ...] = (CHAT_DISCLAIMER, RELEASE_NOTES_RECENT_COUNT)
 
 _BY_COMPONENT_ID = {declaration.component_id: declaration for declaration in DECLARATIONS}
 _BY_KEY = {declaration.key: declaration for declaration in DECLARATIONS}

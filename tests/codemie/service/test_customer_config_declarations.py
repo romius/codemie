@@ -90,3 +90,21 @@ def test_every_declaration_has_a_unique_key():
     keys = [declaration.key for declaration in DECLARATIONS]
 
     assert len(keys) == len(set(keys))
+
+
+def test_release_notes_recent_count_is_declared():
+    declaration = by_component_id("releaseNotesRecentCount")
+
+    assert declaration is not None
+    field_names = [field.name for field in declaration.fields]
+    assert field_names == ["recentReleaseCount"]
+    assert declaration.key == "CUSTOMER_CONFIG__RELEASE_NOTES_RECENT_COUNT"
+
+
+def test_release_notes_recent_count_field_is_a_digit_only_input():
+    declaration = by_component_id("releaseNotesRecentCount")
+    count_field = next(field for field in declaration.fields if field.name == "recentReleaseCount")
+
+    assert count_field.type is FieldType.INPUT
+    assert count_field.required is False
+    assert count_field.pattern == r"^[1-9][0-9]*$"

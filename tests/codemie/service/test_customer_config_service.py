@@ -295,3 +295,15 @@ async def test_admin_listing_reads_through_so_the_admin_sees_their_own_write(pat
     disclaimer = next(s for s in settings if s["component_id"] == "chatDisclaimer")
     assert disclaimer["overridden"] is True
     assert disclaimer["value"]["text"] == "just saved"
+
+
+def test_release_notes_recent_count_default_is_declared_enabled_with_a_value():
+    """The reference deployment config carries a tunable default value; enabled: true is
+    structural (ComponentSetting.enabled has no default), not a feature toggle here."""
+    from codemie.configs.customer_config import customer_config as real_config
+
+    component = next((c for c in real_config.components if c.id == "releaseNotesRecentCount"), None)
+
+    assert component is not None
+    assert component.settings.enabled is True
+    assert getattr(component.settings, "recentReleaseCount", None) == "10"

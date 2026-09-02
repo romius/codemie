@@ -1,0 +1,35 @@
+{
+  "decision": "request-changes",
+  "rationale": "All three lenses ran to completion with full evidence. Acceptance lens confirmed all 9 spec criteria met (declaration shape, DECLARATIONS registration, YAML entry, pattern semantics, and every test called out in the spec's Testing section). One actionable finding survived triage: the new recentReleaseCount field omits max_length (unlike its CHAT_DISCLAIMER sibling, which sets max_length=1000), so an unbounded pattern-valid digit string bypasses clean 400 validation and can fail at the DynamicConfig.value DB column (max_length=10000) with an unhandled error. 5 other lens-raised items were dismissed: two duplicate reports of the optional/empty-override-skips-pattern behavior (pre-existing shared _validate_text semantics already covered by an existing precedent test, not introduced by this diff), the enabled:true default (matches the documented mcpAuthTimeoutSeconds precedent cited in the spec's Background section), a tautological declaration test, and a service-test-file-placement nitpick (functionally correct, just imports the config singleton directly rather than through a service call).",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    {"kind": "spec", "item": "RELEASE_NOTES_RECENT_COUNT declaration shape matches spec (component_id, label, description, single INPUT field with pattern/pattern_message)", "status": "pass", "notes": "Verified verbatim in src/codemie/service/customer_config_declarations.py"},
+    {"kind": "spec", "item": "DECLARATIONS tuple registers (CHAT_DISCLAIMER, RELEASE_NOTES_RECENT_COUNT)", "status": "pass", "notes": "Matches spec exactly"},
+    {"kind": "spec", "item": "YAML entry adds releaseNotesRecentCount with enabled: true and recentReleaseCount: \"10\"", "status": "pass", "notes": "Confirmed in config/customer/customer-config.yaml"},
+    {"kind": "spec", "item": "Pattern validation semantics: positive integer, no leading zero, empty/optional skips pattern", "status": "pass", "notes": "Verified against _validate_text; required defaults False so empty skips pattern check, matching switchless-default design"},
+    {"kind": "spec", "item": "Testing: build_key round-trip covered", "status": "pass", "notes": "test_release_notes_recent_count_is_declared asserts declaration.key == CUSTOMER_CONFIG__RELEASE_NOTES_RECENT_COUNT"},
+    {"kind": "spec", "item": "Testing: pattern rejection of non-digit / zero-leading input covered", "status": "pass", "notes": "test_rejects_a_non_positive_integer_recent_release_count parametrized with 0, 01, 1.5, -1, abc, '5 '"},
+    {"kind": "spec", "item": "Testing: YAML component resolves with enabled: true and default value pre-override", "status": "pass", "notes": "test_release_notes_recent_count_default_is_declared_enabled_with_a_value asserts against the real customer_config singleton"},
+    {"kind": "spec", "item": "Testing: update any test hardcoding single-declaration count/list", "status": "pass", "notes": "Verified no other test hardcodes the DECLARATIONS count against the real registry; correctly left untouched"},
+    {"kind": "spec", "item": "Out of scope: no frontend changes, no production customer-config rollout", "status": "pass", "notes": "Diff touches only backend declarations, YAML default, and tests"}
+  ],
+  "standards_review": [
+    {"kind": "commit-format", "status": "pass", "notes": "058a0331e: 'EPMCDME-14295: Add releaseNotesRecentCount as a dynamic customer-config setting' matches EPMCDME-####: Description"},
+    {"kind": "code-quality", "status": "pass", "notes": "No untyped new function signatures; FieldDeclaration/SettingDeclaration construction follows existing patterns; no new source files requiring license headers"},
+    {"kind": "security", "status": "pass", "notes": "No auth, secret, or untrusted-input-parsing changes; admin-only PATCH path unaffected. The unbounded-length gap (CR-001) is a robustness/consistency issue, not an auth or injection concern"}
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/service/customer_config_declarations.py",
+      "line": 134,
+      "title": "recentReleaseCount field has no max_length, unlike its CHAT_DISCLAIMER sibling",
+      "problem": "RELEASE_NOTES_RECENT_COUNT's recentReleaseCount FieldDeclaration does not set max_length (defaults to None), while CHAT_DISCLAIMER.text sets max_length=1000. The pattern ^[1-9][0-9]*$ bounds digit-only content but not string length, so an arbitrarily long digit string still matches and passes validate_and_sanitize.",
+      "impact": "An admin override with a very long digit string (thousands of digits) passes field validation but can then fail at the DynamicConfig.value DB column, which is capped at max_length=10000 (src/codemie/rest_api/models/dynamic_config.py:50). Instead of the intended clean 400 'Must be a positive integer' response, this surfaces as an unhandled DB-layer error, inconsistent with how every other declared field in this registry bounds input length.",
+      "recommendation": "Add a reasonable max_length to the recentReleaseCount FieldDeclaration (a handful of digits is sufficient, since the value is a small display count like 10 or 50) so oversized input is rejected by validate_and_sanitize's normal 400 path instead of reaching the DB layer."
+    }
+  ]
+}
