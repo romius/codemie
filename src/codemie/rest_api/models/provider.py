@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from pydantic import BaseModel, Field, HttpUrl, AfterValidator, ConfigDict, model_validator
-from typing import List, Dict, Optional, Annotated, Self, Union
+from typing import Annotated, Dict, List, Optional, Self, Union
 from enum import auto, StrEnum
 from fastapi.exceptions import RequestValidationError
 from uuid import uuid4
@@ -26,6 +26,9 @@ from codemie.rest_api.models.base import (
 )
 from codemie.rest_api.models.base import CamelCaseStrEnum
 from sqlmodel import Field as SQLField, Column, String, Session, select
+
+
+type JsonValue = str | int | float | bool | list | dict | None
 
 
 class ProviderConfiguration(BaseModel):
@@ -63,7 +66,7 @@ class ProviderToolkitConfigParameter(BaseModel):
     parameter_type: ParameterType = Field(..., alias="type")
     required: bool = False
     enum: Optional[List[str]] = None
-    example: Optional[str] = None
+    example: JsonValue = None
     title: Optional[str] = None
     default_value: str | None = None
 
@@ -84,7 +87,7 @@ class ProviderToolArgument(BaseModel):
     description: Optional[str] = ""
     enum: Optional[List[str]] = None
     title: Optional[str] = None
-    example: Optional[str] = None
+    example: JsonValue = None
     default_value: str | None = None
 
 
@@ -295,7 +298,7 @@ class CreateProviderRequest(BaseModel):
             errors.append(cls._create_error("name", "Provider name is required and cannot be empty"))
         if not data.get("service_location_url"):
             errors.append(cls._create_error("service_location_url", "Service location URL is required"))
-        if not data.get("configuration"):
+        if data.get("configuration") is None:
             errors.append(cls._create_error("configuration", "Provider configuration is required"))
         if not data.get("provided_toolkits"):
             errors.append(cls._create_error("provided_toolkits", "At least one toolkit must be provided"))
@@ -341,7 +344,7 @@ class ProviderDataSourceTypeSchema(BaseModel):
         enum: Optional[List[str]] = None
         multiselect_options: Optional[List[dict]] = None
         title: Optional[str] = None
-        example: Optional[str] = None
+        example: JsonValue = None
         default_value: str | None = None
 
     description: str
