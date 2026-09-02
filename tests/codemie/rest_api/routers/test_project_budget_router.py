@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+from contextlib import ExitStack, asynccontextmanager
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -415,3 +415,221 @@ async def test_project_budget_write_routes_deny_pure_auditor():
             assert exc_info.value.code == 403
 
     assert checked_routes == len(write_routes)
+
+
+# ---------------------------------------------------------------------------
+# Task 2: project admin group update access
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_update_group_project_admin_own_project_categories_only_succeeds():
+    """Project admin can update categories for a group in their own project."""
+    from codemie.rest_api.routers.project_budget_router import (
+        update_project_budget_group,
+        ProjectBudgetGroupUpdateRequest,
+        CategoryBudgetSpecUpdate,
+    )
+    from unittest.mock import AsyncMock, patch
+    from contextlib import asynccontextmanager
+
+    user = _project_admin_user(["project-alpha"])
+    group_id = "group-1"
+    payload = ProjectBudgetGroupUpdateRequest(
+        categories={"platform": CategoryBudgetSpecUpdate(pct=60.0), "cli": CategoryBudgetSpecUpdate(pct=40.0)}
+    )
+
+    group = SimpleNamespace(
+        id=group_id,
+        project_name="project-alpha",
+        deleted_at=None,
+        budget_duration="30d",
+        created_by="creator-1",
+        created_at=None,
+        updated_at=None,
+    )
+    full_result = SimpleNamespace(group=group, categories=[], total_amount=100.0, budget_duration="30d")
+    full_result.group.name = "Test Group"
+    full_result.group.description = None
+
+    mock_session = AsyncMock()
+
+    @asynccontextmanager
+    async def _session_ctx():
+        yield mock_session
+
+    with (
+        patch("codemie.rest_api.routers.project_budget_router.get_async_session", return_value=_session_ctx()),
+        patch(
+            "codemie.rest_api.routers.project_budget_router.project_budget_service.update_project_budget_group",
+            new_callable=AsyncMock,
+            return_value=full_result,
+        ),
+        patch(
+            "codemie.rest_api.routers.project_budget_router.project_budget_service.get_project_budget_group",
+            new_callable=AsyncMock,
+            return_value=full_result,
+        ),
+        patch(
+            "codemie.rest_api.routers.project_budget_router._require_budgeting_enabled",
+        ),
+    ):
+        result = await update_project_budget_group(group_id=group_id, payload=payload, user=user)
+
+    assert result is not None
+
+
+@pytest.mark.asyncio
+async def test_update_group_project_admin_non_categories_field_raises_403():
+    """Project admin is rejected when payload contains non-categories fields."""
+    from codemie.rest_api.routers.project_budget_router import (
+        update_project_budget_group,
+        ProjectBudgetGroupUpdateRequest,
+    )
+
+    from unittest.mock import AsyncMock, patch
+    from contextlib import asynccontextmanager
+
+    user = _project_admin_user(["project-alpha"])
+    payload = ProjectBudgetGroupUpdateRequest(name="new-name")
+
+    group = SimpleNamespace(id="group-1", project_name="project-alpha", deleted_at=None)
+    full_result = SimpleNamespace(group=group, categories=[], total_amount=100.0, budget_duration="30d")
+    full_result.group.name = "Test Group"
+    full_result.group.description = None
+
+    mock_session = AsyncMock()
+
+    @asynccontextmanager
+    async def _session_ctx():
+        yield mock_session
+
+    with (
+        patch("codemie.rest_api.routers.project_budget_router.get_async_session", return_value=_session_ctx()),
+        patch(
+            "codemie.rest_api.routers.project_budget_router.project_budget_service.get_project_budget_group",
+            new_callable=AsyncMock,
+            return_value=full_result,
+        ),
+        patch(
+            "codemie.rest_api.routers.project_budget_router._require_budgeting_enabled",
+        ),
+        pytest.raises(ExtendedHTTPException) as exc_info,
+    ):
+        await update_project_budget_group(group_id="group-1", payload=payload, user=user)
+    assert exc_info.value.code == 403
+
+
+# ---------------------------------------------------------------------------
+# group update write access
+# ---------------------------------------------------------------------------
+
+
+def _maintainer_user() -> User:
+    with patch.object(config, "ENV", "dev"), patch.object(config, "ENABLE_USER_MANAGEMENT", True):
+        return User(id="maint-1", username="maint@example.com", email="maint@example.com", is_maintainer=True)
+
+
+def _regular_user_for_group_write() -> User:
+    with patch.object(config, "ENV", "dev"), patch.object(config, "ENABLE_USER_MANAGEMENT", True):
+        return User(id="other-1", username="other@example.com", email="other@example.com")
+
+
+def test_ensure_allowed_budget_group_update_fields_allows_categories_for_project_admin():
+    from codemie.rest_api.routers.project_budget_router import (
+        _ensure_allowed_budget_group_update_fields,
+        ProjectBudgetGroupUpdateRequest,
+        CategoryBudgetSpecUpdate,
+    )
+
+    payload = ProjectBudgetGroupUpdateRequest(categories={"platform": CategoryBudgetSpecUpdate(pct=100.0)})
+    _ensure_allowed_budget_group_update_fields(_project_admin_user(["project-alpha"]), payload)
+
+
+@pytest.mark.parametrize(
+    "field,value", [("name", "x"), ("total_amount", 5.0), ("budget_duration", "30d"), ("description", "d")]
+)
+def test_ensure_allowed_budget_group_update_fields_rejects_restricted_fields(field, value):
+    from codemie.rest_api.routers.project_budget_router import (
+        _ensure_allowed_budget_group_update_fields,
+        ProjectBudgetGroupUpdateRequest,
+    )
+
+    payload = ProjectBudgetGroupUpdateRequest(**{field: value})
+    with pytest.raises(ExtendedHTTPException) as exc_info:
+        _ensure_allowed_budget_group_update_fields(_project_admin_user(["project-alpha"]), payload)
+    assert exc_info.value.code == 403
+
+
+def test_ensure_allowed_budget_group_update_fields_allows_any_field_for_maintainer():
+    from codemie.rest_api.routers.project_budget_router import (
+        _ensure_allowed_budget_group_update_fields,
+        ProjectBudgetGroupUpdateRequest,
+    )
+
+    payload = ProjectBudgetGroupUpdateRequest(name="new-name", total_amount=10.0)
+    _ensure_allowed_budget_group_update_fields(_maintainer_user(), payload)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "user_factory,allowed",
+    [
+        (_maintainer_user, True),
+        (_admin_user, True),
+        (lambda: _project_admin_user(["project-alpha"]), True),
+        (lambda: _project_admin_user(["project-beta"]), False),
+        (_regular_user_for_group_write, False),
+    ],
+    ids=["maintainer", "admin", "project_admin_own", "project_admin_other", "regular_user"],
+)
+async def test_update_group_write_access(user_factory, allowed):
+    """Only maintainers, admins, and the group project's own admins may update it."""
+    from codemie.rest_api.routers.project_budget_router import (
+        update_project_budget_group,
+        ProjectBudgetGroupUpdateRequest,
+        CategoryBudgetSpecUpdate,
+    )
+    from unittest.mock import AsyncMock, patch as _patch
+    from contextlib import asynccontextmanager
+
+    payload = ProjectBudgetGroupUpdateRequest(categories={"platform": CategoryBudgetSpecUpdate(pct=100.0)})
+    group = SimpleNamespace(id="group-1", project_name="project-alpha", deleted_at=None)
+    full_result = SimpleNamespace(group=group, categories=[], total_amount=100.0)
+
+    mock_session = AsyncMock()
+
+    @asynccontextmanager
+    async def _session_ctx():
+        yield mock_session
+
+    patches = (
+        _patch("codemie.rest_api.routers.project_budget_router.get_async_session", return_value=_session_ctx()),
+        _patch(
+            "codemie.rest_api.routers.project_budget_router.project_budget_service.get_project_budget_group",
+            new_callable=AsyncMock,
+            return_value=full_result,
+        ),
+        _patch(
+            "codemie.rest_api.routers.project_budget_router.project_budget_service.update_project_budget_group",
+            new_callable=AsyncMock,
+        ),
+        _patch("codemie.rest_api.routers.project_budget_router._require_budgeting_enabled"),
+        _patch("codemie.rest_api.routers.project_budget_router._build_project_budget_group_response"),
+    )
+
+    if allowed:
+        with ExitStack() as stack:
+            for pat in patches:
+                stack.enter_context(pat)
+            assert (
+                await update_project_budget_group(group_id="group-1", payload=payload, user=user_factory()) is not None
+            )
+        return
+
+    with ExitStack() as stack:
+        for pat in patches:
+            stack.enter_context(pat)
+        with pytest.raises(ExtendedHTTPException) as exc_info:
+            await update_project_budget_group(group_id="group-1", payload=payload, user=user_factory())
+    assert exc_info.value.code == 403

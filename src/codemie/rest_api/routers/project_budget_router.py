@@ -43,6 +43,8 @@ from codemie.service.budget.project_budget_service import (
 from codemie.service.settings.settings import SettingsService
 
 _DURATION_PATTERN = r"^\d+[smhd]$"
+_ACCESS_DENIED_MESSAGE = "Access denied"
+_ACCESS_DENIED_HELP = "If you believe you should have access, please contact your system administrator."
 
 router = APIRouter(
     tags=["Project Budgets"],
@@ -228,14 +230,28 @@ def _can_read_project_budget(user: User, project_name: str) -> bool:
     return project_name in (user.admin_project_names or [])
 
 
+def _ensure_allowed_budget_group_update_fields(user: User, payload: "ProjectBudgetGroupUpdateRequest") -> None:
+    """Project administrators may only change the category distribution."""
+    if user.is_maintainer:
+        return
+    restricted = sorted(set(ProjectBudgetGroupUpdateRequest.model_fields) - {"categories"})
+    if any(getattr(payload, field, None) is not None for field in restricted):
+        raise ExtendedHTTPException(
+            code=403,
+            message=_ACCESS_DENIED_MESSAGE,
+            details="Project administrators may only update the categories field.",
+            help="To change other fields, contact a system administrator.",
+        )
+
+
 def _ensure_project_budget_read_access(user: User, project_name: str) -> None:
     if _can_read_project_budget(user, project_name):
         return
     raise ExtendedHTTPException(
         code=403,
-        message="Access denied",
+        message=_ACCESS_DENIED_MESSAGE,
         details=f"You do not have permission to access project budgets for '{project_name}'.",
-        help="If you believe you should have access, please contact your system administrator.",
+        help=_ACCESS_DENIED_HELP,
     )
 
 
@@ -291,9 +307,9 @@ async def list_project_budgets(
         if not allowed_projects:
             raise ExtendedHTTPException(
                 code=403,
-                message="Access denied",
+                message=_ACCESS_DENIED_MESSAGE,
                 details="This action requires administrator, maintainer, auditor, or project administrator privileges.",
-                help="If you believe you should have access, please contact your system administrator.",
+                help=_ACCESS_DENIED_HELP,
             )
         if project_name is not None:
             _ensure_project_budget_read_access(user, project_name)
@@ -679,11 +695,20 @@ async def update_project_budget_group(
     group_id: str,
     payload: ProjectBudgetGroupUpdateRequest,
     user: User = Depends(authenticate),
-    _: None = Depends(maintainer_access_only),
 ):
     """Update a budget group in-place (total amount, duration, or category distribution)."""
     _require_budgeting_enabled()
     async with get_async_session() as session:
+        current = await project_budget_service.get_project_budget_group(session, group_id)
+        project_name = current.group.project_name
+        if not (user.is_admin_or_maintainer or project_name in (user.admin_project_names or [])):
+            raise ExtendedHTTPException(
+                code=403,
+                message=_ACCESS_DENIED_MESSAGE,
+                details=f"You do not have permission to update budget groups for '{project_name}'.",
+                help=_ACCESS_DENIED_HELP,
+            )
+        _ensure_allowed_budget_group_update_fields(user, payload)
         await project_budget_service.update_project_budget_group(
             session, group_id=group_id, data=payload, actor_id=user.id
         )

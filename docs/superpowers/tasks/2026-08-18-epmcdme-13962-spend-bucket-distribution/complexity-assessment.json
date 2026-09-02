@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "task": "Allow project admins to change spend bucket distribution for budgets they administer",
+  "generated": "2026-08-18T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 15,
+  "size": "M",
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Router endpoint (project_budget_router.py), authentication module (new project-scoped write dependency in authentication.py), and audit layer (enriching PROJECT_BUDGET_GROUP_UPDATED event) — 3 components across 3 layers"
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "New project-scoped write dependency must perform a DB read to load the group and verify project affiliation before authorization — a correctness-critical scope-leak risk; bumped from S to M by the authorization red flag; direct template exists in the read-access pattern (_can_read_project_budget)"
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "API layer (router endpoint guard change), Security layer (new project-admin write dependency), Audit layer (event payload enrichment for old vs new category percentages) — 3 distinct layers, no schema migration"
+    }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from S (2) to M (3): change affects authorization — new project-scoped write dependency gates the group update endpoint"
+  ],
+  "split_recommendation": null
+}
