@@ -12,18 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from datetime import datetime
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import MagicMock
 
 from codemie.configs import config
+from codemie.core.exceptions import NotFoundException
 from codemie.core.workflow_models import (
     WorkflowConfig,
     WorkflowRetryPolicy,
+    YamlConfigHistory,
     RETRY_POLICY_DEFAULT_BACKOFF_FACTOR,
     RETRY_POLICY_DEFAULT_MAX_INTERVAL,
     RETRY_POLICY_DEFAULT_MAX_ATTEMPTS,
     RETRY_POLICY_DEFAULT_INITIAL_INTERVAL,
 )
+from codemie.rest_api.models.base import BaseModelWithSQLSupport
 from codemie.rest_api.security.user import User
 from codemie.core.workflow_models.workflow_config import WorkflowConfigListResponse
 
@@ -284,3 +289,64 @@ class TestWorkflowConfigPoolFields:
     def test_max_nesting_level_defaults_to_none(self):
         wf = WorkflowConfig(name="Test", description="Test")
         assert wf.max_nesting_level is None
+
+
+class TestWorkflowConfigUpdatePreservesHistory:
+    def test_update_restores_db_history_when_not_passed(self):
+        current = WorkflowConfig(
+            id="wf_1",
+            name="Old",
+            description="d",
+            yaml_config_history=[YamlConfigHistory(yaml_config="prior-yaml", date=datetime(2026, 1, 1))],
+        )
+        workflow = WorkflowConfig(id="wf_1", name="New", description="d", yaml_config_history=[])
+
+        with (
+            patch.object(WorkflowConfig, "find_by_id", return_value=current),
+            patch.object(BaseModelWithSQLSupport, "update") as mock_super_update,
+        ):
+            workflow.update()
+
+        assert [entry.yaml_config for entry in workflow.yaml_config_history] == ["prior-yaml"]
+        mock_super_update.assert_called_once_with(refresh=False, validate=True)
+
+    def test_update_preserves_null_history_when_not_passed(self):
+        current = WorkflowConfig(id="wf_1", name="Old", description="d")
+        current.yaml_config_history = None
+        workflow = WorkflowConfig(id="wf_1", name="New", description="d", yaml_config_history=[])
+
+        with (
+            patch.object(WorkflowConfig, "find_by_id", return_value=current),
+            patch.object(BaseModelWithSQLSupport, "update"),
+        ):
+            workflow.update()
+
+        assert workflow.yaml_config_history is None
+
+    def test_update_uses_explicit_history(self):
+        current = WorkflowConfig(
+            id="wf_1",
+            name="Old",
+            description="d",
+            yaml_config_history=[YamlConfigHistory(yaml_config="prior-yaml", date=datetime(2026, 1, 1))],
+        )
+        workflow = WorkflowConfig(id="wf_1", name="New", description="d", yaml_config_history=[])
+        explicit = [YamlConfigHistory(yaml_config="old: yaml", date=datetime(2026, 2, 1))]
+
+        with (
+            patch.object(WorkflowConfig, "find_by_id", return_value=current),
+            patch.object(BaseModelWithSQLSupport, "update") as mock_super_update,
+        ):
+            workflow.update(yaml_config_history=explicit)
+
+        assert workflow.yaml_config_history is explicit
+        mock_super_update.assert_called_once_with(refresh=False, validate=True)
+
+    def test_update_raises_when_workflow_is_missing(self):
+        workflow = WorkflowConfig(id="missing", name="n", description="d")
+
+        with (
+            patch.object(WorkflowConfig, "find_by_id", return_value=None),
+            pytest.raises(NotFoundException, match="WorkflowConfig missing not found"),
+        ):
+            workflow.update()

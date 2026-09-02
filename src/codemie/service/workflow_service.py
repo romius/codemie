@@ -12,16 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
 import math
 import os
 import uuid
 from datetime import datetime
 from typing import List, Optional
 
+import yaml
 from elasticsearch import NotFoundError
 from sqlalchemy import Float, Integer
-from sqlmodel import Session, func, select, text
+from sqlmodel import Session, func, select
 from sqlmodel.sql.expression import and_, or_
 
 from codemie.configs import config, logger
@@ -66,6 +66,15 @@ class WorkflowService:
         "meta_config",
         "start_hint",
     }
+
+    @staticmethod
+    def _yaml_content_changed(old_yaml: Optional[str], new_yaml: Optional[str]) -> bool:
+        if old_yaml == new_yaml:
+            return False
+        try:
+            return yaml.safe_load(old_yaml or "") != yaml.safe_load(new_yaml or "")
+        except yaml.YAMLError:
+            return old_yaml != new_yaml
 
     def get_workflow(self, workflow_id: str, user: Optional[User] = None) -> WorkflowConfig:
         try:
@@ -703,31 +712,13 @@ class WorkflowService:
             mode=updated_workflow_config.mode,
         )
 
-    def _update_workflow_history(self, workflow_config: WorkflowConfig, new_history_entry: YamlConfigHistory) -> None:
-        sql = text(f"""
-            UPDATE {WorkflowConfig.__tablename__}
-            SET yaml_config_history = :new_history_entry || yaml_config_history
-            WHERE id = :workflow_id
-        """)
-        stmt = sql.bindparams(
-            workflow_id=workflow_config.id, new_history_entry=json.dumps([new_history_entry.model_dump(mode="json")])
-        )
-        with Session(WorkflowExecution.get_engine()) as session:
-            session.execute(stmt)
-            session.commit()
-        workflow_config.refresh()
-
     def _update_workflow_values(
         self,
         stored_config: WorkflowConfig,
         updated_workflow_config: WorkflowConfig,
         user: User,
     ) -> None:
-        new_history_entry = YamlConfigHistory(
-            yaml_config=stored_config.yaml_config,
-            date=datetime.now(),
-            created_by=user.as_user_model(),
-        )
+        old_yaml = stored_config.yaml_config
         yaml_config_updated = False
 
         for attr_name in self._editable_non_boolean_fields:
@@ -748,8 +739,25 @@ class WorkflowService:
 
         stored_config.updated_by = user.as_user_model()
         logger.debug(f"Store workflow: {stored_config.yaml_config}")
-        stored_config.update(refresh=True)
-        self._update_workflow_history(stored_config, new_history_entry)
+
+        yaml_changed = self._yaml_content_changed(old_yaml, stored_config.yaml_config)
+        if not yaml_changed:
+            stored_config.yaml_config = old_yaml
+
+        if yaml_changed:
+            stored_config.update(
+                yaml_config_history=[
+                    YamlConfigHistory(
+                        yaml_config=old_yaml or "",
+                        date=datetime.now(),
+                        created_by=user.as_user_model(),
+                    ),
+                    *(stored_config.yaml_config_history or []),
+                ]
+            )
+        else:
+            stored_config.update()
+
         logger.info(f"Workflow updated with ID: {stored_config.id}")
         WorkflowMonitoringService.send_update_workflow_metric(
             workflow_id=stored_config.id,

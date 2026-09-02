@@ -28,7 +28,12 @@ from codemie.core.ability import Ability, Action
 from codemie.rest_api.models.assistant import MCPServerDetails
 from codemie.service.mcp.access_control import MCPAccessControlService
 from codemie.core.constants import MermaidMimeType
-from codemie.core.exceptions import ExtendedHTTPException, ValidationException, WorkflowGenerationError
+from codemie.core.exceptions import (
+    ExtendedHTTPException,
+    NotFoundException,
+    ValidationException,
+    WorkflowGenerationError,
+)
 from codemie.core.models import BaseResponse, BaseResponseWithData, CreatedByUser, EvaluationResponse
 from codemie.core.workflow_models import (
     CreateWorkflowRequest,
@@ -444,6 +449,8 @@ async def update_workflow(
             "warnings": await _consumer_slot_warnings(updated_config, user),
         }
     except ValidationException:
+        raise
+    except NotFoundException:
         raise
     except Exception as e:
         formatted_exception = str(e).strip()

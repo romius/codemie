@@ -1,0 +1,23 @@
+{
+  "decision": "approve",
+  "rationale": "All KEEP-checklist criteria pass. Blind and edge-case flags (non-atomic persist+prepend, concurrent lost updates, NULL history) are pre-existing or explicitly out of scope: atomic create_version_atomic is a non-goal, and semantic YAML skip is required. Absent YAML is normalized to an empty document so empty/comment-only updates do not create history. 0 defer notes recorded in this rationale; ~15 dismiss (intentional KEEP behavior, false positives, pre-existing swallow of schema errors).",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    {"kind": "spec", "item": "WorkflowConfigRepository.update_excluding_history copies mapped columns except id and yaml_config_history", "status": "pass", "notes": "session.get by id; skip id/yaml_config_history; commit"},
+    {"kind": "spec", "item": "WorkflowConfigRepository.update_schema_url column-scoped SQL", "status": "pass", "notes": "SET schema_url only; parameterized bindparams"},
+    {"kind": "spec", "item": "save_workflow_schema uses update_schema_url not ORM update", "status": "pass", "notes": "workflow_service.py save_workflow_schema"},
+    {"kind": "spec", "item": "_yaml_content_changed semantic compare with YAMLError fallback", "status": "pass", "notes": "yaml.safe_load inequality with None normalized to empty YAML; string compare on YAMLError; comments and formatting-only edits do not create history"},
+    {"kind": "spec", "item": "_update_workflow_values history-safe persist and prepend only when YAML changed", "status": "pass", "notes": "update_excluding_history always; _update_workflow_history only if yaml_changed; restore old YAML when unchanged"},
+    {"kind": "spec", "item": "Bedrock update uses update_excluding_history; no seed_initial_version", "status": "pass", "notes": "create still save(refresh=True)"},
+    {"kind": "spec", "item": "Hardening tests in SoT §4", "status": "pass", "notes": "repository, service YAML/schema, Bedrock update tests present; semantic equivalence uses parametrized formatting and absent/comment-only cases"},
+    {"kind": "spec", "item": "Versions platform remains absent", "status": "pass", "notes": "no seed/atomic/rollback/version fields in the diff"},
+    {"kind": "spec", "item": "Remove branch-added docs vs origin/main", "status": "pass", "notes": "implementation diff has no leftover versions-platform docs"}
+  ],
+  "standards_review": [
+    {"kind": "commit-format", "status": "pass", "notes": "This run's six commits use EPMCDME-8827: Description per git-workflow.md"},
+    {"kind": "code-quality", "status": "pass", "notes": "New methods are typed; new test file has Apache header; Optional[str] matches existing workflow_service.py"},
+    {"kind": "security", "status": "pass", "notes": "update_schema_url uses parameterized bindparams; no secrets logged; yaml.safe_load is the same class of parse already used on workflow YAML"}
+  ],
+  "findings": []
+}

@@ -14,6 +14,7 @@
 
 from unittest.mock import patch, MagicMock
 from uuid import UUID
+from datetime import datetime, timezone
 
 import pytest
 from typing import Union
@@ -33,6 +34,7 @@ from codemie.core.workflow_models import (
     WorkflowMode,
     WorkflowNextState,
     WorkflowState,
+    YamlConfigHistory,
 )
 
 from codemie.rest_api.models.conversation import GeneratedMessage
@@ -114,6 +116,19 @@ def update_workflow_request_defaults(request):
 @pytest.fixture
 def workflow_service():
     return WorkflowService()
+
+
+def _history_entry_arg(mock_update) -> YamlConfigHistory | None:
+    history = mock_update.call_args.kwargs.get("yaml_config_history")
+    if not history:
+        return None
+    return history[0]
+
+
+def _stub_update(workflow: WorkflowConfig) -> MagicMock:
+    mock_update = MagicMock()
+    object.__setattr__(workflow, "update", mock_update)
+    return mock_update
 
 
 @pytest.fixture
@@ -218,17 +233,18 @@ def test_delete_workflow(mock_delete_workflow, workflow_service, workflow_config
     mock_delete_workflow.assert_called_once_with(workflow_config, user)
 
 
-@patch('codemie.core.workflow_models.WorkflowConfig.update')
-@patch('codemie.core.workflow_models.WorkflowConfig.refresh')
-def test_update_workflow(mock_refresh, mock_update, workflow_service, workflow_config, update_workflow_request, user):
+def test_update_workflow(workflow_service, workflow_config, update_workflow_request, user):
+    _stub_update(workflow_config)
     update_workflow_model = update_workflow_request.model_dump()
     expected_updater = user.as_user_model()
+    original_yaml = workflow_config.yaml_config
 
     _ = workflow_service.update_workflow(workflow_config, WorkflowConfig(**update_workflow_model), user)
 
-    # assert result == workflow_config
-    mock_update.assert_called_once_with(refresh=True)
-    mock_refresh.assert_called_once()
+    workflow_config.update.assert_called_once()
+    history_entry = _history_entry_arg(workflow_config.update)
+    assert history_entry is not None
+    assert history_entry.yaml_config == (original_yaml or "")
     assert workflow_config.updated_by == expected_updater
     for field_name in set(workflow_service._editable_non_boolean_fields):
         update_field_request = getattr(update_workflow_request, field_name)
@@ -236,16 +252,13 @@ def test_update_workflow(mock_refresh, mock_update, workflow_service, workflow_c
         assert updated_model_field == update_field_request, f"Mismatch in {field_name}"
 
 
-@patch('codemie.core.workflow_models.WorkflowConfig.update')
-@patch('codemie.core.workflow_models.WorkflowConfig.refresh')
 def test_update_workflow_nothing_to_update(
-    mock_refresh: MagicMock,
-    mock_update: MagicMock,
     workflow_service: WorkflowService,
     workflow_config: WorkflowConfig,
     update_workflow_request_defaults: UpdateWorkflowRequest,
     user: User,
 ) -> None:
+    _stub_update(workflow_config)
     original_workflow_dict = workflow_config.model_dump()
     update_workflow_model = update_workflow_request_defaults.model_dump()
     expected_updater = user.as_user_model()
@@ -253,8 +266,8 @@ def test_update_workflow_nothing_to_update(
     result = workflow_service.update_workflow(workflow_config, WorkflowConfig(**update_workflow_model), user)
 
     assert result == workflow_config
-    mock_update.assert_called_once_with(refresh=True)
-    mock_refresh.assert_called_once()
+    workflow_config.update.assert_called_once()
+    assert _history_entry_arg(workflow_config.update) is None
     assert workflow_config.updated_by == expected_updater
     for field_name in set(workflow_service._editable_non_boolean_fields) - {"supervisor_prompt"}:
         original_workflow_model_field = original_workflow_dict.get(field_name)
@@ -263,16 +276,13 @@ def test_update_workflow_nothing_to_update(
     assert workflow_config.supervisor_prompt is None
 
 
-@patch('codemie.core.workflow_models.WorkflowConfig.update')
-@patch('codemie.core.workflow_models.WorkflowConfig.refresh')
 def test_update_workflow_clears_description_with_empty_string(
-    mock_refresh: MagicMock,
-    mock_update: MagicMock,
     workflow_service: WorkflowService,
     workflow_config: WorkflowConfig,
     user: User,
 ) -> None:
     """An empty string description must be applied, not silently skipped."""
+    _stub_update(workflow_config)
     assert workflow_config.description == "A test workflow"
 
     updated = WorkflowConfig(
@@ -284,18 +294,17 @@ def test_update_workflow_clears_description_with_empty_string(
     workflow_service.update_workflow(workflow_config, updated, user)
 
     assert workflow_config.description == ""
+    workflow_config.update.assert_called_once()
+    assert _history_entry_arg(workflow_config.update) is None
 
 
-@patch('codemie.core.workflow_models.WorkflowConfig.update')
-@patch('codemie.core.workflow_models.WorkflowConfig.refresh')
 def test_update_workflow_skips_none_fields(
-    mock_refresh: MagicMock,
-    mock_update: MagicMock,
     workflow_service: WorkflowService,
     workflow_config: WorkflowConfig,
     user: User,
 ) -> None:
     """Optional fields set to None must not overwrite existing values."""
+    _stub_update(workflow_config)
     workflow_config.icon_url = "http://example.com/icon.png"
 
     updated = WorkflowConfig(
@@ -308,6 +317,8 @@ def test_update_workflow_skips_none_fields(
     workflow_service.update_workflow(workflow_config, updated, user)
 
     assert workflow_config.icon_url == "http://example.com/icon.png"
+    workflow_config.update.assert_called_once()
+    assert _history_entry_arg(workflow_config.update) is None
 
 
 @pytest.mark.parametrize(
@@ -418,17 +429,14 @@ def test_get_prebuilt_workflows_empty_project_when_cached_demo(_mock_from_yaml, 
 
 
 @patch('codemie.service.workflow_service.logger')
-@patch('codemie.core.workflow_models.WorkflowConfig.update')
-@patch('codemie.core.workflow_models.WorkflowConfig.refresh')
 def test_yaml_reflects_assistants_and_states(
-    mock_refresh: MagicMock,
-    mock_update: MagicMock,
     mock_logger: MagicMock,
     user: User,
     workflow_service: WorkflowService,
     workflow_config: WorkflowConfig,
     update_workflow_request_defaults: UpdateWorkflowRequest,
 ) -> None:
+    _stub_update(workflow_config)
     first_assistant = WorkflowAssistant(id="first_print", model="gpt-4o-2024-08-06", system_prompt="Print Hello")
     second_assistant = WorkflowAssistant(id="second_print", model="gpt-4.1-mini", system_prompt="Print Goodbye")
     first_state = WorkflowState(
@@ -470,19 +478,19 @@ def test_yaml_reflects_assistants_and_states(
 
     assert workflow_config.assistants == [first_assistant, second_assistant]
     assert workflow_config.states == [first_state, second_state]
-    mock_update.assert_called_once_with(refresh=True)
+    workflow_config.update.assert_called_once()
+    assert _history_entry_arg(workflow_config.update) is not None
 
 
 @patch('codemie.service.workflow_service.logger')
-@patch('codemie.core.workflow_models.WorkflowConfig.update')
 def test_invalid_yaml_logs_error(
-    mock_update: MagicMock,
     mock_logger: MagicMock,
     user: User,
     workflow_service: WorkflowService,
     workflow_config: WorkflowConfig,
     update_workflow_request_defaults: WorkflowConfig,
 ) -> None:
+    _stub_update(workflow_config)
     invalid_yaml = "states: [missing_bracket"
     expected_error_substring = "while parsing a flow sequence"
     expected_log_error_substring = "Failed to update workflow: "
@@ -493,7 +501,7 @@ def test_invalid_yaml_logs_error(
         workflow_service.update_workflow(workflow_config, update_workflow_model, user)
 
     assert expected_error_substring in str(p_error.value)
-    mock_update.assert_not_called()
+    workflow_config.update.assert_not_called()
     mock_logger.error.assert_called_once()
     assert f"{expected_log_error_substring}{expected_error_substring}" in mock_logger.error.call_args[0][0]
 
@@ -979,11 +987,7 @@ def test_append_user_message_on_resume_no_conversation_update_when_no_conversati
     ],
     ids=["hint_changed", "hint_set_from_none", "hint_unchanged"],
 )
-@patch('codemie.core.workflow_models.WorkflowConfig.update')
-@patch('codemie.core.workflow_models.WorkflowConfig.refresh')
 def test_update_workflow_values_start_hint_updated_when_different(
-    mock_refresh: MagicMock,
-    mock_update: MagicMock,
     workflow_service: WorkflowService,
     workflow_config: WorkflowConfig,
     user: User,
@@ -992,6 +996,7 @@ def test_update_workflow_values_start_hint_updated_when_different(
     expected_hint: str,
 ) -> None:
     """_update_workflow_values must assign start_hint from updated config when values differ."""
+    _stub_update(workflow_config)
     workflow_config.start_hint = stored_hint
 
     updated_config = WorkflowConfig(
@@ -1004,6 +1009,8 @@ def test_update_workflow_values_start_hint_updated_when_different(
     workflow_service._update_workflow_values(workflow_config, updated_config, user)
 
     assert workflow_config.start_hint == expected_hint
+    workflow_config.update.assert_called_once()
+    assert _history_entry_arg(workflow_config.update) is None
 
 
 @pytest.mark.parametrize(
@@ -1014,11 +1021,7 @@ def test_update_workflow_values_start_hint_updated_when_different(
     ],
     ids=["cleared_to_none", "cleared_to_empty_string"],
 )
-@patch('codemie.core.workflow_models.WorkflowConfig.update')
-@patch('codemie.core.workflow_models.WorkflowConfig.refresh')
 def test_update_workflow_values_start_hint_cleared(
-    mock_refresh: MagicMock,
-    mock_update: MagicMock,
     workflow_service: WorkflowService,
     workflow_config: WorkflowConfig,
     user: User,
@@ -1030,6 +1033,7 @@ def test_update_workflow_values_start_hint_cleared(
     The general editable-fields loop skips falsy values, so the explicit
     start_hint block is the only path that allows clearing the field.
     """
+    _stub_update(workflow_config)
     workflow_config.start_hint = stored_hint
 
     updated_config = WorkflowConfig(
@@ -1042,6 +1046,8 @@ def test_update_workflow_values_start_hint_cleared(
     workflow_service._update_workflow_values(workflow_config, updated_config, user)
 
     assert workflow_config.start_hint == updated_hint
+    workflow_config.update.assert_called_once()
+    assert _history_entry_arg(workflow_config.update) is None
 
 
 # ── WorkflowService execution-state helpers ───────────────────────────────────
@@ -1107,3 +1113,289 @@ class TestFindLastExecutionStateOutput:
             mock_cls.get_all_by_fields.side_effect = Exception("timeout")
             result = WorkflowService.find_last_execution_state_output("exec-err")
         assert result is None
+
+
+class TestYamlContentChanged:
+    def test_identical_strings_returns_false(self):
+        assert WorkflowService._yaml_content_changed("key: value", "key: value") is False
+
+    def test_comment_only_difference_returns_false(self):
+        assert WorkflowService._yaml_content_changed("key: value", "key: value\n# comment only") is False
+
+    @pytest.mark.parametrize(
+        ("old_yaml", "new_yaml"),
+        [
+            ("first: 1\nsecond: 2", "second: 2\nfirst: 1"),
+            ("key: value", 'key: "value"'),
+            ("items:\n- one\n- two", "items: [one, two]"),
+        ],
+        ids=["reordered_keys", "quote_style", "block_vs_flow_list"],
+    )
+    def test_formatting_only_difference_returns_false(self, old_yaml: str, new_yaml: str):
+        assert WorkflowService._yaml_content_changed(old_yaml, new_yaml) is False
+
+    @pytest.mark.parametrize(
+        ("old_yaml", "new_yaml"),
+        [
+            (None, ""),
+            (None, "# comment only"),
+            ("# comment only", None),
+        ],
+        ids=["none_to_empty", "none_to_comment", "comment_to_none"],
+    )
+    def test_absent_and_semantically_empty_yaml_returns_false(
+        self,
+        old_yaml: str | None,
+        new_yaml: str | None,
+    ):
+        assert WorkflowService._yaml_content_changed(old_yaml, new_yaml) is False
+
+    def test_trailing_newline_difference_returns_false(self):
+        assert WorkflowService._yaml_content_changed("key: value\n", "key: value") is False
+
+    def test_crlf_vs_lf_returns_false(self):
+        assert WorkflowService._yaml_content_changed("key: value\r\n", "key: value\n") is False
+
+    def test_different_yaml_content_returns_true(self):
+        assert WorkflowService._yaml_content_changed("key: a", "key: b") is True
+
+    def test_none_vs_none_returns_false(self):
+        assert WorkflowService._yaml_content_changed(None, None) is False
+
+    def test_none_vs_yaml_returns_true(self):
+        assert WorkflowService._yaml_content_changed(None, "key: value") is True
+
+    def test_yaml_vs_none_returns_true(self):
+        assert WorkflowService._yaml_content_changed("key: value", None) is True
+
+    def test_invalid_yaml_uses_string_comparison(self):
+        assert WorkflowService._yaml_content_changed("{bad yaml", "{bad yaml") is False
+        assert WorkflowService._yaml_content_changed("{bad yaml", "{different bad") is True
+
+
+def test_save_workflow_schema_persists_via_update(
+    workflow_service: WorkflowService,
+    workflow_config: WorkflowConfig,
+) -> None:
+    mock_file_result = MagicMock()
+    mock_file_result.to_encoded_url.return_value = "https://example.com/wf.svg"
+    mock_files_repo = MagicMock()
+    mock_files_repo.write_file.return_value = mock_file_result
+    mock_update = _stub_update(workflow_config)
+
+    with patch("codemie.service.workflow_service.FileRepositoryFactory") as mock_factory:
+        mock_factory.return_value.get_current_repository.return_value = mock_files_repo
+        workflow_service.save_workflow_schema(workflow_config, b"<svg/>")
+
+    assert workflow_config.schema_url == "https://example.com/wf.svg"
+    mock_update.assert_called_once_with()
+
+
+def test_update_workflow_yaml_change_prepends_history(
+    workflow_service: WorkflowService,
+    workflow_config: WorkflowConfig,
+    user: User,
+) -> None:
+    _stub_update(workflow_config)
+    workflow_config.yaml_config = "assistants: []"
+    updated = WorkflowConfig(
+        name=workflow_config.name,
+        description=workflow_config.description,
+        project="demo",
+        yaml_config="assistants:\n- id: new_assistant",
+    )
+
+    workflow_service._update_workflow_values(workflow_config, updated, user)
+
+    workflow_config.update.assert_called_once()
+    assert workflow_config.yaml_config == "assistants:\n- id: new_assistant"
+    history_entry = _history_entry_arg(workflow_config.update)
+    assert history_entry is not None
+    assert history_entry.yaml_config == "assistants: []"
+
+
+def test_update_workflow_metadata_only_does_not_prepend_history(
+    workflow_service: WorkflowService,
+    workflow_config: WorkflowConfig,
+    user: User,
+) -> None:
+    _stub_update(workflow_config)
+    workflow_config.yaml_config = "assistants: []"
+    updated = WorkflowConfig(
+        name="New Name",
+        description=workflow_config.description,
+        project="demo",
+    )
+
+    workflow_service._update_workflow_values(workflow_config, updated, user)
+
+    workflow_config.update.assert_called_once()
+    assert _history_entry_arg(workflow_config.update) is None
+
+
+def test_update_workflow_same_yaml_does_not_prepend_history(
+    workflow_service: WorkflowService,
+    workflow_config: WorkflowConfig,
+    user: User,
+) -> None:
+    _stub_update(workflow_config)
+    workflow_config.yaml_config = "assistants: []"
+    updated = WorkflowConfig(
+        name=workflow_config.name,
+        description=workflow_config.description,
+        project="demo",
+        yaml_config="assistants: []",
+    )
+
+    workflow_service._update_workflow_values(workflow_config, updated, user)
+
+    workflow_config.update.assert_called_once()
+    assert _history_entry_arg(workflow_config.update) is None
+
+
+def test_update_workflow_comment_only_yaml_does_not_drift_live_config(
+    workflow_service: WorkflowService,
+    workflow_config: WorkflowConfig,
+    user: User,
+) -> None:
+    _stub_update(workflow_config)
+    workflow_config.yaml_config = "key: value"
+    updated = WorkflowConfig(
+        name=workflow_config.name,
+        description=workflow_config.description,
+        project="demo",
+        yaml_config="key: value\n# comment only",
+    )
+
+    workflow_service._update_workflow_values(workflow_config, updated, user)
+
+    workflow_config.update.assert_called_once()
+    assert workflow_config.yaml_config == "key: value"
+    assert _history_entry_arg(workflow_config.update) is None
+
+
+def test_update_workflow_comment_only_yaml_does_not_replace_absent_config_or_prepend_history(
+    workflow_service: WorkflowService,
+    workflow_config: WorkflowConfig,
+    user: User,
+) -> None:
+    _stub_update(workflow_config)
+    workflow_config.yaml_config = None
+    updated = WorkflowConfig(
+        name=workflow_config.name,
+        description=workflow_config.description,
+        project="demo",
+        yaml_config="# comment only",
+    )
+
+    workflow_service._update_workflow_values(workflow_config, updated, user)
+
+    workflow_config.update.assert_called_once()
+    assert workflow_config.yaml_config is None
+    assert _history_entry_arg(workflow_config.update) is None
+
+
+def test_update_workflow_newline_only_yaml_does_not_drift_live_config(
+    workflow_service: WorkflowService,
+    workflow_config: WorkflowConfig,
+    user: User,
+) -> None:
+    _stub_update(workflow_config)
+    workflow_config.yaml_config = "key: value"
+    updated = WorkflowConfig(
+        name=workflow_config.name,
+        description=workflow_config.description,
+        project="demo",
+        yaml_config="key: value\n",
+    )
+
+    workflow_service._update_workflow_values(workflow_config, updated, user)
+
+    workflow_config.update.assert_called_once()
+    assert workflow_config.yaml_config == "key: value"
+    assert _history_entry_arg(workflow_config.update) is None
+
+
+def test_update_then_save_schema_preserves_history(
+    workflow_service: WorkflowService,
+    workflow_config: WorkflowConfig,
+    user: User,
+) -> None:
+    mock_update = _stub_update(workflow_config)
+    workflow_config.yaml_config = "assistants: []"
+    workflow_config.yaml_config_history = [
+        YamlConfigHistory(
+            yaml_config="assistants: []",
+            date=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            created_by=user.as_user_model(),
+        )
+    ]
+    updated = WorkflowConfig(
+        name="Renamed Workflow",
+        description=workflow_config.description,
+        project="demo",
+        yaml_config="assistants: []",
+    )
+
+    workflow_service.update_workflow(workflow_config, updated, user)
+
+    assert _history_entry_arg(workflow_config.update) is None
+    assert len(workflow_config.yaml_config_history) >= 1
+
+    mock_update.reset_mock()
+    mock_files_repo = MagicMock()
+    mock_file_result = MagicMock()
+    mock_file_result.to_encoded_url.return_value = "https://example.com/schema.svg"
+    mock_files_repo.write_file.return_value = mock_file_result
+
+    with patch("codemie.service.workflow_service.FileRepositoryFactory") as mock_factory:
+        mock_factory.return_value.get_current_repository.return_value = mock_files_repo
+        workflow_service.save_workflow_schema(workflow_config, b"<svg/>")
+
+    assert workflow_config.schema_url == "https://example.com/schema.svg"
+    mock_update.assert_called_once_with()
+    assert len(workflow_config.yaml_config_history) >= 1
+
+
+@patch("codemie.service.workflow_service.WorkflowMonitoringService.send_update_workflow_metric")
+def test_update_then_save_schema_prepends_history_then_persists_schema(
+    mock_metric: MagicMock,
+    workflow_service: WorkflowService,
+    user: User,
+) -> None:
+    """YAML change prepends history via update(); schema persist uses update() without an explicit history list."""
+    prior = YamlConfigHistory(yaml_config="prior-yaml", date=datetime(2026, 1, 1, tzinfo=timezone.utc))
+    stored = WorkflowConfig(
+        id="wf_1",
+        name="Old Name",
+        description="d",
+        yaml_config="old: yaml",
+        project="demo",
+        yaml_config_history=[prior],
+    )
+    mock_update = _stub_update(stored)
+    updated = WorkflowConfig(
+        name="Old Name",
+        description="d",
+        project="demo",
+        yaml_config="old: changed",
+    )
+
+    mock_file_result = MagicMock()
+    mock_file_result.to_encoded_url.return_value = "https://example.com/wf.svg"
+    mock_files_repo = MagicMock()
+    mock_files_repo.write_file.return_value = mock_file_result
+
+    with patch("codemie.service.workflow_service.FileRepositoryFactory") as mock_factory:
+        mock_factory.return_value.get_current_repository.return_value = mock_files_repo
+        workflow_service._update_workflow_values(stored, updated, user)
+        workflow_service.save_workflow_schema(stored, b"<svg/>")
+
+    assert stored.yaml_config == "old: changed"
+    assert stored.schema_url == "https://example.com/wf.svg"
+    assert mock_update.call_count == 2
+    history = mock_update.call_args_list[0].kwargs["yaml_config_history"]
+    assert [entry.yaml_config for entry in history] == ["old: yaml", "prior-yaml"]
+    assert mock_update.call_args_list[1].args == ()
+    assert mock_update.call_args_list[1].kwargs == {}
+    mock_metric.assert_called_once()

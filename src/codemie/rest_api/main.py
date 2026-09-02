@@ -51,6 +51,7 @@ from codemie.core.exceptions import (
     GitLabAuthRequiredException,
     JiraAuthRequiredException,
     MCPAuthenticationRequiredException,
+    NotFoundException,
     OAuthConnectRequiredException,
     ValidationException,
 )
@@ -1045,6 +1046,14 @@ async def elastic_exception_handler(request: Request, exception: ApiError) -> JS
 async def domain_validation_exception_handler(request: Request, exc: ValidationException) -> JSONResponse:
     return JSONResponse(
         status_code=status.HTTP_400_BAD_REQUEST,
+        content={"error": {"message": str(exc), "details": None, "help": None}},
+    )
+
+
+@app.exception_handler(NotFoundException)
+async def not_found_exception_handler(request: Request, exc: NotFoundException) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_404_NOT_FOUND,
         content={"error": {"message": str(exc), "details": None, "help": None}},
     )
 

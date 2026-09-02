@@ -977,3 +977,22 @@ def test_unimport_entity_flow_raises_403_when_no_permission(mock_find_by_id, moc
 
     with pytest.raises(EntityAccessDenied):
         BedrockFlowService.unimport_entity("entity-123", user)
+
+
+def test_create_or_update_entity_update_uses_history_safe_update():
+    """Bedrock updates persist through WorkflowConfig.update, which preserves history."""
+    existing = MagicMock()
+    existing.id = "wf-existing"
+    incoming = MagicMock()
+    for field in ("name", "description", "project", "mode", "shared", "states", "custom_nodes", "bedrock"):
+        setattr(incoming, field, f"new-{field}")
+
+    result = BedrockFlowService._create_or_update_entity(
+        flow_id="flow-1",
+        flow_id_alias="alias-1",
+        workflow_config=incoming,
+        existing_entities_map={"alias-1": existing},
+    )
+
+    assert result == "wf-existing"
+    existing.update.assert_called_once_with(refresh=True)

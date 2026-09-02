@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field, ValidationError, computed_field
 from codemie.configs import config, logger
 from codemie.core.ability import Owned, Action
 from codemie.core.constants import DEMO_PROJECT
+from codemie.core.exceptions import NotFoundException
 from codemie.core.models import UserEntity
 from codemie.rest_api.models.base import (
     CommonBaseModel,
@@ -305,6 +306,21 @@ class WorkflowConfigBase(CommonBaseModel, Owned):
 
 class WorkflowConfig(BaseModelWithSQLSupport, WorkflowConfigBase, table=True):
     __tablename__ = "workflows"
+
+    def update(
+        self,
+        refresh=False,
+        validate=True,
+        yaml_config_history: Optional[List[YamlConfigHistory]] = None,
+    ):
+        current = self.__class__.find_by_id(self.id)
+        if current is None:
+            raise NotFoundException(f"WorkflowConfig {self.id} not found")
+
+        self.yaml_config_history = (
+            yaml_config_history if yaml_config_history is not None else current.yaml_config_history
+        )
+        return super().update(refresh=refresh, validate=validate)
 
     @classmethod
     def delete(cls, workflow_id: str):
