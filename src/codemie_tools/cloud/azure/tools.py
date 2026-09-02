@@ -34,6 +34,9 @@ class GenericAzureTool(CodeMieTool):
     description: str = AZURE_TOOL.description
     args_schema: Type[BaseModel] = AzureInput
 
+    def is_safe(self, args: dict) -> bool:
+        return self._http_method_is_safe(args)
+
     @model_validator(mode='after')
     def initialize_client(self) -> 'GenericAzureTool':
         """Initialize the Azure client with configuration."""

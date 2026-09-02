@@ -313,3 +313,10 @@ allow-only = """
     MPL-2.0;\
     ISC;\
 """
+
+[tool.uvicorn]
+app = "codemie.rest_api.main:app"
+host = "0.0.0.0"
+port = 8080
+reload = true
+reload_excludes = [".claude"]

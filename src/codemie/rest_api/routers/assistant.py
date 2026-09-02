@@ -39,6 +39,7 @@ from codemie.core.models import (
     AssistantChatRequest,
     AssistantEvaluationRequest,
     EvaluationResponse,
+    ToolCallAction,
 )
 from codemie.rest_api.models.guardrail import GuardrailEntity, GuardrailSource
 from codemie.service.assistant_evaluation_service import AssistantEvaluationService
@@ -1086,6 +1087,84 @@ async def ask_assistant_by_id(
         billing_user,
     )
     return result
+
+
+class ToolCallResumeRequest(BaseModel):
+    conversation_id: str
+    action: ToolCallAction
+    stream: bool = True
+
+
+def _resume_tool_call(
+    conversation_id: str,
+):
+    """Validate that a pending checkpoint and pending tool call exist for this conversation."""
+    from codemie.service.conversation_checkpoint_service import ConversationCheckpointService
+
+    svc = ConversationCheckpointService()
+    if svc.get_checkpoint(conversation_id) is None:
+        raise ExtendedHTTPException(
+            code=status.HTTP_404_NOT_FOUND,
+            message="No pending tool call found for this conversation.",
+        )
+
+    pending_tool_call = svc.get_pending_tool_call(conversation_id)
+    if pending_tool_call is None:
+        raise ExtendedHTTPException(
+            code=status.HTTP_404_NOT_FOUND,
+            message="No pending tool call found for this conversation.",
+        )
+
+
+@router.post(
+    "/assistants/{assistant_id}/model/tool-call/resume",
+    status_code=status.HTTP_200_OK,
+    response_model=BaseModelResponse,
+    response_model_by_alias=True,
+)
+async def resume_tool_call(
+    raw_request: Request,
+    assistant_id: str,
+    background_tasks: BackgroundTasks,
+    request: ToolCallResumeRequest,
+    user: User = Depends(authenticate),
+):
+    """
+    Resume a paused assistant conversation after a tool call confirmation.
+
+    - action="allow": executes the pending tool call and continues the response.
+    - action="deny": skips the tool call and continues the response.
+    """
+    asyncio.create_task(raw_request.state.wait_for_disconnect())
+    assistant = _get_assistant_by_id_or_raise(assistant_id)
+    _check_user_can_access_assistant(user, assistant, "view", Action.READ)
+    _resume_tool_call(
+        conversation_id=request.conversation_id,
+    )
+
+    # Intentionally skip _prepare_assistant_for_execution — resume reuses existing session context.
+    return await asyncio.to_thread(
+        _ask_assistant_resume,
+        assistant,
+        raw_request,
+        request,
+        user,
+        background_tasks,
+    )
+
+
+def _ask_assistant_resume(
+    assistant,
+    raw_request: Request,
+    request: ToolCallResumeRequest,
+    user: User,
+    background_tasks: BackgroundTasks,
+):
+    from codemie.rest_api.handlers.assistant_handlers import get_request_handler
+
+    request_uuid = raw_request.state.uuid
+    handler = get_request_handler(assistant, user, request_uuid)
+    return handler.handle_tool_call_resume(request, raw_request)
 
 
 @router.post(

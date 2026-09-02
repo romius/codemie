@@ -74,6 +74,9 @@ class GetExtendedLaunchDataTool(BaseReportPortalTool):
     description: str = GET_EXTENDED_LAUNCH_DATA_TOOL.description
     args_schema: Type[BaseModel] = GetExtendedLaunchDataInput
 
+    def is_safe(self, args: dict) -> bool:
+        return True
+
     def __init__(self, config: ReportPortalConfig):
         super().__init__(config)
 
@@ -117,6 +120,9 @@ class GetExtendedLaunchDataAsRawTool(BaseReportPortalTool):
     name: str = GET_EXTENDED_LAUNCH_DATA_AS_RAW_TOOL.name
     description: str = GET_EXTENDED_LAUNCH_DATA_AS_RAW_TOOL.description
     args_schema: Type[BaseModel] = GetExtendedLaunchDataAsRawInput
+
+    def is_safe(self, args: dict) -> bool:
+        return True
 
     def __init__(self, config: ReportPortalConfig):
         super().__init__(config)

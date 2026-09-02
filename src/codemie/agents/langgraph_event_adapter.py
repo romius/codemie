@@ -165,6 +165,7 @@ class LangGraphEventAdapter:
         elif "tools" in value:
             for action in value["tools"]["messages"]:
                 if isinstance(action, ToolMessage):
+                    self.agent._replay_tool_start_on_resume(action)
                     logger.debug(f"Tool {action.name} call result: {action.content}")
                     self.agent._parse_tool_message(action)
 

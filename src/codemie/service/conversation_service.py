@@ -804,6 +804,8 @@ class ConversationService:
             conversation.pinned = request.pinned
         if request.folder is not None:
             conversation.folder = request.folder
+        if 'tool_call_policy' in fields_set:
+            conversation.tool_call_policy = request.tool_call_policy
         if request.active_assistant_id and request.active_assistant_id in conversation.assistant_ids:
             # Make active_assistant_id to be the first in assistant_ids array
             assistant_ids = list(conversation.assistant_ids)
@@ -849,6 +851,7 @@ class ConversationService:
             session.commit()
 
         conversation.history = []
+        conversation.pending_checkpoint = None
         conversation.update_conversation_assistants()
         conversation.update(refresh=True)
         return conversation

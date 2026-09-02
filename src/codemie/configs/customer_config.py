@@ -20,7 +20,6 @@ from importlib.metadata import version, PackageNotFoundError
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 from codemie.configs.config import config
 
-
 CONFIG_IDS = {
     "enterpriseEdition": "features:enterpriseEdition",
     "userManagement": "features:userManagement",

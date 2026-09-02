@@ -252,6 +252,9 @@ class GetOpenApiSpec(CodeMieTool):
     description: str = OPEN_API_SPEC_TOOL.description
     args_schema: Type[BaseModel] = GetOpenApiSpecToolInput
 
+    def is_safe(self, args: dict) -> bool:
+        return True
+
     def __init__(self, config: OpenApiConfig):
         super().__init__()
         self.openapi_spec = config.spec

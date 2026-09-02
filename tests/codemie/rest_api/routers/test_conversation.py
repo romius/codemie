@@ -152,6 +152,11 @@ async def test_get_conversation_by_id(user, conversation):
             "very_first_msg_at": None,
             "very_last_msg_at": None,
         }
+        # pending_checkpoint is an ORM-only column excluded from ConversationResponse
+        expected.pop("pending_checkpoint", None)
+        # pending_tool_call is populated separately; not part of the raw conversation dict
+        expected.pop("pending_tool_call", None)
+        body.pop("pending_tool_call", None)
         assert body == expected
         mock_get_by_id.assert_called_once_with(conversation.id)
 

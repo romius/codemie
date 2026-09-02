@@ -100,6 +100,9 @@ class ServiceNowTableTool(CodeMieTool):
     description: str = SNOW_TABLE_TOOL.description
     config: ServiceNowConfig
 
+    def is_safe(self, args: dict) -> bool:
+        return self._http_method_is_safe(args)
+
     def _healthcheck(self):
         """Performs a healthcheck by querying a single incident record"""
         self.execute(method="GET", table="incident", params='{"sysparm_limit": 1}')

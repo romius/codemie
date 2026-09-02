@@ -16,7 +16,7 @@ import json
 import traceback
 from abc import abstractmethod
 from time import time
-from typing import Any, Optional, Union
+from typing import Any, ClassVar, Optional, Union
 
 from langchain_core.tools import BaseTool
 from langchain_core.tools.base import ToolException
@@ -36,6 +36,23 @@ class CodeMieTool(BaseTool):
     truncate_message: str = "Tool output is truncated."
     base_llm_model_name: str = "gpt-4.1-mini"
     output_format: ToolOutputFormat = ToolOutputFormat.TEXT
+
+    _SAFE_HTTP_METHODS: ClassVar[frozenset[str]] = frozenset({"GET", "HEAD", "OPTIONS"})
+
+    @staticmethod
+    def _http_method_is_safe(args: dict, method_key: str = "method") -> bool:
+        """Return True when the HTTP method in args is a safe (read-only) method."""
+        method = (args.get(method_key) or "").strip().upper()
+        return method in CodeMieTool._SAFE_HTTP_METHODS
+
+    def is_safe(self, args: dict) -> bool:
+        """Return True if this tool call produces no side effects (safe to auto-approve).
+
+        Default: False (conservative — unknown tools are treated as mutating).
+        Override in subclasses with well-known semantics.
+        For generic REST tools, inspect args to detect the HTTP method.
+        """
+        return False
 
     def _parse_input(self, tool_input: Union[str, dict], tool_call_id: Optional[str]) -> Union[str, dict[str, Any]]:
         """Override _parse_input to catch all exceptions and raise ToolException.

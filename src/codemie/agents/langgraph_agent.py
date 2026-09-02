@@ -45,14 +45,15 @@ from codemie.agents.supervisor.pre_model_hooks import (
     _image_artifact_pre_model_hook,
 )
 from codemie.agents.langgraph_event_adapter import LangGraphCallbackBridge, LangGraphEventAdapter
+from codemie.agents.tool_confirmation.tool_call_confirmation_mixin import ToolCallConfirmationMixin
 from codemie.agents.tools.agent import WorkspaceAwareAgent
+from codemie.core.models import ToolCallPolicy
 from codemie.core.errors import ErrorResponse
 from codemie.enterprise.litellm.proxy_router import handle_agent_exception
 from codemie_tools.base.file_object import FileObject
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from langchain_core.tools import BaseTool, InjectedToolCallId, tool as langchain_tool
-from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.prebuilt import InjectedState
 from langgraph.types import Command, Send
 from langgraph_supervisor import create_supervisor
@@ -112,15 +113,15 @@ from codemie.core.otel_tracing import get_otel_context_for_thread, propagated_sp
 __all__ = ["LangGraphAgent", "_SupervisorChunkContext", "_SupervisorHandoffTracker"]
 
 
-class LangGraphAgent(WorkspaceAwareAgent):
+class LangGraphAgent(ToolCallConfirmationMixin, WorkspaceAwareAgent):
     # When this agent is run as part of a workflow (instead of natively within LangGraph),
     # LangGraph overrides the max_concurrency of all subgraphs.
     # This is problematic because the agent's execution
     # should remain independent when instance methods are used.
     MAX_CONCURRENCY = 10000
     SUPERVISOR_HANDOFF_TOOL_PREFIX = SUPERVISOR_HANDOFF_TOOL_PREFIX
-    # Maximum allowed length for assistant (agent) name after normalization
     ASSISTANT_NAME_MAX_LENGTH = 64
+    INTERRUPT_BEFORE_TOOLS = ["tools"]
 
     @staticmethod
     def _is_conversation_replay_v2_enabled() -> bool:
@@ -157,7 +158,9 @@ class LangGraphAgent(WorkspaceAwareAgent):
         tool_selection_limit: Optional[int] = None,
         subagents: Optional[list] = None,
         subagent_descriptions: Optional[dict[str, str]] = None,
-        trace_context=None,  # For workflow trace unification
+        trace_context=None,
+        require_tool_confirmation: bool = False,
+        tool_call_policy: Optional[ToolCallPolicy] = None,
     ):
         ensure_langgraph_supervisor_compatibility()
 
@@ -206,6 +209,8 @@ class LangGraphAgent(WorkspaceAwareAgent):
         # 2. Smart tool lookup (finding tools when no toolkits configured)
         self.smart_tool_selection_enabled = smart_tool_selection_enabled
         self.tool_selection_limit = tool_selection_limit or config.TOOL_SELECTION_LIMIT
+        self.require_tool_confirmation = require_tool_confirmation
+        self.tool_call_policy = tool_call_policy
 
         set_logging_info(
             uuid=request_uuid,
@@ -727,6 +732,11 @@ class LangGraphAgent(WorkspaceAwareAgent):
             execution_start = time()
             chunks_collector = []
 
+            if self.require_tool_confirmation and self.conversation_id:
+                from codemie.service.conversation_checkpoint_service import ConversationCheckpointService
+
+                ConversationCheckpointService().clear(self.conversation_id)
+
             auth_required_error: MCPAuthenticationRequiredException | None = None
             try:
                 logger.info(f"Starting {self.agent_name} agent. request_uuid={self.request_uuid}")
@@ -734,8 +744,9 @@ class LangGraphAgent(WorkspaceAwareAgent):
                 logger.info(f"Finish {self.agent_name} agent. request_uuid={self.request_uuid}")
                 time_elapsed = time() - execution_start
 
+                if self._pending_tool_confirmation:
+                    return
                 result = json.dumps(result) if isinstance(result, (dict, BaseModel)) else result
-
                 self.thread_generator.send(
                     StreamedGenerationResult(
                         generated=result,
@@ -751,28 +762,7 @@ class LangGraphAgent(WorkspaceAwareAgent):
                 self.thread_generator.close(e)
                 raise
             except Exception as e:
-                record_exception_on_span(e)
-                time_elapsed = time() - execution_start
-                error_response: ErrorResponse = handle_agent_exception(e)
-                llm_error_code = error_response.get_error().error_code.value
-                if config.HIDE_AGENT_STREAMING_EXCEPTIONS:
-                    user_message = error_response.get_error().message
-                else:
-                    user_message = self.extended_error(error_response, e)
-                chunks_collector.append(user_message)
-                generated, execution_error = self._process_chunks(chunks_collector, config, llm_error_code)
-
-                self.thread_generator.send(
-                    StreamedGenerationResult(
-                        generated=generated,
-                        generated_chunk="",
-                        last=True,
-                        time_elapsed=time_elapsed,
-                        debug={},
-                        context=self.thread_context,
-                        execution_error=execution_error,
-                    ).model_dump_json()
-                )
+                self._send_error_to_thread(e, execution_start, chunks_collector)
             finally:
                 if auth_required_error is None:
                     self.thread_generator.close()
@@ -798,6 +788,30 @@ class LangGraphAgent(WorkspaceAwareAgent):
             return cfg.CUSTOM_STACKTRACE_MESSAGE, ExecutionErrorEnum.STACKTRACE.value
 
         return "".join(chunks_collector), None
+
+    def _send_error_to_thread(self, e: Exception, execution_start: float, chunks_collector: list[str]) -> None:
+        """Format *e* as a user error and push the final SSE chunk to thread_generator."""
+        record_exception_on_span(e)
+        time_elapsed = time() - execution_start
+        error_response = handle_agent_exception(e)
+        llm_error_code = error_response.get_error().error_code.value
+        user_message = (
+            error_response.get_error().message
+            if config.HIDE_AGENT_STREAMING_EXCEPTIONS
+            else self.extended_error(error_response, e)
+        )
+        chunks_collector.append(user_message)
+        generated, execution_error = self._process_chunks(chunks_collector, config, llm_error_code)
+        self.thread_generator.send(
+            StreamedGenerationResult(
+                generated=generated,
+                generated_chunk="",
+                last=True,
+                time_elapsed=time_elapsed,
+                context=self.thread_context,
+                execution_error=execution_error,
+            ).model_dump_json()
+        )
 
     def invoke_with_a2a_output(self, query: str = "") -> dict:
         try:
@@ -843,7 +857,11 @@ class LangGraphAgent(WorkspaceAwareAgent):
             chunks_collector = []
 
         stream = self.agent_executor.stream(
-            inputs, config=config, stream_mode=["updates", "messages"], subgraphs=bool(self.subagents)
+            inputs,
+            config=config,
+            stream_mode=["updates", "messages"],
+            subgraphs=bool(self.subagents),
+            interrupt_before=self.INTERRUPT_BEFORE_TOOLS if self.require_tool_confirmation else [],
         )
         last_message = ""
         has_structured_response = False
@@ -880,6 +898,12 @@ class LangGraphAgent(WorkspaceAwareAgent):
                     break
 
         self._finalize_stream_result(last_message)
+
+        if self.require_tool_confirmation:
+            last_message, needs_auto_resume = self.ask_for_tool_confirmation(config, last_message)
+            if needs_auto_resume:
+                return self._stream_graph(None, config, chunks_collector)
+
         return last_message
 
     def _should_stop_streaming(self) -> bool:
@@ -1015,13 +1039,7 @@ class LangGraphAgent(WorkspaceAwareAgent):
             # LangGraph overrides the agent's checkpoint globally, which can lead to errors.
             # This is problematic because the agent's execution
             # should remain independent when instance methods are used.
-            run_config.update(
-                {
-                    "__pregel_checkpointer": InMemorySaver(),
-                    "max_concurrency": self.MAX_CONCURRENCY,
-                    "thread_id": "thread",
-                }
-            )
+            run_config.update(self._get_checkpoint_config())
         return run_config
 
     def _is_unique_callback(self, callbacks: List[BaseCallbackHandler], candidate) -> bool:

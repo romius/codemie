@@ -1,0 +1,45 @@
+[
+  {
+    "location": "src/codemie/agents/tool_confirmation/tool_call_confirmation_mixin.py:1959-1963 (reject_tool_call)",
+    "trigger_condition": "reject_tool_call(pending) is called with pending=None (e.g. a concurrent resume request already cleared the checkpoint) and returns immediately without closing self.thread_generator or calling resume_from_interrupt",
+    "guard_snippet": "if pending is None: self.thread_generator.close(); return  -- currently just 'if pending is None: return'",
+    "potential_consequence": "The streaming response opened by handle_tool_call_resume in assistant_handlers.py never receives a StopIteration/close signal, so the client-facing StreamingResponse hangs open until the client disconnects or a timeout fires; no test exercises this path so the regression would ship silently",
+    "gap_shape": "regression-gap",
+    "consumer": "StandardAssistantHandler.handle_tool_call_resume's run_resume closure at src/codemie/rest_api/handlers/assistant_handlers.py:16623-16631, which calls agent.reject_tool_call(pending) where pending was fetched once earlier and may be None by the time run_resume executes in the thread pool",
+    "evidence": "tests/codemie/rest_api/routers/test_tool_call_resume.py:test_deny_action_calls_reject_tool_call_on_agent uses a fully-mocked agent (MagicMock()), so mock_agent.reject_tool_call is never actually executed - it only asserts it was called with pending_event. No test in tests/codemie/agents/tool_confirmation/test_ask_for_tool_confirmation_approve_for_me.py or elsewhere calls the real ToolCallConfirmationMixin.reject_tool_call with pending=None; grepped the whole diff for 'reject_tool_call(None)' and 'pending is None' and found only the production check itself, no test invoking it."
+  },
+  {
+    "location": "src/codemie/agents/langgraph_agent.py:15628-15631 (_stream_graph auto-resume branch)",
+    "trigger_condition": "When tool_call_policy=APPROVE_FOR_ME and the graph keeps emitting consecutive safe tool calls, _stream_graph recurses into itself (`return self._stream_graph(None, config, chunks_collector)`) once per auto-approved tool call with no depth limit",
+    "guard_snippet": "no test drives ask_for_tool_confirmation's needs_auto_resume=True result through an actual _stream_graph call chain; nothing asserts bounded iteration or converts the recursion to a loop",
+    "potential_consequence": "A model that repeatedly emits safe tool calls under APPROVE_FOR_ME grows the Python call stack until RecursionError crashes the agent thread; no existing test would fail because _stream_graph's recursive branch is never invoked from a test",
+    "gap_shape": "regression-gap",
+    "consumer": "LangGraphAgent.stream()/_stream_graph, the sole caller of ask_for_tool_confirmation's needs_auto_resume result",
+    "evidence": "tests/codemie/agents/tool_confirmation/test_ask_for_tool_confirmation_approve_for_me.py only calls mixin.ask_for_tool_confirmation directly and asserts the returned tuple (needs_auto_resume is True); it never calls _stream_graph or verifies the recursive call chain. tests/codemie/agents/test_langgraph_tool_confirmation.py only covers _get_run_config, not _stream_graph. Grepped the diff for '_stream_graph' in test files and found no call sites exercising the recursive branch."
+  },
+  {
+    "location": "src/codemie/service/tool_permissions_service.py:17115-17121 (customer floor clamp)",
+    "trigger_condition": "customer_config.get_feature_setting('tool_permissions', 'min_tool_call_policy') returns the raw string stored in YAML (e.g. 'ask_for_approval'), and this string is passed directly into ToolCallPolicy.stricter(floor_policy, effective_policy), which accesses floor_policy.strictness -- a property that only exists on ToolCallPolicy enum instances, not plain str",
+    "guard_snippet": "missing: floor_policy = ToolCallPolicy(floor_policy) (or equivalent coercion) before calling ToolCallPolicy.stricter",
+    "potential_consequence": "Any tenant that configures min_tool_call_policy in customer-config.yaml raises AttributeError on every chat request that reaches get_effective_permissions, breaking tool-call confirmation (and possibly the whole chat request) for that tenant in production; the unit tests that exercise the floor never surface this because they mock the dependency to already return a ToolCallPolicy enum, not the string shape the real config loader produces",
+    "gap_shape": "broken-verification-gap",
+    "consumer": "ToolPermissionsService.get_effective_permissions, used by LangGraphAssistantBuilder.configure_agent_kwargs at src/codemie/service/assistant/assistant_engine_builder.py:16890-16897 on every chat request",
+    "evidence": "tests/codemie/service/test_tool_permissions_service.py's _with_floor() helper does `mock.get_feature_setting.return_value = policy` where `policy` is a ToolCallPolicy enum member passed in directly (e.g. test_floor_clamps_weaker_request), so the mocked customer_config never returns a plain string. Meanwhile tests/codemie/configs/test_customer_config.py:test_tool_permissions_loaded_with_floor asserts `cfg.get_feature_setting('tool_permissions', 'min_tool_call_policy') == 'ask_for_approval'` (a plain str), proving the real return type used by production code is a string, not the enum the service-layer tests substitute."
+  },
+  {
+    "location": "src/codemie/rest_api/routers/assistant.py:16817-16846 (resume_tool_call) and src/codemie/rest_api/handlers/assistant_handlers.py:16579-16584 (handle_tool_call_resume)",
+    "trigger_condition": "POST /assistants/{assistant_id}/model/tool-call/resume checks the user's access to `assistant_id` and separately checks WRITE access to the conversation from request.conversation_id, but never verifies that conversation_id actually belongs to assistant_id",
+    "guard_snippet": "missing: a check that conv.assistant_ids contains assistant.id (or equivalent) before building the agent and resuming",
+    "potential_consequence": "A user with WRITE access to a conversation under assistant A1 and READ access to unrelated assistant A2 can call the endpoint with assistant_id=A2 and conversation_id=<A1's conversation>, causing the handler to build an agent for A2 while resuming A1's pending tool call/checkpoint -- a cross-resource state confusion / potential authorization bypass",
+    "gap_shape": "regression-gap",
+    "consumer": "resume_tool_call route at src/codemie/rest_api/routers/assistant.py:16817, which delegates to handle_tool_call_resume without an assistant/conversation ownership check",
+    "evidence": "tests/codemie/rest_api/routers/test_tool_call_resume.py covers 404-when-no-checkpoint, allow-delegates-to-resume_from_interrupt, and deny-delegates-to-reject_tool_call, all using a mock_assistant/mock_user pair consistent with the conversation - none constructs a mismatched assistant_id/conversation_id pair, so no test would catch a missing ownership check; grepped the diff for 'assistant_ids' near the resume handler/router code and found no such check in the real (non-doc) files."
+  },
+  {
+    "location": "Makefile:109-111 (run target)",
+    "trigger_condition": "the `run:` Makefile target was changed from `poetry run uvicorn codemie.rest_api.main:app --host=0.0.0.0 --port=8080 --reload` to bare `poetry run uvicorn` with no app module, host, port, or reload flag",
+    "guard_snippet": "no test or CI step invokes `make run`; nothing verifies the Makefile command still launches the app module",
+    "potential_consequence": "`make run` now exits immediately with uvicorn's usage error, breaking local server startup for every developer using the documented workflow; this ships unnoticed because Makefile targets are not covered by any test suite",
+    "gap_shape": "other"
+  }
+]

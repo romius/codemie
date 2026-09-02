@@ -1,0 +1,155 @@
+{
+  "decision": "request-changes",
+  "rationale": "Two critical defects and ten major defects were found across the feature implementation. Most severely: (1) the Makefile run target was truncated to bare `poetry run uvicorn`, breaking local server startup for all developers; (2) `self.interrupted` is never set to `True` by the mixin — `save_interrupt_context` is therefore never called (history context is lost) and the checkpoint is always cleared on resume even when a chained interrupt fires. Additionally: unbounded recursion on repeated auto-approved tool calls, ClassVar misuse for instance state, multiple crash-on-bad-input gaps, a security hole in the resume endpoint (no conversation-to-assistant ownership check), and a potential AttributeError in floor-policy clamping. Acceptance lens skipped (no spec/story artifact). 2 defer findings (put_writes no-op, dead action param) and 5 dismissed (3 false positives, 2 from diff compaction).",
+  "confidence": "low",
+  "risk_flags": ["breaking-change", "security"],
+  "business_review": [],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "pass",
+      "notes": "All commits use EPMCDME-13903: prefix per git-workflow.md."
+    },
+    {
+      "kind": "code-quality",
+      "status": "partial",
+      "notes": "New files include Apache 2.0 headers and ruff format was applied. However, new modules use `Optional[X]` and `from typing import Optional` instead of `X | None` with `from __future__ import annotations`, contrary to code-quality.md guidance. Ruff is not configured to enforce this automatically."
+    },
+    {
+      "kind": "security",
+      "status": "partial",
+      "notes": "Resume endpoint authenticates user and checks WRITE access on conversation, but does not verify the conversation belongs to the assistant identified in the URL path — a user with write access to any conversation can invoke resume against any assistant (CR-010)."
+    }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "Makefile",
+      "line": 10,
+      "title": "run target truncated; server unlaunchable",
+      "problem": "The `run:` target was changed from `poetry run uvicorn codemie.rest_api.main:app --host=0.0.0.0 --port=8080 --reload` to bare `poetry run uvicorn` with no app module, host, port, or reload flag.",
+      "impact": "`make run` exits immediately with uvicorn's usage error. Local development server cannot be started via the Makefile.",
+      "recommendation": "Restore the full command: `poetry run uvicorn codemie.rest_api.main:app --host=0.0.0.0 --port=8080 --reload`."
+    },
+    {
+      "id": "CR-002",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/codemie/agents/langgraph_agent.py",
+      "line": 740,
+      "title": "self.interrupted never set True; interrupt/resume logic dead",
+      "problem": "`self.interrupted` is initialised to `False` in `__init__` and nothing in this diff sets it to `True`. `ToolCallConfirmationMixin.ask_for_tool_confirmation` sets `self._pending_tool_confirmation = True` instead. The handler checks `getattr(agent, 'interrupted', False)` to call `save_interrupt_context`, and `run_resume` checks `if not agent.interrupted:` to decide whether to clear the checkpoint.",
+      "impact": "`save_interrupt_context` is never called, so `history_index` and `original_user_message` are never attached to the pending tool call — the resume request operates with an empty user message and no history index. The `if not agent.interrupted:` guard in `run_resume` always evaluates True, so the checkpoint is always cleared even when the resumed graph triggers a chained second interrupt, destroying the state needed for the next resume.",
+      "recommendation": "In `ask_for_tool_confirmation`, after setting `self._pending_tool_confirmation = True`, also set `self.interrupted = True`. Alternatively, remove the separate `self.interrupted` field and unify on `self._pending_tool_confirmation` in all check sites."
+    },
+    {
+      "id": "CR-003",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/agents/langgraph_agent.py",
+      "line": 729,
+      "title": "clear() at run-start destroys concurrent in-progress interrupt",
+      "problem": "When `require_tool_confirmation` is True, the `run()` method calls `ConversationCheckpointService().clear(self.conversation_id)` unconditionally before starting execution.",
+      "impact": "If a user submits a second message (second tab, retry) while a tool-call confirmation is pending, the checkpoint and pending tool call for the first request are silently wiped. The user's pending approval is lost with no notification and the first conversation's state is unrecoverable.",
+      "recommendation": "Add a guard: only call `clear()` at run-start if no `pending_checkpoint` currently exists for the conversation, or raise an error when a live interrupt is detected."
+    },
+    {
+      "id": "CR-004",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/agents/langgraph_agent.py",
+      "line": 897,
+      "title": "Unbounded recursion on repeated auto-resume",
+      "problem": "When `needs_auto_resume=True`, `_stream_graph` calls itself: `return self._stream_graph(None, config, chunks_collector)`. If the graph repeatedly emits a safe tool call under `APPROVE_FOR_ME`, each iteration deepens the Python call stack without bound.",
+      "impact": "A graph that invokes N consecutive safe tools triggers N recursive `_stream_graph` calls, eventually causing `RecursionError` and crashing the agent thread.",
+      "recommendation": "Convert the recursion to an iterative loop: `while needs_auto_resume: last_message, needs_auto_resume = self.ask_for_tool_confirmation(config, last_message)` inside `_stream_graph`."
+    },
+    {
+      "id": "CR-005",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/agents/tool_confirmation/conversation_checkpoint_saver.py",
+      "line": 287,
+      "title": "CheckpointTuple missing parent_config / pending_writes",
+      "problem": "`CheckpointTuple` is constructed with only `config`, `checkpoint`, and `metadata`. Newer LangGraph releases (≥0.3) added required `parent_config` and `pending_writes` fields.",
+      "impact": "Depending on the installed LangGraph version, `get_tuple` raises `TypeError` at construction or silently breaks history traversal / multi-step graph lookups.",
+      "recommendation": "Add `parent_config=None, pending_writes=[]` to the `CheckpointTuple` constructor call, and pin to a specific LangGraph version in `pyproject.toml` to prevent future silent breakage."
+    },
+    {
+      "id": "CR-006",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/agents/tool_confirmation/tool_call_confirmation_mixin.py",
+      "title": "ClassVar misused for per-instance state",
+      "problem": "`_pending_tool_confirmation: ClassVar[bool] = False` and `tool_pending_event: ClassVar[ToolCallPendingEvent | None] = None` are declared as class-level variables but are assigned per-instance via `self.…`. Pydantic and type checkers treat `ClassVar` as class scope; code that reads the annotation (serialisers, mypy, subclass tooling) will not see them as instance fields.",
+      "impact": "Type checkers silently accept incorrect code; Pydantic subclasses in the MRO may exclude these from `model_fields` unexpectedly; future readers will misunderstand the state lifecycle.",
+      "recommendation": "Remove the `ClassVar` annotations; initialise both as instance attributes in `__init__`: `self._pending_tool_confirmation = False` and `self.tool_pending_event = None`."
+    },
+    {
+      "id": "CR-007",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/agents/tool_confirmation/tool_call_confirmation_mixin.py",
+      "title": "IndexError when messages list is empty on interrupt",
+      "problem": "`last_ai_message = state.values[\"messages\"][-1]` is called without checking whether the list is non-empty.",
+      "impact": "If `state.values[\"messages\"]` is empty (e.g. a fresh graph interrupted before any agent message), an unhandled `IndexError` crashes `ask_for_tool_confirmation` and leaves the thread_generator unclosed.",
+      "recommendation": "Guard with `if not state.values.get('messages'): return last_message, False` before the index access."
+    },
+    {
+      "id": "CR-008",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/agents/tool_confirmation/tool_call_confirmation_mixin.py",
+      "title": "KeyError when tool_call missing id or name",
+      "problem": "`tool_call[\"id\"]` and `tool_call[\"name\"]` use direct dict access on a LangChain `tool_calls` dict entry; these keys may be absent in malformed or partially-populated payloads.",
+      "impact": "Unhandled `KeyError` crashes the method, leaving `pending_tool_confirmation` True and the interrupt state unresolvable for the session.",
+      "recommendation": "Use `tool_call.get('id')` and `tool_call.get('name')`, and return early with a warning if either is absent."
+    },
+    {
+      "id": "CR-009",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/agents/tool_confirmation/tool_call_confirmation_mixin.py",
+      "title": "Parallel tool-call batch: only first call confirmed",
+      "problem": "`tool_call = last_ai_message.tool_calls[0]` takes only the first tool call. If the model emits a parallel batch, the remaining calls proceed without confirmation.",
+      "impact": "Multiple tool calls that require approval are automatically executed without user confirmation, violating the feature's security/control guarantee.",
+      "recommendation": "Confirm all pending tool calls in the batch (e.g. iterate `tool_calls` and emit one pending event per call), or explicitly block on batch tool calls when `require_tool_confirmation` is True."
+    },
+    {
+      "id": "CR-010",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/rest_api/handlers/assistant_handlers.py",
+      "line": 793,
+      "title": "Resume endpoint: no conversation-to-assistant ownership check",
+      "problem": "`handle_tool_call_resume` verifies the user has `WRITE` access to the conversation but does not verify that the conversation belongs to the assistant identified by `assistant_id` in the URL path.",
+      "impact": "A user with write access to conversation C1 (under assistant A1) can call `POST /assistants/A2/model/tool-call/resume` with `conversation_id=C1`, triggering an unrelated agent against mismatched state. This is a cross-resource privilege escalation.",
+      "recommendation": "Add a check that `conv.assistant_ids` includes `assistant.id` (or that the active assistant matches) before proceeding."
+    },
+    {
+      "id": "CR-011",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/rest_api/handlers/assistant_handlers.py",
+      "line": 844,
+      "title": "TOCTOU: reject_tool_call(None) leaves thread_generator unclosed",
+      "problem": "`pending` is fetched once in `handle_tool_call_resume`, then passed to `reject_tool_call(pending)` inside `run_resume`. If a concurrent request clears the conversation's pending tool call between validation and `run_resume` execution, `pending` may be `None`.",
+      "impact": "`reject_tool_call(None)` returns immediately without calling `resume_from_interrupt()` and without closing `self.thread_generator`, leaving the streaming response open until client disconnect times it out.",
+      "recommendation": "In `reject_tool_call`, when `pending is None`, close `thread_generator` before returning: `if self.thread_generator: self.thread_generator.close(); return`."
+    },
+    {
+      "id": "CR-012",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/service/tool_permissions_service.py",
+      "line": 68,
+      "title": "floor_policy as raw string causes AttributeError in stricter()",
+      "problem": "`floor_policy = customer_config.get_feature_setting(...)` returns the raw config value (likely a `str`). `ToolCallPolicy.stricter(floor_policy, effective_policy)` calls `floor_policy.strictness`, which is defined on `ToolCallPolicy` enum instances, not on plain strings.",
+      "impact": "Any deployment with a `min_tool_call_policy` customer config value raises `AttributeError` on every chat request, disabling tool-call confirmation for the entire tenant.",
+      "recommendation": "Coerce the raw value before use: `floor_policy = ToolCallPolicy(floor_policy)` wrapped in a `try/except ValueError` to handle invalid config gracefully."
+    }
+  ],
+  "finding_status": []
+}

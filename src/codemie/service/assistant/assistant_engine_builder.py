@@ -19,7 +19,7 @@ from typing import Any, Callable
 from langgraph.graph.state import CompiledStateGraph
 
 from codemie.configs.logger import logger
-from codemie.core.models import AssistantChatRequest
+from codemie.core.models import AssistantChatRequest, ToolCallPolicy
 from codemie.core.utils import dedupe_preserve_order
 from codemie.core.thread import MessageQueue
 from codemie.rest_api.models.assistant import Assistant
@@ -287,10 +287,22 @@ class LangGraphAssistantBuilder:
         llm_model: str,
         smart_tool_selection_enabled: bool,
         *,
+        allow_tool_confirmation: bool = False,
         create_subagent_executors: Callable[..., list[CompiledStateGraph[Any, Any, Any, Any]]],
         get_subagent_descriptions: Callable[[Assistant, User], dict[str, str]],
     ) -> None:
         agent_kwargs["smart_tool_selection_enabled"] = smart_tool_selection_enabled
+
+        from codemie.service.tool_permissions_service import ToolPermissionsService
+
+        permissions = ToolPermissionsService().get_effective_permissions(
+            assistant,
+            tool_call_policy_override=request.tool_call_policy,
+        )
+        agent_kwargs["require_tool_confirmation"] = (
+            allow_tool_confirmation and permissions.tool_call_policy != ToolCallPolicy.AUTO_APPROVE
+        )
+        agent_kwargs["tool_call_policy"] = permissions.tool_call_policy
 
         subagents = create_subagent_executors(
             assistant=assistant,

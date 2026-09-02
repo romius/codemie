@@ -76,6 +76,7 @@ def _langgraph_agent() -> LangGraphAgent:
     agent.thread_generator = MagicMock()
     agent.thread_context = {}
     agent._otel_context = context.get_current()
+    agent.require_tool_confirmation = False
     agent.tool_error_callback = MagicMock()
     agent.tool_error_callback.has_errors.return_value = False
     agent._get_inputs = MagicMock(return_value={})

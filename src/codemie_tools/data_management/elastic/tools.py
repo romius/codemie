@@ -29,6 +29,9 @@ class SearchElasticIndex(CodeMieTool):
     description: str = SEARCH_ES_INDEX_TOOL.description
     args_schema: Type[BaseModel] = SearchElasticIndexInput
 
+    def is_safe(self, args: dict) -> bool:
+        return True
+
     def execute(self, index: str, query: str, **kwargs: Any) -> Any:
         if not self.config:
             raise ValueError("Elastic configuration is not provided")

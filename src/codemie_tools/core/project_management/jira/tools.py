@@ -119,6 +119,9 @@ class GenericJiraIssueTool(CodeMieTool, FileToolMixin, JiraAttachmentMixin):
     issue_search_pattern: str = r"/rest/api/\d+/search"
     response_format: str = "content_and_artifact"
 
+    def is_safe(self, args: dict) -> bool:
+        return self._http_method_is_safe(args)
+
     def __init__(self, config: JiraConfig):
         super().__init__(config=config)
         # Cloud integrations (OAuth 3LO or cloud PAT) use the Jira REST v3 JQL search endpoint and

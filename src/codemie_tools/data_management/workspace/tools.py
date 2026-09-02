@@ -105,6 +105,9 @@ class ListWorkspaceFilesTool(BaseWorkspaceTool):
     description: str = LIST_WORKSPACE_FILES_TOOL.description
     args_schema: Type[BaseModel] = ListWorkspaceFilesInput
 
+    def is_safe(self, args: dict) -> bool:
+        return True
+
     def execute(self, glob: str | None = None) -> str:
         workspace_id = self._get_workspace_id()
         files = self.workspace_service.list_files(workspace_id, self.user, glob=glob)
@@ -115,6 +118,9 @@ class ReadWorkspaceFileTool(BaseWorkspaceTool):
     name: str = READ_WORKSPACE_FILE_TOOL.name
     description: str = READ_WORKSPACE_FILE_TOOL.description
     args_schema: Type[BaseModel] = ReadWorkspaceFileInput
+
+    def is_safe(self, args: dict) -> bool:
+        return True
 
     def execute(self, file_path: str) -> str:
         workspace_id = self._get_workspace_id()
@@ -203,6 +209,9 @@ class GrepWorkspaceFilesTool(BaseWorkspaceTool):
     name: str = GREP_WORKSPACE_FILES_TOOL.name
     description: str = GREP_WORKSPACE_FILES_TOOL.description
     args_schema: Type[BaseModel] = GrepWorkspaceFilesInput
+
+    def is_safe(self, args: dict) -> bool:
+        return True
 
     def execute(self, query: str, glob: str | None = None) -> str:
         workspace_id = self._get_workspace_id()

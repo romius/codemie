@@ -788,6 +788,9 @@ class GetWikiTool(BaseAzureDevOpsWikiTool):
     description: str = GET_WIKI_TOOL.description
     args_schema: Type[BaseModel] = GetWikiInput
 
+    def is_safe(self, args: dict) -> bool:
+        return True
+
     def execute(self, wiki_identified: str):
         """Extract ADO wiki information."""
         try:
@@ -804,6 +807,9 @@ class ListWikisTool(BaseAzureDevOpsWikiTool):
     name: str = LIST_WIKIS_TOOL.name
     description: str = LIST_WIKIS_TOOL.description
     args_schema: Type[BaseModel] = ListWikisInput
+
+    def is_safe(self, args: dict) -> bool:
+        return True
 
     def execute(self):
         """
@@ -856,6 +862,9 @@ class ListPagesTool(BaseAzureDevOpsWikiTool):
     name: str = LIST_PAGES_TOOL.name
     description: str = LIST_PAGES_TOOL.description
     args_schema: Type[BaseModel] = ListPagesInput
+
+    def is_safe(self, args: dict) -> bool:
+        return True
 
     def _flatten_page_tree(self, page_tree: Dict, include_root: bool = False) -> List[Dict]:
         """
@@ -1038,6 +1047,9 @@ class GetWikiPageByPathTool(BaseAzureDevOpsWikiTool):
     description: str = GET_WIKI_PAGE_BY_PATH_TOOL.description
     args_schema: Type[BaseModel] = GetPageByPathInput
 
+    def is_safe(self, args: dict) -> bool:
+        return True
+
     def execute(self, wiki_identified: str, page_name: str, include_attachments: bool = False):
         """
         Extract ADO wiki page content and optionally download attachments.
@@ -1095,6 +1107,9 @@ class GetWikiPageByIdTool(BaseAzureDevOpsWikiTool):
     name: str = GET_WIKI_PAGE_BY_ID_TOOL.name
     description: str = GET_WIKI_PAGE_BY_ID_TOOL.description
     args_schema: Type[BaseModel] = GetPageByIdInput
+
+    def is_safe(self, args: dict) -> bool:
+        return True
 
     def execute(self, wiki_identified: str, page_id: int, include_attachments: bool = False):
         """
@@ -1592,6 +1607,9 @@ class SearchWikiPagesTool(BaseAzureDevOpsWikiTool):
     description: str = SEARCH_WIKI_PAGES_TOOL.description
     args_schema: Type[BaseModel] = SearchWikiPagesInput
 
+    def is_safe(self, args: dict) -> bool:
+        return True
+
     def execute(
         self,
         wiki_identified: str,
@@ -1672,6 +1690,9 @@ class GetWikiPageCommentsByIdTool(BaseAzureDevOpsWikiTool):
     description: str = GET_WIKI_PAGE_COMMENTS_BY_ID_TOOL.description
     args_schema: Type[BaseModel] = GetPageCommentsByIdInput
 
+    def is_safe(self, args: dict) -> bool:
+        return True
+
     def execute(
         self,
         wiki_identified: str,
@@ -1715,6 +1736,9 @@ class GetWikiPageCommentsByPathTool(BaseAzureDevOpsWikiTool):
     name: str = GET_WIKI_PAGE_COMMENTS_BY_PATH_TOOL.name
     description: str = GET_WIKI_PAGE_COMMENTS_BY_PATH_TOOL.description
     args_schema: Type[BaseModel] = GetPageCommentsByPathInput
+
+    def is_safe(self, args: dict) -> bool:
+        return True
 
     def execute(
         self,
@@ -2069,6 +2093,9 @@ class GetWikiAttachmentContentTool(BaseAzureDevOpsWikiTool, AttachmentContentMix
     # Optional chat model for image description / PDF OCR (set via metadata or directly)
     chat_model: Any = None
 
+    def is_safe(self, args: dict) -> bool:
+        return True
+
     def _resolve_attachment_url(
         self,
         wiki_identified: str,
@@ -2212,6 +2239,9 @@ class GetPageStatsByIdTool(BaseAzureDevOpsWikiTool):
     description: str = GET_PAGE_STATS_BY_ID_TOOL.description
     args_schema: Type[BaseModel] = GetPageStatsByIdInput
 
+    def is_safe(self, args: dict) -> bool:
+        return True
+
     def execute(self, wiki_identified: str, page_id: int, page_views_for_days: int = 30):
         """Retrieve view statistics for a wiki page by its ID."""
         return self._get_wiki_page_stats(
@@ -2227,6 +2257,9 @@ class GetPageStatsByPathTool(BaseAzureDevOpsWikiTool):
     name: str = GET_PAGE_STATS_BY_PATH_TOOL.name
     description: str = GET_PAGE_STATS_BY_PATH_TOOL.description
     args_schema: Type[BaseModel] = GetPageStatsByPathInput
+
+    def is_safe(self, args: dict) -> bool:
+        return True
 
     def execute(self, wiki_identified: str, page_name: str, page_views_for_days: int = 30):
         """Retrieve view statistics for a wiki page by its path."""

@@ -424,6 +424,9 @@ class GetAssistantsTool(CodeMieTool):
     args_schema: Type[BaseModel] = GetAssistantsInput
     user: User
 
+    def is_safe(self, args: dict) -> bool:
+        return True
+
     def execute(
         self,
         user_name: Optional[str] = None,
@@ -496,6 +499,9 @@ class GetConversationMetricsTool(CodeMieTool):
     args_schema: Type[BaseModel] = GetConversationMetricsInput
     user: User
 
+    def is_safe(self, args: dict) -> bool:
+        return True
+
     def execute(
         self,
         user_name: Optional[str] = None,
@@ -542,6 +548,9 @@ class GetRawConversationsTool(CodeMieTool):
     description: str = GET_RAW_CONVERSATIONS_TOOL.description
     args_schema: Type[BaseModel] = GetRawConversationsInput
     user: User
+
+    def is_safe(self, args: dict) -> bool:
+        return True
 
     def execute(
         self,
@@ -590,6 +599,9 @@ class GetSpendingTool(CodeMieTool):
     description: str = GET_SPENDING_TOOL.description
     args_schema: Type[BaseModel] = GetSpendingInput
     user: User
+
+    def is_safe(self, args: dict) -> bool:
+        return True
 
     def execute(
         self,
@@ -657,6 +669,9 @@ class GetKeySpendingTool(CodeMieTool):
     description: str = GET_KEY_SPENDING_TOOL.description
     args_schema: Type[BaseModel] = GetKeySpendingInput
     user: User
+
+    def is_safe(self, args: dict) -> bool:
+        return True
 
     def execute(
         self,
@@ -728,6 +743,9 @@ class GetConversationAnalyticsTool(CodeMieTool):
     description: str = GET_CONVERSATION_ANALYTICS_TOOL.description
     args_schema: Type[BaseModel] = GetConversationAnalyticsInput
     user: User
+
+    def is_safe(self, args: dict) -> bool:
+        return True
 
     @staticmethod
     def _transform_analytics_to_dicts(analytics) -> dict:

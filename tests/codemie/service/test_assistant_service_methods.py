@@ -373,6 +373,7 @@ class TestApplyConversationRuntimeOverrides:
         conversation.llm_model = "conversation-model"
         conversation.enable_image_generation = False
         conversation.image_generation_model = "conversation-image-model"
+        conversation.tool_call_policy = None
         mock_find_by_id.return_value = conversation
 
         request = AssistantChatRequest(text='Test', file_names=[], conversation_id='conv-1')
@@ -398,6 +399,7 @@ class TestApplyConversationRuntimeOverrides:
         conversation.llm_model = "conversation-model"
         conversation.enable_image_generation = False
         conversation.image_generation_model = "conversation-image-model"
+        conversation.tool_call_policy = None
         mock_find_by_id.return_value = conversation
 
         request = AssistantChatRequest(
@@ -428,6 +430,7 @@ class TestApplyConversationRuntimeOverrides:
         conversation.llm_model = None
         conversation.enable_image_generation = None
         conversation.image_generation_model = None
+        conversation.tool_call_policy = None
         mock_find_by_id.return_value = conversation
 
         request = AssistantChatRequest(text='Test', file_names=[], conversation_id='conv-1')
@@ -565,6 +568,7 @@ class TestConfigureLanggraphAgent:
         mock_get_descriptions.return_value = {'subagent1': 'Description 1', 'subagent2': 'Description 2'}
 
         assistant = Mock(spec=Assistant)
+        assistant.tool_permissions = None
         user = Mock(spec=User)
         request = AssistantChatRequest(text='Test', file_names=[])
 
@@ -597,6 +601,7 @@ class TestConfigureLanggraphAgent:
         mock_create_subagents.return_value = None
 
         assistant = Mock(spec=Assistant)
+        assistant.tool_permissions = None
         user = Mock(spec=User)
         request = AssistantChatRequest(text='Test', file_names=[])
 

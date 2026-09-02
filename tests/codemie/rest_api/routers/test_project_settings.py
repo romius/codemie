@@ -30,6 +30,25 @@ def anyio_backend():
     return 'asyncio'
 
 
+@pytest.fixture(autouse=True)
+def _teams_bot_integration_enabled():
+    """test_update_ms_teams_project_setting_rejects_project_mismatch runs the real
+    validate_ms_teams_request, which gates on the shared customer-config.yaml flag first.
+    Decouple that from the shared config value so an unrelated change to that file
+    (see CR-002) can't make it fail with a 403 instead of the mismatch it tests."""
+    from codemie.configs.customer_config import CustomerConfig
+
+    original = CustomerConfig.is_feature_enabled
+
+    def _is_feature_enabled(self, feature_name, *args, **kwargs):
+        if feature_name == "teamsBotIntegration":
+            return True
+        return original(self, feature_name, *args, **kwargs)
+
+    with patch.object(CustomerConfig, "is_feature_enabled", _is_feature_enabled):
+        yield
+
+
 @pytest.mark.anyio
 @patch('codemie.service.settings.settings_index_service.SettingsIndexService.run')
 @patch("codemie.rest_api.security.idp.local.LocalIdp.authenticate")

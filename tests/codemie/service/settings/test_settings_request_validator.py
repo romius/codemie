@@ -187,6 +187,25 @@ def test_normalize_is_enabled_preserves_explicit_false():
     assert values[0].value is False
 
 
+@pytest.fixture(autouse=True)
+def _teams_bot_integration_enabled():
+    """These tests exercise validate_ms_teams_request's own logic, not the customer-config
+    feature gate — decouple them from the shared customer-config.yaml value so an unrelated
+    change to that file (see CR-002) can't make them fail with a 403 instead of the code
+    they actually intend to test. The one test that targets the gate itself overrides this."""
+    from codemie.configs.customer_config import CustomerConfig
+
+    original = CustomerConfig.is_feature_enabled
+
+    def _is_feature_enabled(self, feature_name, *args, **kwargs):
+        if feature_name == "teamsBotIntegration":
+            return True
+        return original(self, feature_name, *args, **kwargs)
+
+    with patch.object(CustomerConfig, "is_feature_enabled", _is_feature_enabled):
+        yield
+
+
 def _ms_teams_request(credential_values, project_name="proj1"):
     return SettingRequest(
         project_name=project_name,

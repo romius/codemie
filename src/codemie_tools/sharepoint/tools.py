@@ -98,6 +98,9 @@ class SharePointTool(CodeMieTool, FileToolMixin):
 
     _token: Optional[str] = PrivateAttr(default=None)
 
+    def is_safe(self, args: dict) -> bool:
+        return self._http_method_is_safe(args)
+
     @property
     def _is_delegated(self) -> bool:
         return self.config.auth_type in _DELEGATED_AUTH

@@ -554,6 +554,37 @@ class FileNamesCountValidatorMixin:
         return file_names
 
 
+class ToolCallPolicy(str, Enum):
+    """How tool calls are confirmed during an assistant conversation."""
+
+    ASK_FOR_APPROVAL = "ask_for_approval"
+    AUTO_APPROVE = "auto_approve"
+    APPROVE_FOR_ME = "approve_for_me"
+
+    @property
+    def strictness(self) -> int:
+        """Relative confirmation strictness; higher requires more user approval."""
+        match self:
+            case ToolCallPolicy.ASK_FOR_APPROVAL:
+                return 2
+            case ToolCallPolicy.APPROVE_FOR_ME:
+                return 1
+            case _:
+                return 0
+
+    @staticmethod
+    def stricter(a: "ToolCallPolicy", b: "ToolCallPolicy") -> "ToolCallPolicy":
+        """Return whichever policy requires more confirmation."""
+        return a if a.strictness >= b.strictness else b
+
+
+class ToolCallAction(str, Enum):
+    """User decision on a paused tool-call confirmation."""
+
+    allow = "allow"
+    deny = "deny"
+
+
 class AssistantChatRequest(FileNamesCountValidatorMixin, ConfiguredModel):
     _history_variant_persisted: bool = PrivateAttr(default=False)
 
@@ -660,6 +691,10 @@ class AssistantChatRequest(FileNamesCountValidatorMixin, ConfiguredModel):
             "Ignored if already enabled on assistant."
         ),
     )
+    tool_call_policy: Optional[ToolCallPolicy] = Field(
+        default=None,
+        description="Tool-call policy override for this request. Ignored if the assistant disallows overrides.",
+    )
 
     @model_validator(mode="before")
     def before_init(cls, values):
@@ -723,6 +758,7 @@ class UpdateConversationRequest(ConfiguredModel):
     llm_model: Optional[str] = None
     enable_image_generation: Optional[bool] = None
     image_generation_model: Optional[str] = None
+    tool_call_policy: Optional[ToolCallPolicy] = None
 
 
 class UpdateAiMessageRequest(ConfiguredModel):

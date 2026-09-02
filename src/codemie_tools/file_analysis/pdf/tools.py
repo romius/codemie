@@ -89,6 +89,9 @@ class PDFTool(CodeMieTool, FileToolMixin):
     config: FileAnalysisConfig
     pdf_processor: Optional[PdfProcessor] = None
 
+    def is_safe(self, args: dict) -> bool:
+        return True
+
     def __init__(self, config: FileAnalysisConfig) -> None:
         """
         Initialize the PDFTool with configuration containing PDF files.

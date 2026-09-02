@@ -112,6 +112,9 @@ class SonarTool(CodeMieTool):
     args_schema: Type[BaseModel] = SonarToolInput
     description: str = SONAR_TOOL.description
 
+    def is_safe(self, args: dict) -> bool:
+        return self._http_method_is_safe(args)
+
     def _healthcheck(self):
         """Performs a healthcheck for Sonar integration.
 

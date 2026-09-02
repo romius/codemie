@@ -54,6 +54,9 @@ class ReadFileTool(CodeMieTool):
     description: str = READ_FILE_TOOL.description
     root_dir: Optional[str] = "."
 
+    def is_safe(self, args: dict) -> bool:
+        return True
+
     def execute(self, file_path: str, raise_error=False, *args, **kwargs) -> str:
         try:
             read_path = get_relative_path(self.root_dir, file_path)
@@ -85,6 +88,9 @@ class ListDirectoryTool(CodeMieTool):
     args_schema: Type[BaseModel] = DirectoryListingInput
     description: str = LIST_DIRECTORY_TOOL.description
     root_dir: Optional[str] = "."
+
+    def is_safe(self, args: dict) -> bool:
+        return True
 
     def execute(self, dir_path: str = ".", *args, **kwargs) -> str:
         try:

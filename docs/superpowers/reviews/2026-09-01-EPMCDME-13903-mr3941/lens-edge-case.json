@@ -1,0 +1,74 @@
+[
+{
+  "location": "src/codemie_tools/data_management/workspace/tools.py:111-114 (ListWorkspaceFilesTool.execute) and :216-219 (GrepWorkspaceFilesTool.execute)",
+  "trigger_condition": "Tool invoked after execute() signature changed from glob to prefix/recursive",
+  "guard_snippet": "files = self.workspace_service.list_files(workspace_id, self.user, prefix=prefix, recursive=recursive)",
+  "potential_consequence": "NameError: 'glob' undefined — every call to these two tools crashes"
+},
+{
+  "location": "src/codemie/service/tool_permissions_service.py:~55-63 (get_effective_permissions floor_policy clamp)",
+  "trigger_condition": "Customer config sets features:tool_permissions.min_tool_call_policy to a string value",
+  "guard_snippet": "floor_policy = ToolCallPolicy(floor_policy) if floor_policy else None",
+  "potential_consequence": "AttributeError: str has no '.strictness' — every chat request fails once the setting is configured"
+},
+{
+  "location": "src/codemie/agents/tool_confirmation/tool_call_confirmation_mixin.py:~62-70 (ask_for_tool_confirmation)",
+  "trigger_condition": "AI message contains more than one tool_call in the same step",
+  "guard_snippet": "pending_event = ToolCallPendingEvent(..., tool_name=', '.join(tc['name'] for tc in tool_calls) ...) or interrupt per-call",
+  "potential_consequence": "User is shown/confirms only the first tool call; remaining tool_calls execute silently on resume with no individual review"
+},
+{
+  "location": "src/codemie/agents/tool_confirmation/tool_call_confirmation_mixin.py:~55 (ask_for_tool_confirmation)",
+  "trigger_condition": "Graph interrupts before 'tools' but last message in state is not an AIMessage",
+  "guard_snippet": "if not getattr(last_ai_message, 'tool_calls', None):",
+  "potential_consequence": "AttributeError on '.tool_calls' crashes the streaming request instead of the intended warn-and-skip path"
+},
+{
+  "location": "src/codemie/agents/tool_confirmation/tool_call_confirmation_mixin.py:_get_checkpoint_config (~lines 95-108)",
+  "trigger_condition": "require_tool_confirmation is True but self.conversation_id is None/empty",
+  "guard_snippet": "if self.require_tool_confirmation and self.conversation_id: ... else: fall back to per-run InMemorySaver",
+  "potential_consequence": "Checkpointer keyed on thread_id=None; concurrent conversation-less runs can read/overwrite each other's pending checkpoint"
+},
+{
+  "location": "src/codemie/rest_api/handlers/assistant_handlers.py:handle_tool_call_resume (~16573-16636) and routers/assistant.py:resume_tool_call (~16811-16846)",
+  "trigger_condition": "Two concurrent POST /tool-call/resume requests for the same conversation_id",
+  "guard_snippet": "acquire per-conversation lock (e.g. SELECT ... FOR UPDATE or Redis lock) before reading/clearing pending_checkpoint",
+  "potential_consequence": "Race lets the mutating tool call execute twice or corrupts the shared checkpoint row"
+},
+{
+  "location": "src/codemie/rest_api/handlers/assistant_handlers.py:handle_tool_call_resume (~16596-16626)",
+  "trigger_condition": "pending tool call is cleared/expired between router's _resume_tool_call check and the handler's own get_pending_tool_call call (TOCTOU)",
+  "guard_snippet": "if pending is None and request.action == ToolCallAction.allow: raise ExtendedHTTPException(404, ...)",
+  "potential_consequence": "resume_from_interrupt() runs anyway with text='' and history_index=None, silently starting an empty/blank agent invocation"
+},
+{
+  "location": "src/codemie/service/conversation_service.py:reset conversation (~lines 849-850)",
+  "trigger_condition": "Conversation is reset while a tool-call confirmation is pending",
+  "guard_snippet": "conversation.pending_checkpoint = None; conversation.pending_tool_call = None",
+  "potential_consequence": "Stale pending_tool_call keeps surfacing in ConversationResponse after reset, even though the checkpoint needed to resume it is gone"
+},
+{
+  "location": "src/codemie/agents/tool_confirmation/conversation_checkpoint_saver.py:put_writes (~lines 74-76)",
+  "trigger_condition": "LangGraph emits pending/partial writes for a step interrupted before completion (e.g. parallel tool dispatch)",
+  "guard_snippet": "persist writes keyed by (thread_id, checkpoint_id, task_id) instead of no-op",
+  "potential_consequence": "Partial step state is discarded; resume can silently lose in-flight write data for that step"
+},
+{
+  "location": "src/codemie_tools/base/codemie_tool.py:_http_method_is_safe (~lines 39-42)",
+  "trigger_condition": "args['method'] is a non-string truthy value (int, list, dict)",
+  "guard_snippet": "method = str(args.get(method_key) or '').strip().upper()",
+  "potential_consequence": "AttributeError from calling .strip() on a non-string crashes is_safe() classification instead of defaulting to unsafe"
+},
+{
+  "location": "src/codemie/core/models.py:ToolCallPolicy.strictness (~lines 32-38)",
+  "trigger_condition": "A future ToolCallPolicy member is added without an explicit strictness case",
+  "guard_snippet": "case _: raise ValueError(f'Unhandled ToolCallPolicy: {self}')",
+  "potential_consequence": "New policy variants silently fall through to strictness 0 (least strict), weakening confirmation requirements without warning"
+},
+{
+  "location": "src/codemie/agents/tool_confirmation/tool_call_confirmation_mixin.py:_replay_tool_start_on_resume (~lines 105-120)",
+  "trigger_condition": "AI message being resumed had multiple tool_calls but only pending_tool_call_id (the first) is tracked",
+  "guard_snippet": "replay _on_tool_start for every id in all_tool_call_ids, not just the tracked pending_tool_call_id",
+  "potential_consequence": "Tool-start thought is never emitted for the other tool calls; their _on_tool_end has no matching in-progress thought to close"
+}
+]

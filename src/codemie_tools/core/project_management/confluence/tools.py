@@ -90,6 +90,9 @@ class GenericConfluenceTool(CodeMieTool, FileToolMixin):
     throw_truncated_error: bool = False
     page_action_prefix: str = "/rest/api/content"
 
+    def is_safe(self, args: dict) -> bool:
+        return self._http_method_is_safe(args)
+
     def _create_client(self) -> Confluence:
         # OAuth-backed (Atlassian 3LO) settings authenticate with a per-user Bearer token against
         # https://api.atlassian.com/ex/confluence/{cloudId}; PAT settings keep the existing basic auth.

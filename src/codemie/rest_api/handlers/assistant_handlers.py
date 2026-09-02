@@ -18,9 +18,13 @@ import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
+from functools import partial
 from time import time
 from types import SimpleNamespace
-from typing import List
+from typing import TYPE_CHECKING, List
+
+if TYPE_CHECKING:
+    from codemie.rest_api.routers.assistant import ToolCallResumeRequest
 
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from pydantic import BaseModel
@@ -41,6 +45,7 @@ from codemie.core.models import (
     BackgroundTaskRequest,
     AssistantDetails,
     TokensUsage,
+    ToolCallAction,
 )
 from codemie.core.thread import ThreadedGenerator
 from codemie.rest_api.a2a.client.remote_agent_connection import RemoteAgentConnections, TaskCallbackArg
@@ -65,6 +70,7 @@ from codemie.service.conversation.history_projection_service import (
 from codemie.service.background_tasks_service import BackgroundTasksService
 from codemie.service.constants import AI_AGENT_CONVERSATION_REPLAY_V2_ENABLED_KEY
 from codemie.service.agent_workspace_service import AgentWorkspaceService
+from codemie.service.conversation_checkpoint_service import ConversationCheckpointService
 from codemie.service.conversation_service import ConversationService
 from codemie.service.dynamic_config_service import DynamicConfigService
 from codemie.service.llm_service.llm_service import llm_service
@@ -448,9 +454,11 @@ class AssistantRequestHandler(ABC):
                     children=thought.get('children') if thought.get('children') else [],
                     input_text=thought.get('input_text', ''),
                     error=thought.get('error', False),
+                    aborted=thought.get('aborted', False),
+                    interrupted=thought.get('interrupted', False),
                 )
                 for thought in thoughts
-                if thought.get('message', '')
+                if thought.get('message', '') or thought.get('aborted', False) or thought.get('interrupted', False)
             ]
 
         return [
@@ -463,6 +471,8 @@ class AssistantRequestHandler(ABC):
                 children=thought.get('children') if thought.get('children') else [],
                 input_text=thought.get('input_text', ''),
                 error=thought.get('error', False),
+                aborted=thought.get('aborted', False),
+                interrupted=thought.get('interrupted', False),
                 metadata=thought.get('metadata') or {},
                 output_format=thought.get('output_format'),
                 in_progress=thought.get('in_progress', False),
@@ -472,6 +482,8 @@ class AssistantRequestHandler(ABC):
                 thought.get('message')
                 or thought.get('input_text')
                 or thought.get('error', False)
+                or thought.get('aborted', False)
+                or thought.get('interrupted', False)
                 or (thought.get('metadata') or {}).get('replay_type') == TOOL_REPLAY_TYPE
             )
         ]
@@ -691,6 +703,16 @@ class StandardAssistantHandler(AssistantRequestHandler):
             a2ui_envelopes.append(json.loads(value)["a2ui"])
         return generation_result if generation_result.generated is not None else response
 
+    @staticmethod
+    def _run_stream(stream, generator_queue: ThreadedGenerator) -> None:
+        try:
+            stream()
+        except MCPAuthenticationRequiredException as exc:
+            generator_queue.close(exc)
+
+    def _start_stream(self, stream, generator_queue: ThreadedGenerator) -> None:
+        run_assistant_in_thread_pool(partial(self._run_stream, stream, generator_queue))
+
     def _serve_data(
         self,
         stream,
@@ -702,15 +724,9 @@ class StandardAssistantHandler(AssistantRequestHandler):
         error_detail_level: ErrorDetailLevel = ErrorDetailLevel.STANDARD,
         user_message_received_at: datetime | None = None,
     ):
-        def run_stream() -> None:
-            try:
-                stream()
-            except MCPAuthenticationRequiredException as exc:
-                generator_queue.close(exc)
-
         # Assistant execution runs in a separate pool so assistant streams and
         # background generation do not contend with workflow producers/consumers.
-        run_assistant_in_thread_pool(run_stream)
+        self._start_stream(stream, generator_queue)
 
         # We pass an empty string to avoid sending the default None value in the chat history.
         response = StreamedGenerationResult(generated="")
@@ -738,6 +754,12 @@ class StandardAssistantHandler(AssistantRequestHandler):
                     a2ui_envelopes=a2ui_envelopes or None,
                 )
             )
+            if getattr(agent, "_pending_tool_confirmation", False):
+                ConversationCheckpointService().save_interrupt_context(
+                    request.conversation_id,
+                    request.history_index,
+                    request.text or "",
+                )
             final_chunk = self._build_final_chunk(agent, execution_start, include_tool_errors, error_detail_level)
             if final_chunk:
                 yield final_chunk.model_dump_json() + "\n"
@@ -992,6 +1014,78 @@ class StandardAssistantHandler(AssistantRequestHandler):
 
         return tool_errors, agent_error
 
+    def handle_tool_call_resume(
+        self,
+        request: "ToolCallResumeRequest",
+        raw_request: Request,
+    ) -> StreamingResponse:
+        """Handle allow/deny resume for a paused tool call confirmation."""
+        conv = Conversation.find_by_conversation_id(request.conversation_id)
+        if conv is None or not Ability(self.user).can(Action.WRITE, conv):
+            raise ExtendedHTTPException(
+                code=status.HTTP_403_FORBIDDEN,
+                message="Conversation not found or access denied.",
+            )
+        assistant_id = getattr(self.assistant, "id", None)
+        if assistant_id not in (conv.assistant_ids or []) and assistant_id != conv.initial_assistant_id:
+            raise ExtendedHTTPException(
+                code=status.HTTP_403_FORBIDDEN,
+                message="Conversation not found or access denied.",
+            )
+
+        generator_queue = ThreadedGenerator(
+            request_uuid=self.request_uuid,
+            user_id=self.user.id,
+            conversation_id=request.conversation_id,
+        )
+        raw_request.state.on_disconnect(lambda: generator_queue.close())
+
+        # Build a minimal chat request so AssistantService.build_agent has the right context.
+        # Restore history_index and original user message from the pending tool call so the
+        # resume save updates the same history entry instead of creating a new one.
+        pending = ConversationCheckpointService().get_pending_tool_call(request.conversation_id)
+        chat_request = AssistantChatRequest.model_construct(
+            conversation_id=request.conversation_id,
+            text=pending.original_user_message if pending else "",
+            history=[],
+            stream=True,
+            file_names=[],
+            save_history=True,
+            history_index=pending.history_index if pending else None,
+        )
+
+        chat_request.mark_history_variant_persisted()
+
+        agent = AssistantService.build_agent(
+            assistant=self.assistant,
+            request=chat_request,
+            user=self.user,
+            request_uuid=self.request_uuid,
+            thread_generator=generator_queue,
+        )
+
+        execution_start = time()
+
+        # Clear the checkpoint after streaming completes, but only when the
+        # graph finished without a second interrupt. If the resumed graph
+        # pauses again (_pending_tool_confirmation is True), the checkpoint must
+        # survive so the next resume call can find it.
+        def run_resume() -> None:
+            try:
+                if request.action == ToolCallAction.allow:
+                    agent.deny_unreviewed_sibling_tool_calls(pending)
+                    agent.resume_from_interrupt()
+                else:
+                    agent.reject_tool_call(pending)
+            finally:
+                if not agent._pending_tool_confirmation:
+                    ConversationCheckpointService().clear(request.conversation_id)
+
+        return StreamingResponse(
+            content=self._serve_data(run_resume, generator_queue, chat_request, execution_start, agent),
+            media_type=NDJSON_MEDIA_TYPE,
+        )
+
 
 class A2AAssistantHandler(AssistantRequestHandler):
     def __init__(self, assistant: Assistant, user: User, request_uuid: str, billing_user: User | None = None):
@@ -1150,6 +1244,17 @@ class A2AAssistantHandler(AssistantRequestHandler):
             )
         )
         return model_response
+
+    def handle_tool_call_resume(
+        self,
+        request: "ToolCallResumeRequest",
+        raw_request: Request,
+    ) -> StreamingResponse:
+        """Tool call confirmation is not supported for A2A assistants."""
+        raise ExtendedHTTPException(
+            code=422,
+            message="Tool call confirmation is not supported for A2A assistants.",
+        )
 
 
 def get_request_handler(

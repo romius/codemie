@@ -36,6 +36,9 @@ class KeycloakTool(CodeMieTool):
     description: str = KEYCLOAK_TOOL.description
     args_schema: Type[BaseModel] = KeycloakToolInput
 
+    def is_safe(self, args: dict) -> bool:
+        return self._http_method_is_safe(args)
+
     @model_validator(mode='after')
     def initialize_client(self) -> 'KeycloakTool':
         """Initialize the Keycloak client with configuration."""

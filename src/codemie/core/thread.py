@@ -61,56 +61,67 @@ class ThreadedGenerator:
         return item
 
     def send(self, data):
-        self.queue.put(data)
-
         try:
-            json.loads(data)
+            parsed = json.loads(data)
         except Exception:
+            self.queue.put(data)
             return
 
-        thought = json.loads(data).get('thought', {})
+        thought = parsed.get('thought', {})
+        self.queue.put(data)
 
         if thought:
-            thought_id = thought.get('id', '')
-            parent_id = thought.get('parent_id')
-            is_nested = parent_id is not None
-            is_nested_to_latest = thought.get('parent_id') == UniqueThoughtParentIds.LATEST.value
-            message = thought.get('message') or ''
-            children = thought.get('children') or []
-            metadata = thought.get('metadata', {})
-            output_format = thought.get('output_format')
-            in_progress = thought.get('in_progress', False)
+            self._process_thought(thought)
 
-            existing_thought = next((item for item in self.thoughts if item['id'] == thought_id), None)
+    def _process_thought(self, thought):
+        thought_id = thought.get('id', '')
+        parent_id = thought.get('parent_id')
+        is_nested = parent_id is not None
+        is_nested_to_latest = thought.get('parent_id') == UniqueThoughtParentIds.LATEST.value
+        message = thought.get('message') or ''
+        children = thought.get('children') or []
+        metadata = thought.get('metadata', {})
+        output_format = thought.get('output_format')
+        in_progress = thought.get('in_progress', False)
 
-            if existing_thought:
-                existing_thought['message'] += message
-                existing_thought['children'] += children
-                existing_thought['error'] = thought.get('error', False)
-                existing_thought['metadata'] = {**existing_thought.get('metadata', {}), **metadata}
-                existing_thought['output_format'] = output_format
-                existing_thought['in_progress'] = in_progress
+        existing_thought = next((item for item in self.thoughts if item['id'] == thought_id), None)
+
+        if existing_thought:
+            if existing_thought.get('interrupted'):
+                existing_thought['message'] = message
             else:
-                thought_object = {
-                    'id': thought_id,
-                    'message': message,
-                    'author_name': thought.get('author_name', ''),
-                    'children': children,
-                    'author_type': thought.get('author_type', None),
-                    'parent_id': thought.get('parent_id', None),
-                    'input_text': thought.get('input_text', ''),
-                    'error': thought.get('error', False),
-                    'metadata': metadata,
-                    'output_format': output_format,
-                    'in_progress': in_progress,
-                }
+                existing_thought['message'] += message
 
-                if is_nested_to_latest:
-                    self.thoughts.append(thought_object)
-                elif is_nested:
-                    self._nest_to_thought(parent_id, thought_object)
-                else:
-                    self.thoughts.append(thought_object)
+            existing_thought['children'] += children
+            existing_thought['error'] = thought.get('error', False)
+            existing_thought['aborted'] = thought.get('aborted', False)
+            existing_thought['interrupted'] = thought.get('interrupted', False)
+            existing_thought['metadata'] = {**existing_thought.get('metadata', {}), **metadata}
+            existing_thought['output_format'] = output_format
+            existing_thought['in_progress'] = in_progress
+        else:
+            thought_object = {
+                'id': thought_id,
+                'message': message,
+                'author_name': thought.get('author_name', ''),
+                'children': children,
+                'author_type': thought.get('author_type', None),
+                'parent_id': thought.get('parent_id', None),
+                'input_text': thought.get('input_text', ''),
+                'error': thought.get('error', False),
+                'aborted': thought.get('aborted', False),
+                'interrupted': thought.get('interrupted', False),
+                'metadata': metadata,
+                'output_format': output_format,
+                'in_progress': in_progress,
+            }
+
+            if is_nested_to_latest:
+                self.thoughts.append(thought_object)
+            elif is_nested:
+                self._nest_to_thought(parent_id, thought_object)
+            else:
+                self.thoughts.append(thought_object)
 
     def get(self, timeout: float | None = None) -> Any:
         """Get the next item, re-raising any queued exception; raises queue.Empty on timeout."""
@@ -142,6 +153,7 @@ class ThreadedGenerator:
                 existing_child_thought['message'] += thought_object['message']
                 existing_child_thought['children'] += thought_object['children']
                 existing_child_thought['error'] = thought_object.get('error', False)
+                existing_child_thought['aborted'] = thought_object.get('aborted', False)
                 existing_child_thought['metadata'] = {
                     **existing_child_thought.get('metadata', {}),
                     **thought_object.get('metadata', {}),
@@ -162,6 +174,7 @@ class ThreadedGenerator:
                 existing_child_thought['message'] += thought_object['message']
                 existing_child_thought['children'] += thought_object['children']
                 existing_child_thought['error'] = thought_object.get('error', False)
+                existing_child_thought['aborted'] = thought_object.get('aborted', False)
                 existing_child_thought['metadata'] = {
                     **existing_child_thought.get('metadata', {}),
                     **thought_object.get('metadata', {}),

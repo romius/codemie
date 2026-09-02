@@ -498,10 +498,16 @@ ZEPHYR_SQUAD_DEPRECATION_MESSAGE = "ZephyrSquad integration is deprecated"
 
 
 @pytest.mark.anyio
+@patch(
+    "codemie.configs.customer_config.CustomerConfig.is_feature_enabled",
+    return_value=True,
+)
 @patch('codemie.service.settings.settings.SettingsService.create_setting')
 @patch("codemie.rest_api.security.idp.local.LocalIdp.authenticate")
-async def test_create_user_setting_rejects_ms_teams(mock_authenticate, mock_create_setting):
+async def test_create_user_setting_rejects_ms_teams(mock_authenticate, mock_create_setting, mock_is_feature_enabled):
     # ms_teams integrations are project-scope only and must be rejected at USER scope.
+    # is_feature_enabled is forced True here so this exercises the USER-scope rejection
+    # itself, decoupled from the shared customer-config.yaml teamsBotIntegration value.
     mock_authenticate.return_value = User(id="user123", username="testuser", project_names=["test_project"])
 
     request_data = {
@@ -521,11 +527,19 @@ async def test_create_user_setting_rejects_ms_teams(mock_authenticate, mock_crea
 
 
 @pytest.mark.anyio
+@patch(
+    "codemie.configs.customer_config.CustomerConfig.is_feature_enabled",
+    return_value=True,
+)
 @patch('codemie.service.settings.settings.SettingsService.update_settings')
 @patch('codemie.service.settings.settings.SettingsService.get_setting_ability')
 @patch("codemie.rest_api.security.idp.local.LocalIdp.authenticate")
-async def test_update_user_setting_rejects_ms_teams(mock_authenticate, mock_get_setting_ability, mock_update_settings):
+async def test_update_user_setting_rejects_ms_teams(
+    mock_authenticate, mock_get_setting_ability, mock_update_settings, mock_is_feature_enabled
+):
     # ms_teams integrations are project-scope only and must be rejected at USER scope.
+    # is_feature_enabled is forced True here so this exercises the USER-scope rejection
+    # itself, decoupled from the shared customer-config.yaml teamsBotIntegration value.
     mock_authenticate.return_value = User(id="user123", username="testuser", project_names=["test_project"])
 
     request_data = {

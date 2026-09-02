@@ -33,6 +33,9 @@ class GenericKubernetesTool(CodeMieTool):
     description: str = KUBERNETES_TOOL.description
     args_schema: Type[BaseModel] = KubernetesInput
 
+    def is_safe(self, args: dict) -> bool:
+        return self._http_method_is_safe(args)
+
     @model_validator(mode='after')
     def initialize_client(self) -> 'GenericKubernetesTool':
         """Initialize the Kubernetes client with configuration."""

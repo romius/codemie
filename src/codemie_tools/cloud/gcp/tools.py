@@ -34,6 +34,9 @@ class GenericGCPTool(CodeMieTool):
     description: str = GCP_TOOL.description
     args_schema: Type[BaseModel] = GCPInput
 
+    def is_safe(self, args: dict) -> bool:
+        return self._http_method_is_safe(args)
+
     @model_validator(mode='after')
     def initialize_client(self) -> 'GenericGCPTool':
         """Initialize the GCP client with configuration."""

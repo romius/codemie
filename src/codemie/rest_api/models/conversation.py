@@ -27,7 +27,8 @@ from codemie.configs import config, logger
 from codemie.core.ability import Owned, Action
 from codemie.core.db_utils import escape_like_wildcards
 from codemie.core.exceptions import ValidationException
-from codemie.core.models import CodeIndexType, ChatMessage, ChatRole
+from codemie.agents.tool_confirmation.models import ToolCallPendingEvent
+from codemie.core.models import CodeIndexType, ChatMessage, ChatRole, ToolCallPolicy
 from codemie.rest_api.models.assistant import Context, AssistantType
 from codemie.rest_api.models.base import (
     BaseModelWithSQLSupport,
@@ -38,7 +39,7 @@ from codemie.rest_api.models.base import (
 from codemie.rest_api.models.feedback import MarkEnum
 from codemie.rest_api.security.user import User
 from sqlmodel import Field as SQLField, Session, delete, select, Column, text
-from sqlalchemy import Boolean
+from sqlalchemy import Boolean, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.mutable import MutableList
 from enum import StrEnum
@@ -274,6 +275,10 @@ class Conversation(BaseModelWithSQLSupport, Owned, table=True):
     # Remove this after the migration is done
     is_folder_migrated: Optional[bool] = False
     category: Optional[str] = None
+
+    pending_checkpoint: Optional[dict] = SQLField(default=None, sa_column=Column(JSONB))
+    pending_tool_call: Optional[dict] = SQLField(default=None, sa_column=Column(JSONB))
+    tool_call_policy: Optional[ToolCallPolicy] = SQLField(default=None, sa_column=Column(String))
 
     def get_average_user_rating(self):
         user_ratings = []
@@ -710,6 +715,18 @@ class Conversation(BaseModelWithSQLSupport, Owned, table=True):
         return result
 
     @classmethod
+    def find_by_conversation_id(cls, conversation_id: str) -> Optional["Conversation"]:
+        """Find a conversation by its conversation_id field.
+
+        Args:
+            conversation_id: The conversation_id to look up.
+
+        Returns:
+            The matching Conversation, or None if not found.
+        """
+        return cls.get_by_fields({"conversation_id": conversation_id})
+
+    @classmethod
     def delete_by_id(cls, conversation_id: str):
         with Session(cls.get_engine()) as session:
             from codemie.core.workflow_models.workflow_execution import WorkflowExecution  # noqa: PLC0415 — deferred to break circular import (workflow_execution imports GeneratedMessage from this module)
@@ -797,11 +814,12 @@ class ConversationResponse(BaseModel):
     user_abilities: Optional[List[Action]] = None
     is_folder_migrated: Optional[bool] = False
     category: Optional[str] = None
+    tool_call_policy: Optional[ToolCallPolicy] = None
+    pending_tool_call: Optional[ToolCallPendingEvent] = None
     date: Optional[datetime] = None
     update_date: Optional[datetime] = None
     very_first_msg_at: Optional[datetime] = None
     very_last_msg_at: Optional[datetime] = None
-
     pagination: Optional[ConversationHistoryPaginationData] = None
 
     @model_serializer(mode="wrap")

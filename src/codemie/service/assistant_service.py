@@ -28,7 +28,7 @@ from codemie.configs import config
 from codemie.configs.logger import logger
 from codemie.configs.customer_config import customer_config
 from codemie.core.dependecies import get_disable_prompt_cache, set_disable_prompt_cache
-from codemie.core.models import AssistantChatRequest, IdeChatRequest, ToolConfig
+from codemie.core.models import AssistantChatRequest, IdeChatRequest, ToolCallPolicy, ToolConfig
 from codemie.core.template_security import render_system_prompt_template, TemplateSecurityError
 from codemie.core.thread import MessageQueue
 from codemie.core.utils import build_unique_file_objects, build_unique_file_objects_list, append_random_suffix
@@ -101,6 +101,9 @@ Instead, leverage the schema's data to generate deeper insights and improve tool
 
         if 'image_generation_model' not in fields_set and conversation.image_generation_model is not None:
             request.image_generation_model = conversation.image_generation_model
+
+        if request.tool_call_policy is None and conversation.tool_call_policy is not None:
+            request.tool_call_policy = ToolCallPolicy(conversation.tool_call_policy)
 
         # IMPORTANT:
         # Do not mutate the Assistant model in-place with conversation/request overrides.
@@ -477,6 +480,7 @@ Instead, leverage the schema's data to generate deeper insights and improve tool
         thread_generator: MessageQueue,
         llm_model: str,
         smart_tool_selection_enabled: bool,
+        allow_tool_confirmation: bool = False,
     ) -> None:
         LangGraphAssistantBuilder.configure_agent_kwargs(
             agent_kwargs=agent_kwargs,
@@ -487,6 +491,7 @@ Instead, leverage the schema's data to generate deeper insights and improve tool
             thread_generator=thread_generator,
             llm_model=llm_model,
             smart_tool_selection_enabled=smart_tool_selection_enabled,
+            allow_tool_confirmation=allow_tool_confirmation,
             create_subagent_executors=cls._create_subagent_executors,
             get_subagent_descriptions=cls._get_subagent_descriptions,
         )
@@ -612,6 +617,7 @@ Instead, leverage the schema's data to generate deeper insights and improve tool
                 thread_generator,
                 llm_model,
                 smart_tool_selection_enabled,
+                allow_tool_confirmation=True,
             )
 
         agent = agent_class(**agent_kwargs)

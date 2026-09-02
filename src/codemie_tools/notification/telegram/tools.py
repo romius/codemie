@@ -47,6 +47,9 @@ class TelegramTool(CodeMieTool):
     description: str = TELEGRAM_TOOL.description
     args_schema: Type[BaseModel] = TelegramToolInput
 
+    def is_safe(self, args: dict) -> bool:
+        return self._http_method_is_safe(args)
+
     def execute(self, method: str, relative_url: str, params: Optional[str] = "") -> str:
         """
         Execute a Telegram Bot API request.

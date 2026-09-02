@@ -38,6 +38,9 @@ class XrayGetTestsTool(CodeMieTool):
     description: str = XRAY_GET_TESTS_TOOL.description
     args_schema: Type[BaseModel] = XrayGetTestsInput
 
+    def is_safe(self, args: dict) -> bool:
+        return True
+
     def _healthcheck(self):
         """Perform health check by verifying authentication."""
         if not self.config:

@@ -1,0 +1,271 @@
+{
+  "decision": "request-changes",
+  "rationale": "Verified 3 critical security/correctness bypasses in tool-call confirmation (request-override hard-ceiling bypass, multi-tool-call confirm-shows-one-executes-all, cross-assistant resume with no ownership check), plus a floor-policy AttributeError that crashes every request once a customer configures min_tool_call_policy. Diff is oversized (diff_metadata.oversized) so coverage of the ~106-file, ~18k-line change is necessarily partial; standards audit found commit-format and code-quality violations (coverage_gap=false, so treated as complete for the sampled scope) and flagged them blocking. 2 decision_needed items record real spec-vs-code conflicts (out-of-scope Conversation.tool_call_policy column; an unexplained, unrelated teamsBotIntegration flag flip in shared customer-config.yaml) that need author/PM input, not a unilateral fix. Two lens-reported crashes (jira _http_method_is_safe import, workspace tools glob/prefix NameError) were confirmed already fixed in the working tree and are dismissed along with 10 other lens findings (dead code, stale docs, unreached defensive-guard asymmetries, and is_safe() coverage that was verified correct on inspection); 0 findings deferred as pre-existing.",
+  "confidence": "low",
+  "risk_flags": [
+    "security",
+    "authorization-bypass",
+    "concurrency",
+    "migration-integrity",
+    "tool-classification",
+    "breaking-change"
+  ],
+  "business_review": [
+    {
+      "kind": "story-ac",
+      "item": "AC1 - confirmation signal on tool-call initiation",
+      "status": "partial",
+      "notes": "signal exists via Thought(interrupted=True); spec's own tool_call_pending SSE field is defined but never assigned anywhere"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC2 - dialog provides Allow and Deny actions",
+      "status": "pass",
+      "notes": "ToolCallResumeRequest.action(allow|deny) plus pending_tool_call on ConversationResponse"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC3 - Allow executes the requested tool call",
+      "status": "pass",
+      "notes": "resume_from_interrupt() resumes the graph past the interrupt"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC4 - Deny does not execute the requested tool call",
+      "status": "partial",
+      "notes": "denies ALL tool_calls in the batch even though only the first was ever shown to the user - see CR-006"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC5 - chat resumes without requiring a restart",
+      "status": "pass",
+      "notes": "Postgres-backed checkpoint reloaded by conversation_id on resume"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC6 - assistant response flow continues based on user decision",
+      "status": "pass",
+      "notes": "allow/deny both stream a normal completion afterward"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC7 - chat UI communicates waiting-for-confirmation state",
+      "status": "pass",
+      "notes": "interrupted Thought rendered with aborted/interrupted flags"
+    },
+    {
+      "kind": "story-ac",
+      "item": "AC8 - existing chat behavior unchanged when confirmation not required",
+      "status": "pass",
+      "notes": "InMemorySaver + thread_id='thread' fallback preserved; feature-flag gate forces AUTO_APPROVE when disabled"
+    },
+    {
+      "kind": "spec",
+      "item": "Design 08-05 S9: SSE tool_call_pending field carries the interrupt signal",
+      "status": "fail",
+      "notes": "field defined on StreamedGenerationResult but never assigned anywhere in src/codemie; actual signal is an unrelated Thought object"
+    },
+    {
+      "kind": "spec",
+      "item": "Design 08-10 P4: assistant-level require_confirmation is a hard ceiling the request flag cannot disable",
+      "status": "fail",
+      "notes": "see CR-010 - request override fully replaces a stricter assistant policy instead of only raising it"
+    },
+    {
+      "kind": "spec",
+      "item": "Design 08-10 Out of Scope: no changes to POST v1/conversations or the conversation entity",
+      "status": "fail",
+      "notes": "see CR-008 - Conversation gains a persisted tool_call_policy column and migration, contradicting this explicit non-goal"
+    },
+    {
+      "kind": "spec",
+      "item": "Design 08-05 S3 / 08-10 P1: ToolPermissionsConfig.require_confirmation:bool / AssistantChatRequest.require_confirmation:bool",
+      "status": "partial",
+      "notes": "implemented instead as tool_call_policy:ToolCallPolicy enum + allow_override:bool; functionally equivalent, different contract shape"
+    },
+    {
+      "kind": "spec",
+      "item": "Design 08-05 S7 / S11: get_effective_permissions(user=...) hook and resume request echoing pending_tool_call_id",
+      "status": "partial",
+      "notes": "user param and pending_tool_call_id echo both dropped from the implemented signatures; extensibility/validation hooks missing"
+    },
+    {
+      "kind": "spec",
+      "item": "Remaining S1/S2/S4/S5/S6/S8/S10/P3 design points",
+      "status": "pass",
+      "notes": "interrupt_before wiring, non-confirmation fallback, checkpoint columns/saver/service, resume_allow/deny mechanism, GET conversation exposure, configure_agent_kwargs wiring all match the design"
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "fail",
+      "notes": "several commits in range use no ticket prefix ('checkpoint 2', 'docs: ...') or conventional type(scope) syntax instead of the documented 'EPMCDME-####: Description' format"
+    },
+    {
+      "kind": "code-quality",
+      "status": "partial",
+      "notes": "new tool_confirmation/tool_permissions modules use typing.Optional[X] and omit 'from __future__ import annotations', against the documented convention for new modules"
+    },
+    {
+      "kind": "security",
+      "status": "pass",
+      "notes": "sampled is_safe()/http-method classification fails closed; migrations form a consistent single-line chain; no credential logging found in files opened"
+    }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "Makefile",
+      "line": 71,
+      "title": "make run no longer starts the app",
+      "problem": "The `run:` target was changed from `poetry run uvicorn codemie.rest_api.main:app --host=0.0.0.0 --port=8080 --reload` to bare `poetry run uvicorn`. A companion `[tool.uvicorn]` block was added to pyproject.toml, but the standard uvicorn CLI does not read app/host/port/reload from pyproject.toml without an explicit config mechanism.",
+      "impact": "`make run` breaks local server startup for every developer following the documented workflow; this is unrelated to the tool-call-confirmation feature and ships as unexplained scope creep.",
+      "recommendation": "Restore the explicit `poetry run uvicorn codemie.rest_api.main:app --host=0.0.0.0 --port=8080 --reload` invocation, or verify (and prove via a working `make run`) that the new pyproject.toml block is actually consumed before relying on it.",
+      "outcome": "skipped"
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "config/customer/customer-config.yaml",
+      "title": "Unrelated teamsBotIntegration flag flipped off",
+      "problem": "`features:teamsBotIntegration.enabled` is flipped from `true` to `false` in the same diff that adds `features:tool_permissions`, with no mention anywhere in the change's own scope or documentation.",
+      "impact": "This is a shared customer-facing config default; disabling it as an apparently accidental side effect of an unrelated feature branch risks silently turning off Teams Bot integration in production for any customer relying on the default config.",
+      "recommendation": "Revert this line unless the flip is independently confirmed intentional by the change author/PM; if intentional, split it into its own reviewed commit with its own justification.",
+      "outcome": "skipped"
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/agents/langgraph_agent.py",
+      "line": 735,
+      "title": "New chat message silently wipes a pending confirmation",
+      "problem": "`LangGraphAgent.stream()` unconditionally calls `ConversationCheckpointService().clear(self.conversation_id)` at the start of every run whenever `require_tool_confirmation` is true. No code path checks for or blocks a fresh (non-resume) chat request on a conversation that already has a genuinely pending tool-call confirmation.",
+      "impact": "If a user (or a retried client) sends a new message to the same conversation while an earlier tool-call confirmation is still awaiting a decision, this clears the in-flight checkpoint and pending_tool_call, silently discarding the interrupt instead of rejecting the new request or queuing behind the pending confirmation.",
+      "recommendation": "Before clearing, check `ConversationCheckpointService().get_pending_tool_call(conversation_id)`; if one exists, reject the new chat request (e.g. 409) instead of overwriting the pending state.",
+      "outcome": "skipped"
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/agents/langgraph_agent.py",
+      "line": 902,
+      "title": "Unbounded recursion on APPROVE_FOR_ME auto-resume",
+      "problem": "When `tool_call_policy=APPROVE_FOR_ME` and every tool call in a step is judged safe, `_stream_graph` recurses into itself (`return self._stream_graph(None, config, chunks_collector)`) once per auto-approved step, with no depth counter or iteration cap.",
+      "impact": "A model that repeatedly emits consecutive safe tool calls under APPROVE_FOR_ME grows the Python call stack unbounded until it hits `RecursionError`, crashing the agent thread instead of completing the run.",
+      "recommendation": "Convert the auto-resume branch into an explicit loop (or add a bounded recursion/iteration counter) so an arbitrarily long chain of safe tool calls cannot exhaust the call stack.",
+      "outcome": "skipped"
+    },
+    {
+      "id": "CR-005",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/agents/tool_confirmation/models.py",
+      "title": "New tool-confirmation modules violate documented typing convention",
+      "problem": "code-quality.md's Types And Imports standard requires `X | None` unions/parameterized generics plus `from __future__ import annotations` in new modules; `models.py`, `conversation_checkpoint_saver.py`, `service/tool_permissions_service.py` and `service/conversation_checkpoint_service.py` instead import and use `typing.Optional[X]` throughout with no future-annotations import.",
+      "impact": "Violates a documented blocking standard for new code across four of this change's core new modules.",
+      "recommendation": "Replace `Optional[X]` with `X | None` in these four files, or add `from __future__ import annotations` if `Optional` must stay for a runtime reason.",
+      "outcome": "skipped"
+    },
+    {
+      "id": "CR-006",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/codemie/agents/tool_confirmation/tool_call_confirmation_mixin.py",
+      "line": 62,
+      "title": "Allow on a multi-tool-call turn executes calls the user never saw",
+      "problem": "`ask_for_tool_confirmation` builds the confirmation dialog (`ToolCallPendingEvent`) from only `tool_calls[0]` (`tool_call = tool_calls[0]`), even though `all_tool_call_ids` records every tool call id in the AI turn. When the user presses Allow, `resume_from_interrupt` resumes the entire interrupted LangGraph step, which executes *every* tool call in that step, not just the one shown.",
+      "impact": "If the model emits multiple tool calls in one turn and only the first happens to be shown as 'safe-looking', the user's Allow on that single dialog silently also executes any sibling tool calls in the same batch - including unreviewed, potentially mutating ones - defeating the purpose of per-call confirmation. This is a direct confirmation-bypass path for a mutating action.",
+      "recommendation": "Either surface every tool call in the pending confirmation UI and require a decision on the whole batch, or gate execution so only tool calls the user actually reviewed are allowed to proceed (denying/re-queuing the rest).",
+      "outcome": "fixed"
+    },
+    {
+      "id": "CR-007",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/agents/tool_confirmation/tool_call_confirmation_mixin.py",
+      "line": 143,
+      "title": "reject_tool_call(None) leaves the streaming response open",
+      "problem": "`reject_tool_call` returns immediately when `pending is None`, without closing `self.thread_generator`. `handle_tool_call_resume` (assistant_handlers.py) fetches `pending` once via `ConversationCheckpointService().get_pending_tool_call(...)` before opening the `StreamingResponse`, and the router's own pre-check (`_resume_tool_call`) that the checkpoint exists is not atomic with that fetch - a concurrent resume for the same conversation can clear the checkpoint in between.",
+      "impact": "On that race, a deny action calls `reject_tool_call(None)`, which returns without ever closing the thread generator, so the client's StreamingResponse never receives a terminating chunk and hangs open until client-side disconnect/timeout.",
+      "recommendation": "In `reject_tool_call`, close `self.thread_generator` (and/or send a terminal error chunk) before returning when `pending is None`, mirroring the guard already used elsewhere in this mixin.",
+      "outcome": "skipped"
+    },
+    {
+      "id": "CR-008",
+      "kind": "decision",
+      "severity": "major",
+      "triage": "decision_needed",
+      "file": "src/codemie/rest_api/models/conversation.py",
+      "line": 276,
+      "title": "Conversation.tool_call_policy contradicts stated out-of-scope",
+      "problem": "Design 2026-08-10 explicitly lists 'no changes to POST v1/conversations or the conversation entity' as out of scope, but this change adds a persisted `tool_call_policy` column to `Conversation` (migration `v4w5x6y7z8a9_add_tool_call_policy_to_conversations.py`) and a `tool_call_policy` field on `UpdateConversationRequest`.",
+      "impact": "Either the later spec addendum was meant to supersede this column and it should not have been added, or the addendum is stale and the column is legitimate - the two design documents disagree and the code picked a side without recording the decision anywhere.",
+      "recommendation": "Confirm with the design owner whether per-conversation tool_call_policy persistence is still wanted; if not, remove the column/migration/field, otherwise update the 08-10 addendum to reflect that this scope boundary was revised.",
+      "outcome": "skipped"
+    },
+    {
+      "id": "CR-009",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/codemie/rest_api/routers/assistant.py",
+      "line": 1125,
+      "title": "Tool-call resume has no assistant/conversation ownership check",
+      "problem": "`resume_tool_call` checks the caller's READ access to `assistant_id` from the URL, and `handle_tool_call_resume` separately checks WRITE access to the conversation looked up by `request.conversation_id` - but nothing verifies that `conversation_id` actually belongs to `assistant_id`. The handler then calls `AssistantService.build_agent(assistant=self.assistant, ...)` using the URL's assistant while resuming the unrelated conversation's pending checkpoint/tool call.",
+      "impact": "A user with WRITE access to their own conversation under a strict assistant A1, and READ access to an unrelated (e.g. shared/public) assistant A2 with a laxer tool_call_policy, can call the endpoint with `assistant_id=A2` and `conversation_id=<A1's conversation>`. The pending tool call originally gated under A1's stricter policy gets resumed inside an agent built with A2's configuration - a cross-resource authorization/config-confusion bypass for a mutating action.",
+      "recommendation": "Before resuming, verify the conversation's own assistant_id(s) include the URL's assistant_id (or otherwise resolve the agent from the conversation's actual assistant, not the URL's), and reject the request otherwise.",
+      "outcome": "fixed"
+    },
+    {
+      "id": "CR-010",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/codemie/service/tool_permissions_service.py",
+      "line": 58,
+      "title": "Request override fully replaces the assistant's confirmation requirement",
+      "problem": "When `base.allow_override` is true (the default for a new `ToolPermissionsConfig`, per `allow_override: bool = True`), `effective_policy = tool_call_policy_override or conversation_policy or base.tool_call_policy` lets a per-request `tool_call_policy` (e.g. `AUTO_APPROVE`) fully replace a stricter assistant-configured policy (e.g. `ASK_FOR_APPROVAL`), confirmed by the project's own `test_request_override_beats_assistant`.",
+      "impact": "Design 08-10's priority rule states the assistant-level confirmation requirement is a hard ceiling the request flag cannot disable. As implemented, any caller who can set `tool_call_policy` on a chat request can unilaterally downgrade a mutating-tool-requiring assistant to auto-approve, bypassing confirmation for a mutating action entirely.",
+      "recommendation": "Change the resolution so a request/conversation override can only raise strictness above the assistant's configured policy, never lower it (e.g. `ToolCallPolicy.stricter(base.tool_call_policy, tool_call_policy_override or conversation_policy or base.tool_call_policy)`), consistent with how the customer floor is already applied a few lines below.",
+      "outcome": "fixed"
+    },
+    {
+      "id": "CR-011",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/codemie/service/tool_permissions_service.py",
+      "line": 63,
+      "title": "Customer floor policy crashes when configured (raw string, not enum)",
+      "problem": "`floor_policy = customer_config.get_feature_setting(self._TOOL_PERMISSIONS_FEATURE, self._TOOL_CALL_POLICY_SETTING)` returns the raw YAML string (confirmed by `test_tool_permissions_loaded_with_floor` returning `'ask_for_approval'`), which is then passed directly into `ToolCallPolicy.stricter(floor_policy, effective_policy)`. `stricter` accesses `a.strictness`, a property that only exists on `ToolCallPolicy` enum members, not `str`.",
+      "impact": "Any customer that configures `features:tool_permissions.min_tool_call_policy` in customer-config.yaml raises `AttributeError` on every chat request that reaches `get_effective_permissions`, breaking chat entirely for that tenant - the exact configuration path this feature is built to support.",
+      "recommendation": "Coerce the setting to the enum before use, e.g. `floor_policy = ToolCallPolicy(floor_policy) if floor_policy else None`, and cover it with a test that goes through `customer_config.get_feature_setting` for real rather than mocking it to already return an enum.",
+      "outcome": "fixed"
+    },
+    {
+      "id": "CR-012",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "unknown",
+      "title": "Commit history violates the documented ticket-format standard",
+      "problem": "git-workflow.md requires commit subjects in the form 'EPMCDME-####: Description'. The review range includes 'checkpoint 2' (no ticket, no colon), 'docs: add spec for per-request require_confirmation flag' (no ticket prefix), and numerous 'feat(EPMCDME-13903): ...'/'fix(EPMCDME-13903): ...'/'refactor(EPMCDME-13903): ...' subjects using conventional-commit type(scope) syntax instead.",
+      "impact": "A large fraction of this change's own commit history breaks the documented commit-message-format standard the standards audit enforces as blocking.",
+      "recommendation": "Reword or squash the non-conforming commits to 'EPMCDME-13903: <description>' before merge.",
+      "outcome": "skipped"
+    }
+  ]
+}

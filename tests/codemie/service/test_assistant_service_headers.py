@@ -31,6 +31,7 @@ from codemie.service.assistant_service import AssistantService
 class TestAssistantServiceBuildAgentWithHeaders:
     """Test cases for AssistantService.build_agent with request_headers."""
 
+    @patch('codemie.service.assistant_service.Conversation.find_by_id')
     @patch('codemie.service.assistant_service.AIToolsAgent')
     @patch('codemie.service.assistant_service.LangGraphAgent')
     @patch('codemie.service.assistant_service.config')
@@ -51,6 +52,7 @@ class TestAssistantServiceBuildAgentWithHeaders:
         mock_config,
         mock_langgraph_agent,
         mock_aitools_agent,
+        mock_find_by_id,
     ):
         """
         TC-2.3.1: Verify build_agent passes headers to toolkit service.
@@ -61,6 +63,7 @@ class TestAssistantServiceBuildAgentWithHeaders:
         those headers are propagated to ToolkitService.get_tools.
         """
         # Arrange
+        mock_find_by_id.return_value = None
         mock_is_bedrock_assistant.return_value = False  # Not a Bedrock assistant
         mock_build_file_objects.return_value = {}
         mock_get_tools.return_value = []
@@ -112,6 +115,7 @@ class TestAssistantServiceBuildAgentWithHeaders:
         assert 'request_headers' in call_kwargs
         assert call_kwargs['request_headers'] == test_headers
 
+    @patch('codemie.service.assistant_service.Conversation.find_by_id')
     @patch('codemie.service.assistant_service.AIToolsAgent')
     @patch('codemie.service.assistant_service.LangGraphAgent')
     @patch('codemie.service.assistant_service.config')
@@ -132,6 +136,7 @@ class TestAssistantServiceBuildAgentWithHeaders:
         mock_config,
         mock_langgraph_agent,
         mock_aitools_agent,
+        mock_find_by_id,
     ):
         """
         TC-2.3.2: Verify build_agent without request_headers (backward compatibility).
@@ -142,6 +147,7 @@ class TestAssistantServiceBuildAgentWithHeaders:
         it still works correctly (backward compatibility).
         """
         # Arrange
+        mock_find_by_id.return_value = None
         mock_is_bedrock_assistant.return_value = False  # Not a Bedrock assistant
         mock_build_file_objects.return_value = {}
         mock_get_tools.return_value = []

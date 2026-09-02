@@ -15,7 +15,7 @@
 import pytest
 from pydantic import ValidationError
 
-from codemie.core.models import AssistantChatRequest
+from codemie.core.models import AssistantChatRequest, ToolCallPolicy
 
 
 class TestAssistantChatRequestSaveHistory:
@@ -65,3 +65,24 @@ class TestAssistantChatRequestSaveHistory:
         data = {"text": "Hello", "stream": False}
         request = AssistantChatRequest(**data)
         assert request.save_history is True
+
+
+class TestAssistantChatRequestToolCallPolicy:
+    def test_defaults_to_none(self):
+        request = AssistantChatRequest(text="Hello")
+        assert request.tool_call_policy is None
+
+    def test_explicit_ask_for_approval(self):
+        request = AssistantChatRequest(text="Hello", tool_call_policy=ToolCallPolicy.ASK_FOR_APPROVAL)
+        assert request.tool_call_policy == ToolCallPolicy.ASK_FOR_APPROVAL
+
+    def test_explicit_auto_approve(self):
+        request = AssistantChatRequest(text="Hello", tool_call_policy=ToolCallPolicy.AUTO_APPROVE)
+        assert request.tool_call_policy == ToolCallPolicy.AUTO_APPROVE
+
+    def test_camelcase_alias(self):
+        import json
+
+        payload = json.loads('{"text": "Hello", "toolCallPolicy": "approve_for_me"}')
+        request = AssistantChatRequest.model_validate(payload)
+        assert request.tool_call_policy == ToolCallPolicy.APPROVE_FOR_ME

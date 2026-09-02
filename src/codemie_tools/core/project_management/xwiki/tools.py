@@ -160,6 +160,9 @@ class ListWikisTool(_XWikiBaseTool):
     description: str = LIST_WIKIS_TOOL.description
     args_schema: Type[BaseModel] = ListWikisInput
 
+    def is_safe(self, args: dict) -> bool:
+        return True
+
     def execute(self, number: int = 50, start: int = 0) -> str:
         validate_creds(self.config)
         url = f"{self.config.url.rstrip('/')}/rest/wikis"
@@ -171,6 +174,9 @@ class GetWikiTool(_XWikiBaseTool):
     name: str = GET_WIKI_TOOL.name
     description: str = GET_WIKI_TOOL.description
     args_schema: Type[BaseModel] = GetWikiInput
+
+    def is_safe(self, args: dict) -> bool:
+        return True
 
     def execute(self, wiki: str = "xwiki") -> str:
         validate_creds(self.config)
@@ -189,6 +195,9 @@ class ListSpacesTool(_XWikiBaseTool):
     description: str = LIST_SPACES_TOOL.description
     args_schema: Type[BaseModel] = ListSpacesInput
 
+    def is_safe(self, args: dict) -> bool:
+        return True
+
     def execute(self, wiki: str = "xwiki", number: int = 50, start: int = 0) -> str:
         validate_creds(self.config)
         url = f"{self.config.url.rstrip('/')}/rest/wikis/{wiki}/spaces"
@@ -200,6 +209,9 @@ class GetSpaceTool(_XWikiBaseTool):
     name: str = GET_SPACE_TOOL.name
     description: str = GET_SPACE_TOOL.description
     args_schema: Type[BaseModel] = GetSpaceInput
+
+    def is_safe(self, args: dict) -> bool:
+        return True
 
     def execute(self, wiki: str = "xwiki", space: str = "") -> str:
         validate_creds(self.config)
@@ -219,6 +231,9 @@ class ListPagesTool(_XWikiBaseTool):
     description: str = LIST_PAGES_TOOL.description
     args_schema: Type[BaseModel] = ListPagesInput
 
+    def is_safe(self, args: dict) -> bool:
+        return True
+
     def execute(self, wiki: str = "xwiki", space: str = "", number: int = 50, start: int = 0) -> str:
         validate_creds(self.config)
         spaces_path = build_spaces_path(space)
@@ -232,6 +247,9 @@ class ListWikiPagesTool(_XWikiBaseTool):
     description: str = LIST_WIKI_PAGES_TOOL.description
     args_schema: Type[BaseModel] = ListWikiPagesInput
 
+    def is_safe(self, args: dict) -> bool:
+        return True
+
     def execute(self, wiki: str = "xwiki", number: int = 50, start: int = 0) -> str:
         validate_creds(self.config)
         url = f"{self.config.url.rstrip('/')}/rest/wikis/{wiki}/pages"
@@ -243,6 +261,9 @@ class ListPageChildrenTool(_XWikiBaseTool):
     name: str = LIST_PAGE_CHILDREN_TOOL.name
     description: str = LIST_PAGE_CHILDREN_TOOL.description
     args_schema: Type[BaseModel] = ListPageChildrenInput
+
+    def is_safe(self, args: dict) -> bool:
+        return True
 
     def execute(self, wiki: str = "xwiki", space: str = "", page: str = "", number: int = 50, start: int = 0) -> str:
         validate_creds(self.config)
@@ -256,6 +277,9 @@ class GetPageTool(_XWikiBaseTool):
     name: str = GET_PAGE_TOOL.name
     description: str = GET_PAGE_TOOL.description
     args_schema: Type[BaseModel] = GetPageInput
+
+    def is_safe(self, args: dict) -> bool:
+        return True
 
     def execute(self, wiki: str = "xwiki", space: str = "", page: str = "", is_markdown: bool = False) -> str:
         validate_creds(self.config)
@@ -334,6 +358,9 @@ class ListWikiTagsTool(_XWikiBaseTool):
     description: str = LIST_WIKI_TAGS_TOOL.description
     args_schema: Type[BaseModel] = ListWikiTagsInput
 
+    def is_safe(self, args: dict) -> bool:
+        return True
+
     def execute(self, wiki: str = "xwiki") -> str:
         validate_creds(self.config)
         url = f"{self.config.url.rstrip('/')}/rest/wikis/{wiki}/tags"
@@ -345,6 +372,9 @@ class ListPageTagsTool(_XWikiBaseTool):
     name: str = LIST_PAGE_TAGS_TOOL.name
     description: str = LIST_PAGE_TAGS_TOOL.description
     args_schema: Type[BaseModel] = ListPageTagsInput
+
+    def is_safe(self, args: dict) -> bool:
+        return True
 
     def execute(self, wiki: str = "xwiki", space: str = "", page: str = "") -> str:
         validate_creds(self.config)
@@ -378,6 +408,9 @@ class ListPageCommentsTool(_XWikiBaseTool):
     description: str = LIST_PAGE_COMMENTS_TOOL.description
     args_schema: Type[BaseModel] = ListPageCommentsInput
 
+    def is_safe(self, args: dict) -> bool:
+        return True
+
     def execute(self, wiki: str = "xwiki", space: str = "", page: str = "", number: int = 20, start: int = 0) -> str:
         validate_creds(self.config)
         spaces_path = build_spaces_path(space)
@@ -390,6 +423,9 @@ class GetPageCommentTool(_XWikiBaseTool):
     name: str = GET_PAGE_COMMENT_TOOL.name
     description: str = GET_PAGE_COMMENT_TOOL.description
     args_schema: Type[BaseModel] = GetPageCommentInput
+
+    def is_safe(self, args: dict) -> bool:
+        return True
 
     def execute(self, wiki: str = "xwiki", space: str = "", page: str = "", comment_id: int = 0) -> str:
         validate_creds(self.config)
@@ -423,6 +459,9 @@ class ListPageAttachmentsTool(_XWikiBaseTool):
     description: str = LIST_PAGE_ATTACHMENTS_TOOL.description
     args_schema: Type[BaseModel] = ListPageAttachmentsInput
 
+    def is_safe(self, args: dict) -> bool:
+        return True
+
     def execute(self, wiki: str = "xwiki", space: str = "", page: str = "") -> str:
         validate_creds(self.config)
         spaces_path = build_spaces_path(space)
@@ -435,6 +474,9 @@ class GetPageAttachmentTool(_XWikiBaseTool):
     name: str = GET_PAGE_ATTACHMENT_TOOL.name
     description: str = GET_PAGE_ATTACHMENT_TOOL.description
     args_schema: Type[BaseModel] = GetPageAttachmentInput
+
+    def is_safe(self, args: dict) -> bool:
+        return True
 
     def execute(self, wiki: str = "xwiki", space: str = "", page: str = "", filename: str = "") -> str:
         validate_creds(self.config)
@@ -494,6 +536,9 @@ class ReadPageAttachmentContentTool(_XWikiBaseTool):
     name: str = READ_PAGE_ATTACHMENT_CONTENT_TOOL.name
     description: str = READ_PAGE_ATTACHMENT_CONTENT_TOOL.description
     args_schema: Type[BaseModel] = ReadPageAttachmentContentInput
+
+    def is_safe(self, args: dict) -> bool:
+        return True
 
     _MAX_BASE64_BYTES: int = 50_000
 
@@ -710,6 +755,9 @@ class SearchWikiTool(_XWikiBaseTool):
     description: str = SEARCH_WIKI_TOOL.description
     args_schema: Type[BaseModel] = SearchWikiInput
 
+    def is_safe(self, args: dict) -> bool:
+        return True
+
     def execute(
         self,
         wiki: str = "xwiki",
@@ -733,6 +781,9 @@ class SearchSpaceTool(_XWikiBaseTool):
     name: str = SEARCH_SPACE_TOOL.name
     description: str = SEARCH_SPACE_TOOL.description
     args_schema: Type[BaseModel] = SearchSpaceInput
+
+    def is_safe(self, args: dict) -> bool:
+        return True
 
     def execute(
         self,

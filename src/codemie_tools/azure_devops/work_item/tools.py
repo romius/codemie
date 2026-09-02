@@ -206,6 +206,9 @@ class SearchWorkItemsTool(BaseAzureDevOpsWorkItemTool):
     description: str = SEARCH_WORK_ITEMS_TOOL.description
     args_schema: Type[BaseModel] = SearchWorkItemsInput
 
+    def is_safe(self, args: dict) -> bool:
+        return True
+
     def execute(self, query: str, limit: Optional[int] = None, fields: Optional[List[str]] = None):
         """Search for work items using a WIQL query and dynamically fetch fields based on the query."""
         try:
@@ -307,6 +310,9 @@ class GetWorkItemTool(BaseAzureDevOpsWorkItemTool):
     name: str = GET_WORK_ITEM_TOOL.name
     description: str = GET_WORK_ITEM_TOOL.description
     args_schema: Type[BaseModel] = GetWorkItemInput
+
+    def is_safe(self, args: dict) -> bool:
+        return True
 
     def _get_filename_from_relation(self, relation_dict: Dict[str, Any]) -> Optional[str]:
         """
@@ -490,6 +496,9 @@ class GetRelationTypesTool(BaseAzureDevOpsWorkItemTool):
     description: str = GET_RELATION_TYPES_TOOL.description
     args_schema: Type[BaseModel] = GetRelationTypesInput
 
+    def is_safe(self, args: dict) -> bool:
+        return True
+
     def execute(self):
         """Returns dict of possible relation types per syntax: 'relation name': 'relation reference name'."""
         try:
@@ -576,6 +585,9 @@ class GetCommentsTool(BaseAzureDevOpsWorkItemTool):
     description: str = GET_COMMENTS_TOOL.description
     args_schema: Type[BaseModel] = GetCommentsInput
 
+    def is_safe(self, args: dict) -> bool:
+        return True
+
     def execute(
         self,
         work_item_id: int,
@@ -649,6 +661,9 @@ class GetWorkItemAttachmentContentTool(BaseAzureDevOpsWorkItemTool, AttachmentCo
     name: str = GET_WORK_ITEM_ATTACHMENT_CONTENT_TOOL.name
     description: str = GET_WORK_ITEM_ATTACHMENT_CONTENT_TOOL.description
     args_schema: Type[BaseModel] = GetWorkItemAttachmentContentInput
+
+    def is_safe(self, args: dict) -> bool:
+        return True
 
     def _find_attachment_in_relations(self, work_item_id: int, attachment_name: str) -> Tuple[str, str, Optional[str]]:
         """Find attachment URL and note from work item AttachedFile relations by filename.

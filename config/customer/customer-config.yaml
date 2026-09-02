@@ -220,6 +220,11 @@ components:
       name: "Show All Projects"
       description: "Show all projects in the project selectors regardless of user assignment"
 
+  - id: "features:tool_permissions"
+    settings:
+      enabled: true
+      # min_tool_call_policy: auto_approve | approve_for_me | ask_for_approval
+
   - id: "mcpCustomServersDisabled"
     settings:
       enabled: false

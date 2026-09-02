@@ -108,6 +108,9 @@ class RequestUserInputTool(CodeMieTool):
     #: counts attempts within one turn and nothing else.
     attempts_used: int = 0
 
+    def is_safe(self, args: dict) -> bool:
+        return True
+
     def __init__(self, thread_generator=None, **kwargs):
         super().__init__(thread_generator=thread_generator, **kwargs)
 

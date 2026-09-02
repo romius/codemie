@@ -1,0 +1,106 @@
+{
+  "meta": {
+    "generatedAt": "2026-08-20T14:50:17.397Z",
+    "rangeLabel": "all",
+    "agents": [
+      "claude"
+    ],
+    "projectFilter": "all",
+    "totals": {
+      "sessions": 1,
+      "durationMs": 35212,
+      "turns": 3,
+      "files": 0,
+      "netLines": 0,
+      "toolCallsTotal": 0,
+      "toolSuccessRate": 0,
+      "totalCostUSD": 0,
+      "cacheReadCostUSD": 0,
+      "pricedSessions": 0
+    },
+    "unpricedModels": [],
+    "coverage": [
+      {
+        "agentName": "claude",
+        "total": 1,
+        "priced": 0,
+        "withLog": 1
+      }
+    ],
+    "userEmail": "andriy_lukashchuk@epam.com",
+    "periodStart": "2026-08-20T14:49:21.907Z",
+    "periodEnd": "2026-08-20T14:49:57.119Z"
+  },
+  "sessions": [
+    {
+      "sessionId": "03f4739d-c5f2-48f8-8d3b-df5e1558202f",
+      "agentName": "claude",
+      "provider": "ai-run-sso",
+      "title": "/model",
+      "project": "/Users/Andriy_Lukashchuk/Dev/code-assistant",
+      "branch": "EPMCDME-13903_chat-tool-call-confirmations",
+      "startTime": 1787237361907,
+      "durationMs": 35212,
+      "turns": 3,
+      "fileOps": 0,
+      "linesAdded": 0,
+      "linesRemoved": 0,
+      "linesModified": 0,
+      "netLines": 0,
+      "filesChanged": 0,
+      "filesWritten": 0,
+      "filesEdited": 0,
+      "toolCallsTotal": 0,
+      "toolCallsSuccess": 0,
+      "toolCallsFailure": 0,
+      "models": [
+        "<synthetic>"
+      ],
+      "languages": [],
+      "tools": [],
+      "tokens": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheCreation": 0,
+        "cacheCreation1h": 0,
+        "total": 0
+      },
+      "costUSD": 0,
+      "cacheReadCostUSD": 0,
+      "perModelCost": [],
+      "hadLog": true,
+      "dispatches": [
+        {
+          "kind": "command",
+          "name": "model",
+          "start": 1787237365031,
+          "durationMs": 0
+        },
+        {
+          "kind": "command",
+          "name": "model",
+          "start": 1787237375062,
+          "durationMs": 0
+        },
+        {
+          "kind": "command",
+          "name": "model",
+          "start": 1787237392842,
+          "durationMs": 0
+        }
+      ],
+      "skillInvocations": [],
+      "agentInvocations": [],
+      "commandInvocations": [
+        {
+          "name": "model",
+          "totalCalls": 3,
+          "successCount": 3,
+          "failureCount": 0
+        }
+      ],
+      "sessionSource": "Pure chat"
+    }
+  ]
+}

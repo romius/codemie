@@ -33,6 +33,9 @@ class ZephyrSquadGenericTool(CodeMieTool):
     description: str = ZEPHYR_SQUAD_TOOL.description
     args_schema: Type[BaseModel] = ZephyrSquadToolInput
 
+    def is_safe(self, args: dict) -> bool:
+        return self._http_method_is_safe(args)
+
     def _healthcheck(self):
         """Performs a healthcheck by querying the serverinfo endpoint"""
         content = self.execute(relative_path=ZEPHYR_SQUAD_HEALTHCHECK_URL, method="GET")

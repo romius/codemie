@@ -50,6 +50,9 @@ class WebScrapperTool(CodeMieTool):
     description: str = WEB_SCRAPPER_TOOL.description
     args_schema: Type[BaseModel] = WebScrapperToolInput
 
+    def is_safe(self, args: dict) -> bool:
+        return True
+
     def execute(self, url: str, extract_images: bool = False, extract_links: bool = True) -> str:
         from langchain_core.tools import ToolException
 
@@ -199,6 +202,9 @@ class GoogleSearchResults(CodeMieTool):
     api_wrapper: GoogleSearchAPIWrapper
     args_schema: Type[BaseModel] = GoogleSearchResultsInput
 
+    def is_safe(self, args: dict) -> bool:
+        return True
+
     def execute(self, query: str):
         start = time()
         try:
@@ -219,6 +225,9 @@ class GooglePlacesTool(CodeMieTool):
     api_wrapper: GooglePlacesAPIWrapper
     args_schema: Type[BaseModel] = GooglePlacesSchema
 
+    def is_safe(self, args: dict) -> bool:
+        return True
+
     def execute(self, query: str) -> str:
         return self.api_wrapper.places(query)
 
@@ -229,6 +238,9 @@ class GooglePlacesFindNearTool(CodeMieTool):
     api_wrapper: GooglePlacesAPIWrapper
     args_schema: Type[BaseModel] = GooglePlacesFindNearSchema
     default_radius: int = 10000
+
+    def is_safe(self, args: dict) -> bool:
+        return True
 
     def execute(self, current_location_query: str, target: str, radius: Optional[int] = default_radius) -> str:
         return self.api_wrapper.find_near(current_location_query=current_location_query, target=target, radius=radius)
@@ -243,6 +255,9 @@ class WikipediaQueryRun(CodeMieTool):
     description: str = WIKIPEDIA_TOOL.description
     api_wrapper: WikipediaAPIWrapper
     args_schema: Type[BaseModel] = WikipediaQueryInput
+
+    def is_safe(self, args: dict) -> bool:
+        return True
 
     def execute(self, query: str):
         return self.api_wrapper.run(query)

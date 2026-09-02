@@ -18,6 +18,7 @@ from typing import Optional, List, Iterator
 from langchain_core.messages import BaseMessage
 from pydantic import BaseModel, Field, model_validator
 
+from codemie.agents.tool_confirmation.models import ToolCallPendingEvent
 from codemie.configs import logger
 from codemie.core.models import ChatMessage
 from codemie.core.errors import AgentErrorDetails, ToolErrorDetails
@@ -140,6 +141,9 @@ class StreamedGenerationResult(BaseModel):
         default=None, description="Provide full information about the execution_error field."
     )
     a2ui: Optional[dict] = Field(default=None, description="A2UI wire envelope emitted by the request_user_input tool")
+    tool_call_pending: Optional[ToolCallPendingEvent] = Field(
+        default=None, description="Emitted when agent is interrupted awaiting tool call confirmation"
+    )
 
 
 class BaseChain:

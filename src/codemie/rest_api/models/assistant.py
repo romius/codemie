@@ -38,6 +38,7 @@ from codemie.core.models import (
     ChatMessage,
     CreatedByUser,
     FileNamesCountValidatorMixin,
+    ToolCallPolicy,
     ToolConfig,
 )
 from codemie.rest_api.a2a.types import AgentCard
@@ -305,6 +306,11 @@ class BedrockAgentcoreRuntimeData(BaseModel):
     configuration_json: Optional[str] = None  # JSON string for invoking the runtime
 
 
+class ToolPermissionsConfig(BaseModel):
+    tool_call_policy: ToolCallPolicy = ToolCallPolicy.AUTO_APPROVE
+    allow_override: bool = True
+
+
 class AssistantRequest(BaseModel):
     """
     Model for creating or updating an assistant.
@@ -358,6 +364,7 @@ class AssistantRequest(BaseModel):
         default_factory=list, description="Optional list of variables that can be used in the system prompt"
     )
     custom_metadata: Optional[dict[str, Any]] = None
+    tool_permissions: Optional[ToolPermissionsConfig] = None
 
     # Set when this create request is a clone of an existing assistant; not stored on the
     # Assistant model itself, only used to trigger clone_count tracking on the source assistant.
@@ -701,6 +708,9 @@ class AssistantBase(CommonBaseModel, Owned):
     clone_count: Optional[int] = SQLField(default=0, index=False)
     categories: list[str] = SQLField(default_factory=list, sa_column=Column(JSONB))
     custom_metadata: Optional[dict[str, Any]] = SQLField(default=None, sa_column=Column(JSONB))
+    tool_permissions: Optional[ToolPermissionsConfig] = SQLField(
+        default=None, sa_column=Column(PydanticType(ToolPermissionsConfig))
+    )
 
     # Runtime-only flags (never persisted, never exposed via API schemas).
     # NOTE: We intentionally do NOT use Pydantic PrivateAttr here because SQLModel instances

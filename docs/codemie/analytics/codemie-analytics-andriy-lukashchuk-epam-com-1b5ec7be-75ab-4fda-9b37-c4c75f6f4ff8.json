@@ -1,0 +1,168 @@
+{
+  "meta": {
+    "generatedAt": "2026-09-02T10:52:04.642Z",
+    "rangeLabel": "all",
+    "agents": [
+      "claude"
+    ],
+    "projectFilter": "all",
+    "totals": {
+      "sessions": 1,
+      "durationMs": 1157685,
+      "turns": 11,
+      "files": 1,
+      "netLines": 0,
+      "toolCallsTotal": 11,
+      "toolSuccessRate": 90.9,
+      "totalCostUSD": 0.4938294,
+      "cacheReadCostUSD": 0.21000539999999998,
+      "pricedSessions": 1
+    },
+    "unpricedModels": [],
+    "coverage": [
+      {
+        "agentName": "claude",
+        "total": 1,
+        "priced": 1,
+        "withLog": 1
+      }
+    ],
+    "userEmail": "andriy_lukashchuk@epam.com",
+    "periodStart": "2026-09-02T10:32:44.394Z",
+    "periodEnd": "2026-09-02T10:52:02.079Z"
+  },
+  "sessions": [
+    {
+      "sessionId": "1b5ec7be-75ab-4fda-9b37-c4c75f6f4ff8",
+      "agentName": "claude",
+      "provider": "ai-run-sso",
+      "title": "tils import gcs_utils /workspace/source/.cache/pypoetry/virtualenvs/codemie-QFDppJUp-py3.12/lib/python3.12/site-packages/pydub/utils.py:170: RuntimeWarning: Couldn't find ffmpeg or avconv - defaulting to ffmpeg, but may not work warn(\"Couldn't find ffmpeg or avconv - defaulting to ffmpeg, but may not work\", RuntimeWarning) Timestamp: 2026-09-02 09:33:48 | Level: INFO | UUID: - User ID: - | Conversation ID: - Trace ID: - | Span ID: - Message: TokenExchangeService initialized with cache_ttl=600s + [ 2 -gt 1 ] + echo Error: Multiple Alembic migration heads detected. Please resolve conflicts before merging. + echo See src/external/alembic/README.MD section 'Handling Alembic Migration Conflicts' for resolution guide + exit 1 Error: Multiple Alembic migration heads detected. Please resolve conflicts before merging. See src/external/alembic/README.MD section 'Handling Alembic Migration Conflicts' for resolution guide",
+      "project": "/Users/Andriy_Lukashchuk/Dev/code-assistant",
+      "branch": "EPMCDME-13903_chat-tool-call-confirmations",
+      "startTime": 1788345164394,
+      "durationMs": 1157685,
+      "turns": 11,
+      "fileOps": 1,
+      "linesAdded": 0,
+      "linesRemoved": 0,
+      "linesModified": 0,
+      "netLines": 0,
+      "filesChanged": 0,
+      "filesWritten": 0,
+      "filesEdited": 0,
+      "toolCallsTotal": 11,
+      "toolCallsSuccess": 10,
+      "toolCallsFailure": 1,
+      "models": [
+        "claude-sonnet-5"
+      ],
+      "languages": [
+        "markdown"
+      ],
+      "tools": [
+        {
+          "toolName": "Bash",
+          "totalCalls": 10,
+          "successCount": 9,
+          "failureCount": 1,
+          "successRate": 90
+        },
+        {
+          "toolName": "Read",
+          "totalCalls": 1,
+          "successCount": 1,
+          "failureCount": 0,
+          "successRate": 100
+        }
+      ],
+      "tokens": {
+        "input": 22,
+        "output": 4658,
+        "cacheRead": 700018,
+        "cacheCreation": 35648,
+        "cacheCreation1h": 35648,
+        "total": 740346
+      },
+      "costUSD": 0.4938294,
+      "cacheReadCostUSD": 0.21000539999999998,
+      "perModelCost": [
+        {
+          "model": "claude-sonnet-5",
+          "tokens": {
+            "input": 22,
+            "output": 4658,
+            "cacheRead": 700018,
+            "cacheCreation": 35648,
+            "cacheCreation1h": 35648,
+            "total": 740346
+          },
+          "costUSD": 0.4938294,
+          "unpriced": false
+        }
+      ],
+      "hadLog": true,
+      "agentSessionFile": "/Users/Andriy_Lukashchuk/.claude/projects/-Users-Andriy-Lukashchuk-Dev-code-assistant/10ba8cd8-590f-4966-8cab-b1b0d19e85e7.jsonl",
+      "costSeries": [
+        {
+          "t": 1788345179344,
+          "cost": 0.0986703,
+          "tokens": 56179
+        },
+        {
+          "t": 1788345185194,
+          "cost": 0.121104,
+          "tokens": 112936
+        },
+        {
+          "t": 1788345188995,
+          "cost": 0.14016,
+          "tokens": 169792
+        },
+        {
+          "t": 1788345192835,
+          "cost": 0.1777074,
+          "tokens": 229802
+        },
+        {
+          "t": 1788345199671,
+          "cost": 0.2021121,
+          "tokens": 290312
+        },
+        {
+          "t": 1788345241368,
+          "cost": 0.2958009,
+          "tokens": 362075
+        },
+        {
+          "t": 1788345264821,
+          "cost": 0.3352935,
+          "tokens": 435075
+        },
+        {
+          "t": 1788345280382,
+          "cost": 0.3789885,
+          "tokens": 509338
+        },
+        {
+          "t": 1788345285355,
+          "cost": 0.4189914,
+          "tokens": 585270
+        },
+        {
+          "t": 1788345292628,
+          "cost": 0.452868,
+          "tokens": 662016
+        },
+        {
+          "t": 1788345301819,
+          "cost": 0.4938294,
+          "tokens": 740346
+        }
+      ],
+      "skillInvocations": [],
+      "agentInvocations": [],
+      "commandInvocations": [],
+      "sessionSource": "Pure chat"
+    }
+  ]
+}

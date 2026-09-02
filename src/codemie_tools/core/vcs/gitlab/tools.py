@@ -81,6 +81,15 @@ class GitlabTool(CodeMieTool):
     # High value to support large source files.
     tokens_size_limit: int = 70_000
 
+    def is_safe(self, args: dict) -> bool:
+        query = args.get("query") or {}
+        if isinstance(query, str):
+            try:
+                query = json.loads(query)
+            except Exception:
+                return False
+        return self._http_method_is_safe(query)
+
     def _make_request(
         self, method: str, url: str, headers: dict[str, str], method_arguments: dict
     ) -> requests.Response:

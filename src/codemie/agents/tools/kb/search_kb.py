@@ -123,6 +123,9 @@ class SearchKBTool(CodeMieTool, DatasourceHealthMixin):
     description: str = description_template.format("default")
     args_schema: type[BaseModel] = SearchInput
 
+    def is_safe(self, args: dict) -> bool:
+        return True
+
     def __init__(self, index_info: IndexInfo, llm_model: str):
         super().__init__()
         self.index_info = index_info

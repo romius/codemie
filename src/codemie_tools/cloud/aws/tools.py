@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 from typing import Type, Union, Dict, Any, Optional
 
 from langchain_core.tools import ToolException
@@ -32,6 +33,15 @@ class GenericAWSTool(CodeMieTool):
     name: str = AWS_TOOL.name
     description: str = AWS_TOOL.description
     args_schema: Type[BaseModel] = AWSInput
+
+    def is_safe(self, args: dict) -> bool:
+        query = args.get("query") or {}
+        if isinstance(query, str):
+            try:
+                query = json.loads(query)
+            except Exception:
+                return False
+        return self._http_method_is_safe(query)
 
     @model_validator(mode='after')
     def initialize_client(self) -> 'GenericAWSTool':

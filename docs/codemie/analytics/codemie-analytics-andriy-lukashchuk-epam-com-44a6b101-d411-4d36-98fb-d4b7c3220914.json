@@ -1,0 +1,94 @@
+{
+  "meta": {
+    "generatedAt": "2026-08-20T12:25:27.078Z",
+    "rangeLabel": "all",
+    "agents": [
+      "claude"
+    ],
+    "projectFilter": "all",
+    "totals": {
+      "sessions": 1,
+      "durationMs": 1982468,
+      "turns": 3,
+      "files": 0,
+      "netLines": 0,
+      "toolCallsTotal": 0,
+      "toolSuccessRate": 0,
+      "totalCostUSD": 0,
+      "cacheReadCostUSD": 0,
+      "pricedSessions": 0
+    },
+    "unpricedModels": [],
+    "coverage": [
+      {
+        "agentName": "claude",
+        "total": 1,
+        "priced": 0,
+        "withLog": 1
+      }
+    ],
+    "userEmail": "andriy_lukashchuk@epam.com",
+    "periodStart": "2026-08-20T11:52:23.350Z",
+    "periodEnd": "2026-08-20T12:25:25.818Z"
+  },
+  "sessions": [
+    {
+      "sessionId": "44a6b101-d411-4d36-98fb-d4b7c3220914",
+      "agentName": "claude",
+      "provider": "ai-run-sso",
+      "title": "hello",
+      "project": "/Users/Andriy_Lukashchuk/Dev/code-assistant",
+      "branch": "EPMCDME-13903_chat-tool-call-confirmations",
+      "startTime": 1787226743350,
+      "durationMs": 1982468,
+      "turns": 3,
+      "fileOps": 0,
+      "linesAdded": 0,
+      "linesRemoved": 0,
+      "linesModified": 0,
+      "netLines": 0,
+      "filesChanged": 0,
+      "filesWritten": 0,
+      "filesEdited": 0,
+      "toolCallsTotal": 0,
+      "toolCallsSuccess": 0,
+      "toolCallsFailure": 0,
+      "models": [
+        "<synthetic>"
+      ],
+      "languages": [],
+      "tools": [],
+      "tokens": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheCreation": 0,
+        "cacheCreation1h": 0,
+        "total": 0
+      },
+      "costUSD": 0,
+      "cacheReadCostUSD": 0,
+      "perModelCost": [],
+      "hadLog": true,
+      "dispatches": [
+        {
+          "kind": "command",
+          "name": "model",
+          "start": 1787228646538,
+          "durationMs": 0
+        }
+      ],
+      "skillInvocations": [],
+      "agentInvocations": [],
+      "commandInvocations": [
+        {
+          "name": "model",
+          "totalCalls": 1,
+          "successCount": 1,
+          "failureCount": 0
+        }
+      ],
+      "sessionSource": "Pure chat"
+    }
+  ]
+}

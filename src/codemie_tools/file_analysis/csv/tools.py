@@ -119,6 +119,9 @@ class CSVTool(CodeMieTool, FileToolMixin):
     description: str = CSV_TOOL.description
     config: FileAnalysisConfig
 
+    def is_safe(self, args: dict) -> bool:
+        return True
+
     def __init__(self, config: FileAnalysisConfig) -> None:
         """
         Initialize the CSVTool with configuration containing CSV files.

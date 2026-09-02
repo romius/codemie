@@ -81,6 +81,9 @@ class XlsxTool(CodeMieTool, FileToolMixin):
     config: FileAnalysisConfig
     tokens_size_limit: int = 100_000
 
+    def is_safe(self, args: dict) -> bool:
+        return True
+
     def __init__(self, config: FileAnalysisConfig) -> None:
         """
         Initialize the XlsxTool with configuration containing Excel files.

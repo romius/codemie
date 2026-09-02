@@ -33,6 +33,9 @@ class IdeTool(CodeMieTool):
     definition: IdeToolDefinition = BaseModel
     client: Client = BaseModel
 
+    def is_safe(self, args: dict) -> bool:
+        return True
+
     def __init__(self, definition: IdeToolDefinition, request_id: str):
         super().__init__()
         self.request_id = request_id

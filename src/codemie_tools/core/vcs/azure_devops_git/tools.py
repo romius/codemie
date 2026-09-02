@@ -37,6 +37,15 @@ class AzureDevOpsGitTool(CodeMieTool):
     config: AzureDevOpsGitConfig
     description: str = AZURE_DEVOPS_GIT_TOOL.description
 
+    def is_safe(self, args: dict) -> bool:
+        query = args.get("query") or {}
+        if isinstance(query, str):
+            try:
+                query = json.loads(query)
+            except Exception:
+                return False
+        return self._http_method_is_safe(query)
+
     def _make_request(
         self, method: str, url: str, headers: dict[str, str], method_arguments: dict | list
     ) -> requests.Response:

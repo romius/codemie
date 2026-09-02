@@ -510,3 +510,57 @@ class TestRuntimeFeatures(unittest.TestCase):
         mcp_component = mcp_components[0]
         self.assertTrue(mcp_component.settings.enabled)
         self.assertEqual(mcp_component.settings.model_dump()["value"], "http://host.docker.internal:8080")
+
+
+# Helper that patches CustomerConfig to load from a YAML string.
+def _make_config(yaml_text: str) -> "CustomerConfig":
+    """Build a CustomerConfig from an inline YAML string (no real file needed)."""
+    import yaml as _yaml
+    from unittest.mock import patch
+
+    data = _yaml.safe_load(yaml_text) or {}
+    # Minimal valid components required by CustomerConfig validator
+    full_data = {
+        "components": [{"id": "adminActions", "settings": {"enabled": True}}],
+        **data,
+    }
+    with patch.object(CustomerConfig, "_read_config_file", return_value=_yaml.dump(full_data)):
+        return CustomerConfig()
+
+
+def _make_config_with_tool_permissions(enabled: bool, tool_call_policy=None) -> "CustomerConfig":
+    component: dict = {"id": "features:tool_permissions", "settings": {"enabled": enabled}}
+    if tool_call_policy is not None:
+        component["settings"]["min_tool_call_policy"] = tool_call_policy
+    import yaml as _yaml
+    from unittest.mock import patch
+
+    full_data = {
+        "components": [
+            {"id": "adminActions", "settings": {"enabled": True}},
+            component,
+        ]
+    }
+    with patch.object(CustomerConfig, "_read_config_file", return_value=_yaml.dump(full_data)):
+        return CustomerConfig()
+
+
+class TestCustomerConfigToolPermissions(unittest.TestCase):
+    def test_tool_permissions_absent(self):
+        cfg = _make_config("")
+        self.assertFalse(cfg.is_feature_enabled("tool_permissions"))
+        self.assertIsNone(cfg.get_feature_setting("tool_permissions", "min_tool_call_policy"))
+
+    def test_tool_permissions_loaded_with_floor(self):
+        cfg = _make_config_with_tool_permissions(enabled=True, tool_call_policy="ask_for_approval")
+        self.assertTrue(cfg.is_feature_enabled("tool_permissions"))
+        self.assertEqual(cfg.get_feature_setting("tool_permissions", "min_tool_call_policy"), "ask_for_approval")
+
+    def test_tool_permissions_loaded_enabled_only(self):
+        cfg = _make_config_with_tool_permissions(enabled=True)
+        self.assertTrue(cfg.is_feature_enabled("tool_permissions"))
+        self.assertIsNone(cfg.get_feature_setting("tool_permissions", "min_tool_call_policy"))
+
+    def test_tool_permissions_disabled(self):
+        cfg = _make_config_with_tool_permissions(enabled=False, tool_call_policy="ask_for_approval")
+        self.assertFalse(cfg.is_feature_enabled("tool_permissions"))
