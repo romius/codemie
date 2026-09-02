@@ -16,10 +16,13 @@
 
 from __future__ import annotations
 
+import json
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from codemie.rest_api.models.dynamic_config import ConfigValueType
 from codemie.rest_api.security.user import User
 from codemie.service.analytics.handlers.ai_adoption_handler import AIAdoptionHandler
 from codemie.service.analytics.queries.ai_adoption_framework.config import AIAdoptionConfig
@@ -602,8 +605,12 @@ class TestGetAiAdoptionConfig:
     """Tests for get_ai_adoption_config async method."""
 
     @pytest.mark.asyncio
-    async def test_config_returns_structure(self, handler_admin):
+    @patch("codemie.service.analytics.handlers.ai_adoption_handler.DynamicConfigService")
+    async def test_config_returns_structure(self, mock_service, handler_admin):
         """Verify config returns expected structure."""
+        # Arrange
+        mock_service.aget_by_key = AsyncMock(return_value=None)
+
         # Act
         result = await handler_admin.get_ai_adoption_config()
 
@@ -614,6 +621,112 @@ class TestGetAiAdoptionConfig:
         assert "version" in result["metadata"]
         assert "description" in result["metadata"]
         assert isinstance(result["data"], dict)
+
+    @pytest.mark.asyncio
+    @patch("codemie.service.analytics.handlers.ai_adoption_handler.DynamicConfigService")
+    async def test_config_falls_back_to_defaults_when_nothing_persisted(self, mock_service, handler_admin):
+        """When no config is persisted, GET returns hardcoded defaults."""
+        # Arrange
+        mock_service.aget_by_key = AsyncMock(return_value=None)
+
+        # Act
+        result = await handler_admin.get_ai_adoption_config()
+
+        # Assert
+        default_config = AIAdoptionConfig()
+        assert result["data"] == default_config.to_dict()
+
+    @pytest.mark.asyncio
+    @patch("codemie.service.analytics.handlers.ai_adoption_handler.DynamicConfigService")
+    async def test_config_returns_persisted_value_when_present(self, mock_service, handler_admin):
+        """When a config is persisted, GET returns it instead of defaults.
+
+        Storage format is the flat model_dump() (not the nested to_dict() shape) —
+        to_dict() is ~12.7KB for the full config, which exceeds the dynamic_config
+        table's 10,000-char value column; model_dump() is ~3.9KB and fits.
+        """
+        # Arrange
+        custom_config = AIAdoptionConfig(maturity_activation_threshold=999)
+        stored_record = MagicMock()
+        stored_record.value = json.dumps(custom_config.model_dump())
+        stored_record.update_date = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        mock_service.aget_by_key = AsyncMock(return_value=stored_record)
+
+        # Act
+        result = await handler_admin.get_ai_adoption_config()
+
+        # Assert
+        assert result["data"]["ai_maturity"]["activation_threshold"]["value"] == 999
+
+    @pytest.mark.asyncio
+    @patch("codemie.service.analytics.handlers.ai_adoption_handler.DynamicConfigService")
+    async def test_config_falls_back_to_defaults_when_persisted_value_is_corrupted(self, mock_service, handler_admin):
+        """A corrupted/unparseable persisted record must not break the public GET endpoint."""
+        # Arrange
+        stored_record = MagicMock()
+        stored_record.value = "{not valid json"
+        stored_record.update_date = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        mock_service.aget_by_key = AsyncMock(return_value=stored_record)
+
+        # Act
+        result = await handler_admin.get_ai_adoption_config()
+
+        # Assert — falls back to defaults instead of raising
+        default_config = AIAdoptionConfig()
+        assert result["data"] == default_config.to_dict()
+
+
+class TestSaveAiAdoptionConfig:
+    """Tests for save_ai_adoption_config async method."""
+
+    @pytest.mark.asyncio
+    @patch("codemie.service.analytics.handlers.ai_adoption_handler.DynamicConfigService")
+    async def test_save_persists_via_dynamic_config_service(self, mock_service, handler_admin):
+        """Save serializes the config as flat model_dump() and calls DynamicConfigService.aset.
+
+        Must use the flat shape, not to_dict()'s nested {value, description} shape —
+        the nested shape is ~12.7KB for the full config, exceeding dynamic_config's
+        10,000-char value column limit, so every save would fail validation.
+        """
+        # Arrange
+        stored_record = MagicMock()
+        stored_record.update_date = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        mock_service.aset = AsyncMock(return_value=stored_record)
+        config = AIAdoptionConfig(maturity_activation_threshold=777)
+
+        # Act
+        result = await handler_admin.save_ai_adoption_config(config)
+
+        # Assert
+        mock_service.aset.assert_called_once()
+        call_kwargs = mock_service.aset.call_args.kwargs
+        assert call_kwargs["key"] == "AI_ADOPTION_CONFIG"
+        stored_value = json.loads(call_kwargs["value"])
+        assert stored_value["maturity_activation_threshold"] == 777
+        assert "ai_maturity" not in stored_value  # flat, not nested
+        assert len(call_kwargs["value"]) <= 10000
+        assert call_kwargs["value_type"] == ConfigValueType.STRING
+        assert result["data"]["ai_maturity"]["activation_threshold"]["value"] == 777
+
+
+class TestResetAiAdoptionConfig:
+    """Tests for reset_ai_adoption_config async method."""
+
+    @pytest.mark.asyncio
+    @patch("codemie.service.analytics.handlers.ai_adoption_handler.DynamicConfigService")
+    async def test_reset_deletes_persisted_config_and_returns_defaults(self, mock_service, handler_admin):
+        """Reset calls adelete with the config key and returns default values."""
+        # Arrange
+        mock_service.adelete = AsyncMock(return_value=None)
+        mock_service.aget_by_key = AsyncMock(return_value=None)
+
+        # Act
+        result = await handler_admin.reset_ai_adoption_config()
+
+        # Assert
+        mock_service.adelete.assert_called_once_with("AI_ADOPTION_CONFIG")
+        default_config = AIAdoptionConfig()
+        assert result["data"] == default_config.to_dict()
 
 
 class TestGetDimensionMetricsGeneric:

@@ -2352,6 +2352,81 @@ async def get_ai_adoption_config(
     )
 
 
+@router.put(
+    "/ai-adoption-config",
+    status_code=status.HTTP_200_OK,
+    summary="Update AI Adoption Framework Configuration",
+    description="Persist framework weights, thresholds, and scoring parameters (admin only)",
+    dependencies=[Depends(admin_access_only)],
+)
+@handle_analytics_errors("AI adoption config")
+async def update_ai_adoption_config(
+    request_body: dict = Body(...),
+    user: User = Depends(authenticate),
+) -> JSONResponse:
+    """Persist AI Adoption Framework configuration parameters.
+
+    Requires administrator or maintainer privileges. Validates all weights
+    and thresholds against the bounds defined on AIAdoptionConfig.
+
+    **Body:**
+    - Nested configuration matching the shape returned by GET's `data` field.
+
+    **Returns:**
+    - data: The persisted configuration (echoed back)
+    - metadata: Timestamp and version information
+    """
+    logger.info(f"User {user.id} updating AI adoption framework configuration")
+
+    try:
+        config = AIAdoptionConfig.from_dict(request_body)
+    except (ValueError, TypeError) as error:
+        raise ExtendedHTTPException(
+            code=status.HTTP_400_BAD_REQUEST,
+            message="Invalid AI adoption configuration",
+            details=str(error),
+        ) from error
+
+    service = AnalyticsService(user)
+    response_data = await service.save_ai_adoption_config(config)
+
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content=response_data,
+    )
+
+
+@router.delete(
+    "/ai-adoption-config",
+    status_code=status.HTTP_200_OK,
+    summary="Reset AI Adoption Framework Configuration",
+    description="Delete the persisted configuration, reverting to system defaults (admin only)",
+    dependencies=[Depends(admin_access_only)],
+)
+@handle_analytics_errors("AI adoption config")
+async def reset_ai_adoption_config_route(
+    user: User = Depends(authenticate),
+) -> JSONResponse:
+    """Reset AI Adoption Framework configuration to system defaults.
+
+    Requires administrator or maintainer privileges. Idempotent: succeeds
+    even if no custom configuration was ever saved.
+
+    **Returns:**
+    - data: The default configuration (after reset)
+    - metadata: Timestamp and version information
+    """
+    logger.info(f"User {user.id} resetting AI adoption framework configuration")
+
+    service = AnalyticsService(user)
+    response_data = await service.reset_ai_adoption_config()
+
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content=response_data,
+    )
+
+
 @router.post(
     "/ai-adoption-user-engagement",
     status_code=status.HTTP_200_OK,

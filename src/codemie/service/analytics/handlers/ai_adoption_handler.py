@@ -16,21 +16,26 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from codemie.clients.postgres import PostgresClient
+from codemie.rest_api.models.dynamic_config import ConfigValueType
 from codemie.rest_api.security.user import User
 from codemie.service.analytics.handlers.user_identity_resolver import UserIdentityResolver
 from codemie.service.analytics.queries.ai_adoption_framework.config import AIAdoptionConfig
+from codemie.service.dynamic_config_service import DynamicConfigService
 
 logger = logging.getLogger(__name__)
 
 COLUMN_LABEL_CREATED_BY = "Created By"
 COLUMN_DESC_CREATOR_USERNAME = "Creator username"
 COLUMN_DESC_CREATION_TIMESTAMP = "Creation timestamp"
+
+AI_ADOPTION_CONFIG_KEY = "AI_ADOPTION_CONFIG"
 
 
 class AIAdoptionHandler:
@@ -1532,25 +1537,83 @@ class AIAdoptionHandler:
     async def get_ai_adoption_config(self) -> dict:
         """Get AI Adoption Framework configuration parameters.
 
-        Returns all weights, thresholds, and parameters used in adoption scoring.
-        No access control required - config is public information.
+        Returns the last saved configuration if one has been persisted via
+        DynamicConfigService, otherwise falls back to hardcoded defaults.
+        No access control required - config read is public.
 
         Returns:
             Dict with framework configuration organized by dimension
         """
         logger.info("Requesting AI Adoption Framework configuration")
 
-        from codemie.service.analytics.queries.ai_adoption_framework import AIAdoptionConfig
+        record = await DynamicConfigService.aget_by_key(AI_ADOPTION_CONFIG_KEY)
 
-        config = AIAdoptionConfig()
+        config = None
+        timestamp = None
+        if record is not None:
+            try:
+                config = AIAdoptionConfig(**json.loads(record.value))
+                timestamp = record.update_date.replace(tzinfo=timezone.utc).isoformat()
+            except (ValueError, TypeError) as error:
+                logger.warning(f"Persisted AI adoption config is corrupted, falling back to defaults: {error}")
+
+        if config is None:
+            config = AIAdoptionConfig()
+            timestamp = datetime.now(timezone.utc).isoformat()
 
         response = {
             "data": config.to_dict(),
             "metadata": {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": timestamp,
                 "version": "1.0",
                 "description": "AI Adoption Framework calculation parameters (weights, thresholds, scoring rules)",
             },
         }
 
         return response
+
+    async def save_ai_adoption_config(self, config: AIAdoptionConfig) -> dict:
+        """Persist the AI Adoption Framework configuration.
+
+        Caller (the router) is responsible for enforcing admin-only access
+        before invoking this method.
+
+        Args:
+            config: Validated configuration to persist
+
+        Returns:
+            Dict with the persisted configuration, same shape as get_ai_adoption_config()
+        """
+        logger.info(f"User {self._user.id} saving AI Adoption Framework configuration")
+
+        record = await DynamicConfigService.aset(
+            key=AI_ADOPTION_CONFIG_KEY,
+            value=json.dumps(config.model_dump()),
+            value_type=ConfigValueType.STRING,
+            description="AI Adoption Framework configuration",
+            updated_by=self._user.id,
+        )
+
+        return {
+            "data": config.to_dict(),
+            "metadata": {
+                "timestamp": record.update_date.replace(tzinfo=timezone.utc).isoformat(),
+                "version": "1.0",
+                "description": "AI Adoption Framework calculation parameters (weights, thresholds, scoring rules)",
+            },
+        }
+
+    async def reset_ai_adoption_config(self) -> dict:
+        """Delete the persisted AI Adoption Framework configuration, reverting to defaults.
+
+        Idempotent: succeeds even if nothing was persisted. Caller (the router)
+        is responsible for enforcing admin-only access before invoking this.
+
+        Returns:
+            Dict with the fresh default configuration, same shape as get_ai_adoption_config()
+        """
+        logger.info(f"User {self._user.id} resetting AI Adoption Framework configuration to defaults")
+
+        await DynamicConfigService.adelete(AI_ADOPTION_CONFIG_KEY)
+
+        return await self.get_ai_adoption_config()

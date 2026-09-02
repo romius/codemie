@@ -120,6 +120,7 @@ from codemie.rest_api.routers import local_auth_router
 from codemie.rest_api.routers import user_management_router
 from codemie.rest_api.routers import user_profile_router
 from codemie.rest_api.routers import user_preferences_router
+from codemie.rest_api.routers import user_profile_settings_router
 from codemie.rest_api.routers import activity_events_router
 from codemie.rest_api.utils.state_import import StateImportService
 from codemie.rest_api.utils.default_applications import create_default_applications
@@ -941,6 +942,7 @@ app.include_router(gitlab_oauth.router)
 app.include_router(jira_oauth.router)
 app.include_router(confluence_oauth.router)
 app.include_router(user_preferences_router.router)
+app.include_router(user_profile_settings_router.router)
 
 # User management routers (EPMCDME-10160)
 if config.ENABLE_USER_MANAGEMENT:

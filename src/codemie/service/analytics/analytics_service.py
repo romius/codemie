@@ -1448,6 +1448,25 @@ class AnalyticsService:
         """
         return await self._adoption_handler.get_ai_adoption_config()
 
+    async def save_ai_adoption_config(self, config: AIAdoptionConfig) -> dict:
+        """Persist AI Adoption Framework configuration parameters.
+
+        Args:
+            config: Validated configuration to persist
+
+        Returns:
+            Dict with the persisted configuration
+        """
+        return await self._adoption_handler.save_ai_adoption_config(config)
+
+    async def reset_ai_adoption_config(self) -> dict:
+        """Delete the persisted AI Adoption Framework configuration.
+
+        Returns:
+            Dict with the fresh default configuration
+        """
+        return await self._adoption_handler.reset_ai_adoption_config()
+
     # Engagement endpoint: weekly histogram (ignores time filter)
 
     async def get_weekly_spending(
