@@ -15,36 +15,7 @@
 ARG PYTHON_VERSION=3.12.12
 ARG INSTALL_ENTERPRISE=true
 
-FROM python:${PYTHON_VERSION}-slim AS builder
-
-# Set environment variables
-ENV PYTHONPATH=/app/src \
-    POETRY_VERSION=2.3.3 \
-    POETRY_HOME="/opt/poetry" \
-    POETRY_VIRTUALENVS_CREATE=false \
-    VIRTUAL_ENV="/venv"
-
-# Add Poetry and venv to PATH
-ENV PATH="$POETRY_HOME/bin:$VIRTUAL_ENV/bin:$PATH"
-
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    curl=8.14.1-2+deb13u4 \
-    libimage-exiftool-perl=13.25+dfsg-1 \
-    gcc=4:14.2.0-1 \
-    freetds-dev=1.3.17+ds-2+deb13u1 \
-    freetds-bin=1.3.17+ds-2+deb13u1 \
-    unixodbc=2.3.12-2 \
-    unixodbc-dev=2.3.12-2 && \
-    rm -rf /var/lib/apt/lists/*
-
-# Create virtual environment
-RUN python -m venv $VIRTUAL_ENV
-
-# Install Poetry - respects $POETRY_VERSION & $POETRY_HOME
-# hadolint ignore=DL4006
-RUN curl -sSL https://install.python-poetry.org | python -
-RUN poetry self add jaraco.context@6.1.0 wheel@0.46.2
+FROM codemie/codemie-base-python:${PYTHON_VERSION}-debian-builder AS builder
 
 # Set working directory
 WORKDIR /app
@@ -73,93 +44,20 @@ COPY ./README.md /app/README.md
 COPY ./pytest.ini /app
 
 # Production stage
-FROM python:${PYTHON_VERSION}-slim AS production
+FROM codemie/codemie-base-python:${PYTHON_VERSION}-debian-runtime AS production
 
 # Set working directory
 WORKDIR /app
 
-# Create codemie user
-RUN groupadd --gid 1001 codemie && \
-    useradd --uid 1001 --gid 1001 --shell /bin/bash --create-home codemie
-
-RUN chown codemie:codemie /app
-
-# Set environment variables for production
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app/src \
-    POETRY_HOME="/opt/poetry" \
-    POETRY_VIRTUALENVS_CREATE=false \
-    VIRTUAL_ENV="/venv" \
-    SUFFIX=/ \
-    TIKTOKEN_CACHE_DIR="/home/codemie/.cache/tiktoken"
-
-# Add Poetry and venv to PATH
-ENV PATH="$POETRY_HOME/bin:$VIRTUAL_ENV/bin:$PATH"
-
-# Install only runtime dependencies
-# procps is needed for kill command in "Code Interpreter"
-# texlive packages and pandoc are needed for PDF export (pdflatex + pypandoc)
-# lmodern and texlive-fonts-recommended are required for Pandoc PDF generation
-# subversion is needed for svn CLI (EPMCDME-13166: SVN datasource support)
-# hadolint ignore=DL3008
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    curl=8.14.1-2+deb13u4 \
-    freetds-bin=1.3.17+ds-2+deb13u1 \
-    unixodbc=2.3.12-2 \
-    libpango1.0-dev=1.56.3-1 \
-    git=1:2.47.3-0+deb13u1 \
-    procps=2:4.0.4-9 \
-    libsqlite3-0=3.46.1-7+deb13u1 \
-    subversion \
-    # Security (EPMCDME-14392): pin >=3.5.7-1~deb13u2 to fix CVE-2026-14456 (OpenSSL)
-    openssl=3.5.7-1~deb13u2 \
-    pandoc \
-    texlive-latex-base \
-    texlive-latex-extra \
-    texlive-fonts-recommended \
-    lmodern && \
-    apt-get purge -y linux-libc-dev && \
-    # TODO: Remove once python:3.12.12-slim ships with libcap2 >= 1:2.75-10+deb13u1 (CVE-2026-4878)
-    #       and libsystemd0/libudev1 >= 257.13-1~deb13u1 (CVE-2026-29111)
-    # Security (EPMCDME-13178): pin >=1.11.1-1+deb13u1 to fix CVE-2026-55200 (HIGH, out-of-bounds write),CVE-2026-7598 (HIGH, integer overflow, libssh2)
-    # Security (EPMCDME-14392): pin >=3.5.7-1~deb13u2 to fix CVE-2026-14456 (libssl3t64, openssl-provider-legacy)
-    apt-get install -y --no-install-recommends --only-upgrade \
-        "libcap2=1:2.75-10+deb13u1+b1" \
-        "libsystemd0=257.13-1~deb13u1" \
-        "libudev1=257.13-1~deb13u1" \
-        "libssl3t64=3.5.7-1~deb13u2" \
-        "openssl-provider-legacy=3.5.7-1~deb13u2" \
-        "libssh2-1t64=1.11.1-1+deb13u1" && \
-    rm -rf /var/lib/apt/lists/*
-
-# Prevent writing files into critical directories
-RUN chmod 555 /usr/local/bin /usr/local/lib /usr/local/sbin && \
-    chmod 555 /usr/bin /usr/lib /usr/sbin && \
-    chmod 555 /bin /lib /sbin /usr && \
-    ( chmod -f 555 /lib64 || true )
-
-USER codemie
-
-COPY --from=builder --chown=codemie:codemie $POETRY_HOME $POETRY_HOME
-
 # Copy virtual environment from builder
 COPY --from=builder --chown=codemie:codemie $VIRTUAL_ENV $VIRTUAL_ENV
-RUN chmod 555 $VIRTUAL_ENV
+RUN chmod 555 "$VIRTUAL_ENV"
 
 # Copy application code
 COPY --from=builder --chown=codemie:codemie /app /app
 
 # Pre-create writable directories so named volumes inherit codemie ownership on first mount
 RUN mkdir -p /app/codemie-storage /app/codemie-repos
-
-# Download cl100k_base and o200k_base encodings
-# hadolint ignore=SC2046
-RUN mkdir -p "$TIKTOKEN_CACHE_DIR" && \
-    curl -L https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken > \
-    $TIKTOKEN_CACHE_DIR/$(python -c "import hashlib; print(hashlib.sha1('https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken'.encode()).hexdigest())") && \
-    curl -L https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken > \
-    $TIKTOKEN_CACHE_DIR/$(python -c "import hashlib; print(hashlib.sha1('https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken'.encode()).hexdigest())")
 
 # Download NLTK packages
 RUN poetry run download_nltk_packages
