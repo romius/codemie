@@ -18,10 +18,22 @@ Derive the stage list rather than trusting a summary:
 grep -nE '^(FROM|ARG|USER)' Dockerfile
 ```
 
-There is a `builder` stage and a `production` stage, both on `python:${PYTHON_VERSION}-slim`.
-`builder` installs Poetry and the Python dependencies into `/venv`; `production` installs only
-runtime OS packages, creates the unprivileged `codemie` user, and copies `/venv` and `/app` across.
-Knowing which stage applies prevents fixing a package in the layer that is thrown away.
+There is a `builder` stage and a `production` stage, both on
+`codemie/codemie-base-python:${PYTHON_VERSION}-debian-{builder,runtime}` — not a plain upstream
+`python:${PYTHON_VERSION}-slim` image. `builder` installs Poetry and the Python dependencies into
+`/venv`; `production` installs only runtime OS packages, creates the unprivileged `codemie` user,
+and copies `/venv` and `/app` across. Knowing which stage applies prevents fixing a package in the
+layer that is thrown away.
+
+### Base image source
+
+`codemie/codemie-base-python` is built from a separate repository:
+<https://gitbud.epam.com/epm-cdme/codemie-base-images/-/blob/main/python/PYTHON_VERSION/debian/Dockerfile>
+— substitute this repo's `PYTHON_VERSION` (from the `ARG` in this `Dockerfile`) for the placeholder.
+
+**A Debian OS package vulnerability (e.g. `libssl`, `glibc`, anything from `apt`) is not fixable
+here.** Go fix it in `codemie-base-images` instead — that is the only repo where a Debian package
+gets patched. Do not open an MR in this repo for a Debian CVE.
 
 ## Enterprise dependencies
 
