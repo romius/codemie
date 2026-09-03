@@ -565,3 +565,83 @@ class TestCollectSpendRowsResetTransition:
 
         assert rows == []
         assert "bud-1" in unchanged_ids
+
+
+class TestCollectSpendRowsBudgetReassignment:
+    """Tests for _collect_spend_rows when a user is assigned a new budget_id (EPMCDME-13669)."""
+
+    def _make_assignment(self, budget_id: str = "bud-new") -> SimpleNamespace:
+        return SimpleNamespace(budget_id=budget_id, category="platform")
+
+    def _make_budget(self, budget_id: str = "bud-new") -> SimpleNamespace:
+        return SimpleNamespace(budget_id=budget_id, budget_duration="30d", budget_reset_at=None)
+
+    def _call(
+        self,
+        *,
+        current_spend_map: dict,
+        prev_day_map: dict,
+        fresh_spend: float,
+        budget_id: str = "bud-new",
+    ) -> tuple:
+        now = datetime(2026, 9, 2, 10, 0, tzinfo=timezone.utc)
+        assignment = self._make_assignment(budget_id)
+        budget = self._make_budget(budget_id)
+        return _collect_spend_rows(
+            session=SimpleNamespace(),
+            fetch_assignments=[assignment],
+            results=[{"total_spend": fresh_spend, "budget_reset_at": None}],
+            budgets_map={budget_id: budget},
+            current_spend_map=current_spend_map,
+            prev_day_map=prev_day_map,
+            subject_user_id="user-1",
+            subject_label="alice@example.com",
+            now=now,
+        )
+
+    def test_seeds_row_for_new_budget_when_spend_unchanged(self):
+        """Bug scenario: new budget_id, prev_day_map has old budget's row with same spend.
+        Expect a tracking row to be written so the widget shows the correct value."""
+        old_row = ProjectSpendTracking(
+            id=uuid4(),
+            project_name="alice@example.com",
+            budget_id="bud-old",
+            budget_category="platform",
+            spend_subject_type="budget",
+            spend_date=datetime(2026, 9, 1, tzinfo=timezone.utc),
+            budget_period_spend=Decimal("40.00"),
+            daily_spend=Decimal("5.00"),
+            cumulative_spend=Decimal("120.00"),
+        )
+        rows, unchanged_ids, _ = self._call(
+            current_spend_map={},
+            prev_day_map={"platform": old_row},
+            fresh_spend=40.0,
+        )
+        assert len(rows) == 1, "Expected a row to be seeded for the new budget_id"
+        assert rows[0].budget_period_spend == Decimal("40.00")
+        assert rows[0].budget_id == "bud-new"
+        assert unchanged_ids == []
+
+    def test_seeds_zero_row_for_new_budget_with_no_prior_spend(self):
+        """Regression: new budget, user has no prior spend at all → row written with 0.
+        Widget should show 0 correctly."""
+        rows, unchanged_ids, _ = self._call(
+            current_spend_map={},
+            prev_day_map={},
+            fresh_spend=0.0,
+        )
+        assert len(rows) == 1
+        assert rows[0].budget_period_spend == Decimal("0")
+        assert unchanged_ids == []
+
+    def test_existing_budget_unchanged_spend_still_hits_touch_path(self):
+        """Regression: existing budget_id with unchanged spend → no new row, goes to touch path."""
+        existing_row = _make_tracking_row_for_budget_usage("25.00", "80.00")
+        rows, unchanged_ids, _ = self._call(
+            current_spend_map={"bud-new": existing_row},
+            prev_day_map={},
+            fresh_spend=25.0,
+        )
+        assert rows == []
+        assert "bud-new" in unchanged_ids

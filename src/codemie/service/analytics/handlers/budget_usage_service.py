@@ -287,7 +287,7 @@ def _collect_spend_rows(
             budget,
             now,
             subject_label,
-            allow_zero=_is_reset_transition(prev_row, budget, fresh_spend, now),
+            allow_zero=existing is None or _is_reset_transition(prev_row, budget, fresh_spend, now),
         )
         if delta is None:
             continue
