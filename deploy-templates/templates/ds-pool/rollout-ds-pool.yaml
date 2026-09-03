@@ -6,7 +6,9 @@ metadata:
   labels:
     {{- include "codemie.labels" . | nindent 4 }}
 spec:
+  {{- if not .Values.dsPool.hpa.enabled }}
   replicas: {{ .Values.dsPool.replicaCount }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "codemie.ds-pool.selectorLabels" . | nindent 6 }}

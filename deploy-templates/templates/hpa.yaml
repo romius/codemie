@@ -1,35 +1,43 @@
-{{- if .Values.hpa.enabled }}
+{{- $pools := list
+  (dict "name" (include "codemie.fullname" .)            "hpa" .Values.hpa           "rollout" .Values.argoRollout.enabled           "enabled" true)
+  (dict "name" (include "codemie.ds-pool.fullname" .)    "hpa" .Values.dsPool.hpa    "rollout" .Values.dsPool.argoRollout.enabled    "enabled" .Values.dsPool.enabled)
+  (dict "name" (include "codemie.proxy-pool.fullname" .) "hpa" .Values.proxyPool.hpa "rollout" .Values.proxyPool.argoRollout.enabled "enabled" .Values.proxyPool.enabled)
+-}}
+{{- range $pool := $pools }}
+{{- if and $pool.enabled $pool.hpa.enabled }}
+---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: {{ include "codemie.fullname" . }}
+  name: {{ $pool.name }}
   labels:
-    {{- include "codemie.labels" . | nindent 4 }}
+    {{- include "codemie.labels" $ | nindent 4 }}
 spec:
   scaleTargetRef:
-    {{- if .Values.argoRollout.enabled }}
+    {{- if $pool.rollout }}
     apiVersion: argoproj.io/v1alpha1
     kind: Rollout
     {{- else }}
     apiVersion: apps/v1
     kind: Deployment
     {{- end }}
-    name: {{ include "codemie.fullname" . }}
-  minReplicas: {{ .Values.hpa.minReplicas }}
-  maxReplicas: {{ .Values.hpa.maxReplicas }}
+    name: {{ $pool.name }}
+  minReplicas: {{ $pool.hpa.minReplicas }}
+  maxReplicas: {{ $pool.hpa.maxReplicas }}
   metrics:
   # Utilization is measured against the codemie container's own CPU request,
   # so sidecars do not dilute the signal.
   - type: ContainerResource
     containerResource:
       name: cpu
-      container: {{ .Chart.Name }}
+      container: {{ $.Chart.Name }}
       target:
         type: Utilization
-        averageUtilization: {{ .Values.hpa.targetCPUUtilizationPercentage }}
+        averageUtilization: {{ $pool.hpa.targetCPUUtilizationPercentage }}
   behavior:
     scaleUp:
-      stabilizationWindowSeconds: {{ .Values.hpa.scaleUpStabilizationWindowSeconds }}
+      stabilizationWindowSeconds: {{ $pool.hpa.scaleUpStabilizationWindowSeconds }}
     scaleDown:
-      stabilizationWindowSeconds: {{ .Values.hpa.scaleDownStabilizationWindowSeconds }}
+      stabilizationWindowSeconds: {{ $pool.hpa.scaleDownStabilizationWindowSeconds }}
+{{- end }}
 {{- end }}

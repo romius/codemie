@@ -28,6 +28,12 @@ A Helm chart for AI/Run API
 | dsPool.argoRollout.scaleDownDelaySeconds | int | `120` | The time to wait before scaling down the old replica set |
 | dsPool.enabled | bool | `false` | Enable a separate deployment/rollout for ds-pool processing |
 | dsPool.extraEnv | list | `[]` | Additional env vars merged after extraEnv + customEnv (e.g. DATASOURCE_WORKER_ONLY=true) |
+| dsPool.hpa.enabled | bool | `false` | Enable the HorizontalPodAutoscaler for the ds-pool rollout/deployment |
+| dsPool.hpa.maxReplicas | int | `2` | Maximum number of ds-pool pods |
+| dsPool.hpa.minReplicas | int | `1` | Minimum number of ds-pool pods |
+| dsPool.hpa.scaleDownStabilizationWindowSeconds | int | `900` | Time window CPU must stay below target before pods are removed |
+| dsPool.hpa.scaleUpStabilizationWindowSeconds | int | `60` | Time window the CPU target must be exceeded before pods are added |
+| dsPool.hpa.targetCPUUtilizationPercentage | int | `70` | Target CPU utilization of the codemie container, as a percentage of its CPU request |
 | dsPool.ingress.annotations | object | `{"nginx.ingress.kubernetes.io/proxy-body-size":"900m","nginx.ingress.kubernetes.io/proxy-read-timeout":"600","nginx.ingress.kubernetes.io/rewrite-target":"/v1/index/$1"}` | Additional ingress annotations |
 | dsPool.ingress.enabled | bool | `false` | Enable ingress for the ds-pool workload |
 | dsPool.ingress.path | string | `"/code-assistant-api/v1/index/(.*)"` | Path routed to the ds-pool service (all /v1/index/* endpoints) |
@@ -36,6 +42,9 @@ A Helm chart for AI/Run API
 | dsPool.ingressApp.enabled | bool | `false` | Enable ingress for application index endpoints |
 | dsPool.ingressApp.path | string | `"/code-assistant-api/v1/application/(.*)/index(.*)"` | Path routed to the ds-pool service (/v1/application/*/index* endpoints) |
 | dsPool.ingressApp.pathType | string | `"ImplementationSpecific"` | Ingress path type |
+| dsPool.pdb.enabled | bool | `false` | Enable the PodDisruptionBudget for the ds-pool rollout/deployment |
+| dsPool.pdb.maxUnavailable | string | `""` | Maximum number of pods that can be unavailable during a disruption. Mutually exclusive with minAvailable; set only one (leave empty to use minAvailable). |
+| dsPool.pdb.minAvailable | int | `1` | Minimum number of pods that must remain available during a disruption. Mutually exclusive with maxUnavailable; set only one. |
 | dsPool.replicaCount | int | `1` | Number of ds-pool pods to run |
 | dsPool.resources | object | `{"limits":{"cpu":2,"memory":"2048Mi"},"requests":{"cpu":"100m","memory":"1024Mi"}}` | Resource limits and requests for ds-pool pods |
 | dsPool.service.annotations | object | `{}` | ds-pool service annotations |
@@ -86,6 +95,9 @@ A Helm chart for AI/Run API
 | metrics.port | int | `9091` | The port the metrics server listens on |
 | nameOverride | string | `""` |  |
 | nodeSelector | object | `{}` | Node selector to be added to the AI/Run API pods |
+| pdb.enabled | bool | `false` | Enable the PodDisruptionBudget for the codemie-api rollout/deployment |
+| pdb.maxUnavailable | string | `""` | Maximum number of pods that can be unavailable during a disruption. Mutually exclusive with minAvailable; set only one (leave empty to use minAvailable). |
+| pdb.minAvailable | int | `1` | Minimum number of pods that must remain available during a disruption. Mutually exclusive with maxUnavailable; set only one. |
 | podAnnotations | object | `{}` | Annotations to be added to AI/Run API pods |
 | podLabels | object | `{}` | Labels to be added to AI/Run UI pods. |
 | podSecurityContext | object | `{}` | Toggle and define pod-level security context |
@@ -94,10 +106,19 @@ A Helm chart for AI/Run API
 | proxyPool.argoRollout.scaleDownDelaySeconds | int | `120` | The time to wait before scaling down the old replica set |
 | proxyPool.enabled | bool | `false` | Enable a separate deployment/rollout for proxy-pool processing |
 | proxyPool.extraEnv | list | `[]` | Additional env vars merged after extraEnv + customEnv |
+| proxyPool.hpa.enabled | bool | `false` | Enable the HorizontalPodAutoscaler for the proxy-pool rollout/deployment |
+| proxyPool.hpa.maxReplicas | int | `2` | Maximum number of proxy-pool pods |
+| proxyPool.hpa.minReplicas | int | `1` | Minimum number of proxy-pool pods |
+| proxyPool.hpa.scaleDownStabilizationWindowSeconds | int | `900` | Time window CPU must stay below target before pods are removed |
+| proxyPool.hpa.scaleUpStabilizationWindowSeconds | int | `60` | Time window the CPU target must be exceeded before pods are added |
+| proxyPool.hpa.targetCPUUtilizationPercentage | int | `70` | Target CPU utilization of the codemie container, as a percentage of its CPU request |
 | proxyPool.ingress.annotations | object | `{"nginx.ingress.kubernetes.io/proxy-body-size":"900m","nginx.ingress.kubernetes.io/proxy-read-timeout":"600"}` | Additional ingress annotations |
 | proxyPool.ingress.enabled | bool | `false` | Enable ingress for the proxy-pool workload |
 | proxyPool.ingress.pathType | string | `"ImplementationSpecific"` | Ingress path type |
 | proxyPool.ingress.paths | list | `[{"path":"/v1/chat/completions"},{"path":"/chat/completions"},{"path":"/v1/completions"},{"path":"/completions"},{"path":"/v1/messages"},{"path":"/messages"},{"path":"/v1/messages/count_tokens"},{"path":"/messages/count_tokens"},{"path":"/v1/responses"},{"path":"/responses"},{"path":"/v1/embeddings"},{"path":"/embeddings"},{"path":"/v1/health"},{"path":"/health"},{"path":"/v1/models"},{"path":"/models"},{"path":"/v1/models/(.*):generateContent"},{"path":"/models/(.*):generateContent"},{"path":"/v1/models/(.*):streamGenerateContent"},{"path":"/models/(.*):streamGenerateContent"},{"path":"/v1/models/(.*):countTokens"},{"path":"/models/(.*):countTokens"},{"path":"/v1beta/models/(.*):generateContent"},{"path":"/v1beta/models/(.*):streamGenerateContent"}]` | Paths routed to the proxy-pool service (all LiteLLM proxy endpoints) |
+| proxyPool.pdb.enabled | bool | `false` | Enable the PodDisruptionBudget for the proxy-pool rollout/deployment |
+| proxyPool.pdb.maxUnavailable | string | `""` | Maximum number of pods that can be unavailable during a disruption. Mutually exclusive with minAvailable; set only one (leave empty to use minAvailable). |
+| proxyPool.pdb.minAvailable | int | `1` | Minimum number of pods that must remain available during a disruption. Mutually exclusive with maxUnavailable; set only one. |
 | proxyPool.replicaCount | int | `1` | Number of proxy-pool pods to run |
 | proxyPool.resources | object | `{"limits":{"cpu":2,"memory":"2048Mi"},"requests":{"cpu":"100m","memory":"1024Mi"}}` | Resource limits and requests for proxy-pool pods |
 | proxyPool.service.annotations | object | `{}` | proxy-pool service annotations |

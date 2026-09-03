@@ -6,7 +6,9 @@ metadata:
   labels:
     {{- include "codemie.labels" . | nindent 4 }}
 spec:
+  {{- if not .Values.proxyPool.hpa.enabled }}
   replicas: {{ .Values.proxyPool.replicaCount }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "codemie.proxy-pool.selectorLabels" . | nindent 6 }}

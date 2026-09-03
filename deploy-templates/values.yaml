@@ -363,6 +363,32 @@ dsPool:
     # -- Path routed to the ds-pool service (/v1/application/*/index* endpoints)
     path: "/code-assistant-api/v1/application/(.*)/index(.*)"
 
+  ## HPA for the ds-pool workload
+  hpa:
+    # -- Enable the HorizontalPodAutoscaler for the ds-pool rollout/deployment
+    enabled: false
+    # -- Minimum number of ds-pool pods
+    minReplicas: 1
+    # -- Maximum number of ds-pool pods
+    maxReplicas: 2
+    # -- Target CPU utilization of the codemie container, as a percentage of its CPU request
+    targetCPUUtilizationPercentage: 70
+    # -- Time window the CPU target must be exceeded before pods are added
+    scaleUpStabilizationWindowSeconds: 60
+    # -- Time window CPU must stay below target before pods are removed
+    scaleDownStabilizationWindowSeconds: 900
+
+  ## PodDisruptionBudget for the ds-pool workload
+  pdb:
+    # -- Enable the PodDisruptionBudget for the ds-pool rollout/deployment
+    enabled: false
+    # -- Minimum number of pods that must remain available during a disruption.
+    # Mutually exclusive with maxUnavailable; set only one.
+    minAvailable: 1
+    # -- Maximum number of pods that can be unavailable during a disruption.
+    # Mutually exclusive with minAvailable; set only one (leave empty to use minAvailable).
+    maxUnavailable: ""
+
 ## Dedicated proxy-pool workload
 ## Handles LiteLLM proxy traffic (chat, completions, messages, embeddings, models, health, Gemini endpoints).
 ## Exposes a service and ingress with one path per proxy endpoint.
@@ -443,6 +469,32 @@ proxyPool:
       - path: "/v1beta/models/(.*):generateContent"
       - path: "/v1beta/models/(.*):streamGenerateContent"
 
+  ## HPA for the proxy-pool workload
+  hpa:
+    # -- Enable the HorizontalPodAutoscaler for the proxy-pool rollout/deployment
+    enabled: false
+    # -- Minimum number of proxy-pool pods
+    minReplicas: 1
+    # -- Maximum number of proxy-pool pods
+    maxReplicas: 2
+    # -- Target CPU utilization of the codemie container, as a percentage of its CPU request
+    targetCPUUtilizationPercentage: 70
+    # -- Time window the CPU target must be exceeded before pods are added
+    scaleUpStabilizationWindowSeconds: 60
+    # -- Time window CPU must stay below target before pods are removed
+    scaleDownStabilizationWindowSeconds: 900
+
+  ## PodDisruptionBudget for the proxy-pool workload
+  pdb:
+    # -- Enable the PodDisruptionBudget for the proxy-pool rollout/deployment
+    enabled: false
+    # -- Minimum number of pods that must remain available during a disruption.
+    # Mutually exclusive with maxUnavailable; set only one.
+    minAvailable: 1
+    # -- Maximum number of pods that can be unavailable during a disruption.
+    # Mutually exclusive with minAvailable; set only one (leave empty to use minAvailable).
+    maxUnavailable: ""
+
 ## Probes for the AI/Run API
 # Ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
 #
@@ -504,6 +556,17 @@ hpa:
   scaleUpStabilizationWindowSeconds: 60
   # -- Time window CPU must stay below target before pods are removed
   scaleDownStabilizationWindowSeconds: 900
+
+## PodDisruptionBudget for the main codemie-api workload
+pdb:
+  # -- Enable the PodDisruptionBudget for the codemie-api rollout/deployment
+  enabled: false
+  # -- Minimum number of pods that must remain available during a disruption.
+  # Mutually exclusive with maxUnavailable; set only one.
+  minAvailable: 1
+  # -- Maximum number of pods that can be unavailable during a disruption.
+  # Mutually exclusive with minAvailable; set only one (leave empty to use minAvailable).
+  maxUnavailable: ""
 
 # -- Resource limits and requests for the AI/Run API pods
 resources:

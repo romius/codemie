@@ -1,0 +1,27 @@
+{{- $pools := list
+  (dict "name" (include "codemie.fullname" .)            "pdb" .Values.pdb           "selector" (include "codemie.selectorLabels" .)            "enabled" true)
+  (dict "name" (include "codemie.ds-pool.fullname" .)    "pdb" .Values.dsPool.pdb    "selector" (include "codemie.ds-pool.selectorLabels" .)    "enabled" .Values.dsPool.enabled)
+  (dict "name" (include "codemie.proxy-pool.fullname" .) "pdb" .Values.proxyPool.pdb "selector" (include "codemie.proxy-pool.selectorLabels" .) "enabled" .Values.proxyPool.enabled)
+-}}
+{{- range $pool := $pools }}
+{{- if and $pool.enabled $pool.pdb.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $pool.name }}
+  labels:
+    {{- include "codemie.labels" $ | nindent 4 }}
+spec:
+  {{- if $pool.pdb.maxUnavailable }}
+  maxUnavailable: {{ $pool.pdb.maxUnavailable }}
+  {{- else if kindIs "invalid" $pool.pdb.minAvailable }}
+  minAvailable: 1
+  {{- else }}
+  minAvailable: {{ $pool.pdb.minAvailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- $pool.selector | nindent 6 }}
+{{- end }}
+{{- end }}
