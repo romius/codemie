@@ -14,9 +14,6 @@
 
 """Schema validation tests for project budget router models."""
 
-import pytest
-from pydantic import ValidationError
-
 from codemie.rest_api.routers.project_budget_router import (
     CategoryBudgetSpec,
     CategoryBudgetSpecUpdate,
@@ -36,19 +33,15 @@ class TestCategoryBudgetSpecValidation:
         spec = CategoryBudgetSpec(pct=50.0, soft_budget=None)
         assert spec.pct == 50.0
 
-    def test_rejects_negative_percent(self):
-        """CategoryBudgetSpec should reject negative pct values."""
-        with pytest.raises(ValidationError) as exc_info:
-            CategoryBudgetSpec(pct=-1.0, soft_budget=None)
-        errors = exc_info.value.errors()
-        assert any("greater than or equal to 0" in str(e) for e in errors)
+    def test_accepts_negative_percent(self):
+        """CategoryBudgetSpec accepts negative pct at model level; service raises 400."""
+        spec = CategoryBudgetSpec(pct=-1.0, soft_budget=None)
+        assert spec.pct == -1.0
 
-    def test_rejects_percent_over_100(self):
-        """CategoryBudgetSpec should reject pct > 100."""
-        with pytest.raises(ValidationError) as exc_info:
-            CategoryBudgetSpec(pct=101.0, soft_budget=None)
-        errors = exc_info.value.errors()
-        assert any("less than or equal to 100" in str(e) for e in errors)
+    def test_accepts_percent_over_100(self):
+        """CategoryBudgetSpec accepts pct>100 at model level; service raises 400."""
+        spec = CategoryBudgetSpec(pct=101.0, soft_budget=None)
+        assert spec.pct == 101.0
 
 
 class TestCategoryBudgetSpecUpdateValidation:

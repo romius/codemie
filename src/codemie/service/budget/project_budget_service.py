@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 import uuid
 from dataclasses import dataclass, field
@@ -1711,6 +1712,17 @@ class ProjectBudgetService:
         platform_key = BudgetCategory.PLATFORM.value
         if platform_key not in categories:
             raise ExtendedHTTPException(code=400, message="'platform' category is required")
+        for key, spec in categories.items():
+            if not math.isfinite(spec.pct) or spec.pct < 0:
+                raise ExtendedHTTPException(
+                    code=400,
+                    message=f"Category '{key}' pct must be >= 0 and finite, got {spec.pct}",
+                )
+            if spec.pct > 100:
+                raise ExtendedHTTPException(
+                    code=400,
+                    message=f"Category '{key}' pct must be <= 100, got {spec.pct}",
+                )
         total_pct = sum(s.pct for s in categories.values())
         if abs(total_pct - 100.0) > PCT_SUM_TOLERANCE:
             raise ExtendedHTTPException(

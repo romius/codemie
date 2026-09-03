@@ -502,7 +502,7 @@ group_router = APIRouter(
 
 
 class CategoryBudgetSpec(BaseModel):
-    pct: float = Field(ge=0, le=100, description="Percentage of total_amount allocated to this category")
+    pct: float = Field(description="Percentage of total_amount allocated to this category")
     soft_budget: Optional[float] = Field(
         default=None,
         ge=0,
@@ -530,7 +530,10 @@ class ProjectBudgetGroupCreateRequest(BaseModel):
 
 
 class CategoryBudgetSpecUpdate(BaseModel):
-    pct: float = Field(ge=0, le=100, description="Set to 0 to remove this category from the group")
+    pct: float = Field(
+        json_schema_extra={"minimum": 0, "maximum": 100},
+        description="Set to 0 to remove this category from the group",
+    )
     soft_budget: Optional[float] = Field(default=None, ge=0, description="Soft limit as an absolute amount.")
 
 

@@ -1,0 +1,70 @@
+{
+  "decision": "request-changes",
+  "rationale": "5 blocking patch findings confirmed in source across 3 files: NaN bypass in the service guard (critical, data corruption), CREATE/UPDATE HTTP status asymmetry for pct<0 and pct>100, OpenAPI minimum:0 contract dropped from the update schema, and a test gap leaving the NaN path undetected. No spec/story was present so acceptance was not run (compact profile, genuine no-spec). 0 deferred, 0 dismissed.",
+  "confidence": "low",
+  "risk_flags": ["public-api", "breaking-change"],
+  "business_review": [],
+  "standards_review": [],
+  "findings": [
+    {
+      "id": "CR-001",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/rest_api/routers/project_budget_router.py",
+      "line": 505,
+      "title": "CREATE path still returns 422 for negative pct",
+      "problem": "CategoryBudgetSpec.pct retains ge=0,le=100 (Pydantic), so POST /v1/admin/project-budget-groups returns 422 for a negative pct while PUT returns 400 for the same violation.",
+      "impact": "Clients receive different HTTP status codes for identical invalid input depending on the verb, breaking the uniform error contract introduced by this change.",
+      "recommendation": "Remove ge=0 from CategoryBudgetSpec.pct and extend the spec.pct < 0 (and isfinite) guard in _validate_group_categories to cover the create path as well."
+    },
+    {
+      "id": "CR-002",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/rest_api/routers/project_budget_router.py",
+      "line": 533,
+      "title": "OpenAPI minimum:0 contract dropped from update pct field",
+      "problem": "ge=0 was removed from CategoryBudgetSpecUpdate.pct to move validation to the service layer, but no json_schema_extra was added to restore the minimum:0 annotation; le=100 (which provides maximum:100) was kept, making the schema asymmetric.",
+      "impact": "The OpenAPI spec no longer advertises a lower bound on pct for the update endpoint; generated SDKs, docs, and contract tests lose the minimum:0 assertion.",
+      "recommendation": "Add Field(le=100, json_schema_extra={'minimum': 0}, description='...') to CategoryBudgetSpecUpdate.pct to restore the schema annotation without reintroducing a Pydantic validation constraint."
+    },
+    {
+      "id": "CR-003",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/codemie/rest_api/routers/project_budget_router.py",
+      "line": 533,
+      "title": "UPDATE pct>100 still returns 422 via Pydantic le=100",
+      "problem": "CategoryBudgetSpecUpdate.pct still carries le=100; submitting pct>100 on PUT returns 422 from Pydantic, while pct<0 returns 400 from the service guard. Symmetric range violations on the same field return different status codes.",
+      "impact": "Clients that switch from checking 422 to 400 for validation errors on this endpoint will silently miss the over-100 case.",
+      "recommendation": "Remove le=100 from CategoryBudgetSpecUpdate.pct and add a service-level guard for spec.pct > 100 in _validate_group_categories alongside the existing pct < 0 check."
+    },
+    {
+      "id": "CR-004",
+      "kind": "code",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/codemie/service/budget/project_budget_service.py",
+      "line": 1715,
+      "title": "NaN pct bypasses guard and corrupts budget total",
+      "problem": "The guard checks spec.pct < 0; float('nan') < 0 is False in Python, so NaN passes. Before this change, ge=0 on the Pydantic field rejected NaN (nan >= 0 evaluates False → Pydantic raises 422). Removing ge=0 without adding math.isfinite opened a NaN code path to the database.",
+      "impact": "sum() of category pcts becomes NaN; abs(NaN - 100.0) > PCT_SUM_TOLERANCE evaluates to False so the 100% check also passes; NaN is written as max_budget to the database, silently corrupting the budget group.",
+      "recommendation": "Replace the guard with: if not math.isfinite(spec.pct) or spec.pct < 0 — this rejects NaN, -inf, and negative values in one expression. Import math at the top of the file if not already present."
+    },
+    {
+      "id": "CR-005",
+      "kind": "code",
+      "severity": "major",
+      "triage": "patch",
+      "file": "tests/codemie/service/budget/test_project_budget_service_group_creation.py",
+      "line": 99,
+      "title": "test_system_rejects_invalid_distribution_values covers only negative case",
+      "problem": "test_system_rejects_invalid_distribution_values has a single parametrize case ('negative', pct=-10); NaN and boundary pct=-0.001 are absent.",
+      "impact": "The NaN bypass opened by removing ge=0 (CR-004) is undetectable by the test suite; future regressions on this guard go unnoticed.",
+      "recommendation": "Add parametrize cases for pct=float('nan') and pct=-0.001; assert ExtendedHTTPException with code=400 and that the message contains the offending category key."
+    }
+  ]
+}

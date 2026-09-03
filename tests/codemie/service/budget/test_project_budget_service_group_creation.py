@@ -82,3 +82,39 @@ class TestValidateGroupCategoriesWithZeroPct:
             ProjectBudgetService._validate_group_categories(categories, total_amount=100.0)
         assert exc_info.value.code == 400
         assert "platform" in exc_info.value.message.lower()
+
+
+@pytest.mark.parametrize(
+    "case,offending_key,categories",
+    [
+        (
+            "negative",
+            "cli",
+            {
+                "platform": SimpleNamespace(pct=50.0),
+                "cli": SimpleNamespace(pct=-10.0),
+            },
+        ),
+        (
+            "nan",
+            "platform",
+            {
+                "platform": SimpleNamespace(pct=float("nan")),
+                "cli": SimpleNamespace(pct=0.0),
+            },
+        ),
+        (
+            "just_below_zero",
+            "cli",
+            {
+                "platform": SimpleNamespace(pct=50.0),
+                "cli": SimpleNamespace(pct=-0.001),
+            },
+        ),
+    ],
+)
+def test_system_rejects_invalid_distribution_values(case, offending_key, categories):
+    with pytest.raises(ExtendedHTTPException) as exc_info:
+        ProjectBudgetService._validate_group_categories(categories, total_amount=100.0)
+    assert exc_info.value.code == 400
+    assert offending_key in exc_info.value.message

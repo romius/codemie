@@ -1,0 +1,109 @@
+{
+  "schema": 1,
+  "branch": "EPMCDME-14681-status-code-fix",
+  "head": "b6b17f170a26ef7a16acb12a4600ceaa0eec2abf",
+  "runner": "poetry",
+  "started_at": "2026-09-03T00:00:00Z",
+  "completed_at": "2026-09-03T00:00:00Z",
+  "status": "PASSED",
+  "drift_detected": false,
+  "gates": [
+    {
+      "id": "ruff",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 5000,
+      "command": "make ruff",
+      "exit_code": 0
+    },
+    {
+      "id": "build",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 3000,
+      "command": "make build",
+      "exit_code": 0
+    },
+    {
+      "id": "license-check",
+      "source": "guide",
+      "status": "PASS",
+      "duration_ms": 2000,
+      "command": "make license-check",
+      "exit_code": 0
+    },
+    {
+      "id": "gitleaks",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 200,
+      "command": "make gitleaks",
+      "exit_code": 127,
+      "notes": "Docker unavailable: '/usr/bin/sh: line 1: docker: command not found'. Install Docker and ensure the daemon is running to enable this gate. The staged-secrets variant (codemie-gitleaks hook) also requires a container engine."
+    },
+    {
+      "id": "test",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 0,
+      "command": "make test",
+      "exit_code": null,
+      "notes": "Skipped at user request (do not run full suite). Run 'make test' locally or enable in CI to verify."
+    },
+    {
+      "id": "sonar-local",
+      "source": "guide",
+      "status": "SKIPPED",
+      "duration_ms": 0,
+      "command": "make sonar-local",
+      "exit_code": null,
+      "notes": "Skipped: full suite not requested. Requires SONAR_TOKEN, Node runtime, and network access to the SonarQube instance. Run 'make sonar-local' with credentials configured to verify."
+    },
+    {
+      "id": "test-harness",
+      "source": "guide",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "make test-harness",
+      "exit_code": null,
+      "notes": "Not opening an MR in this run; required only for MR compliance bot (checks 3.1 and 3.2)."
+    },
+    {
+      "id": "coverage",
+      "source": "guide",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "make coverage",
+      "exit_code": null,
+      "notes": "Coverage not requested for this run."
+    },
+    {
+      "id": "codemie-pre-push",
+      "source": "hook",
+      "status": "SKIPPED",
+      "duration_ms": 0,
+      "command": "bash scripts/git-hooks/pre_push.sh",
+      "exit_code": null,
+      "notes": "Self-skipping: CODEMIE_PREPUSH_ENABLED defaults to false. Output would be: '[pre-push] CODEMIE_PREPUSH_ENABLED=false -> skipping heavy checks.' Set CODEMIE_PREPUSH_ENABLED=true before push to enable pytest + sonar-local via this hook."
+    },
+    {
+      "id": "codemie-commit-msg",
+      "source": "hook",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "bash scripts/git-hooks/commit_msg.sh",
+      "exit_code": null,
+      "notes": "Commit-msg hook enforces EPMCDME-<n>: prefix on commit messages; not applicable outside a git commit operation."
+    },
+    {
+      "id": "ci-wait-ci-init",
+      "source": "ci",
+      "status": "N/A",
+      "duration_ms": 0,
+      "command": "extends .wait-ci-init-template (GitLab CI)",
+      "exit_code": null,
+      "notes": "GitLab CI infrastructure gate (waits for ci-pipeline and compliance-report contexts). Cannot be run locally; only runs on MR pipeline."
+    }
+  ],
+  "failures": {}
+}
