@@ -562,11 +562,10 @@ class WorkflowExecutionService:
     ) -> Optional[str]:
         """Handles the state that precedes the interrupted state.
 
-        A predecessor that already SUCCEEDED keeps that status — marking it INTERRUPTED
-        would misreport a step that completed correctly. Instead a pending transition row
-        is recorded so the transition viewer can resolve the edge without returning 404
-        (EPMCDME-13566). A predecessor still IN_PROGRESS when the interrupt lands never
-        finished, so it is marked INTERRUPTED directly.
+        A predecessor that already SUCCEEDED also gets a pending transition row recorded
+        so the transition viewer can resolve the edge without returning 404,
+        in addition to being marked INTERRUPTED like a predecessor still IN_PROGRESS when
+        the interrupt lands.
 
         Returns the predecessor execution-state id on success, or None when no matching
         predecessor exists or the state query failed (logged). Persist failures on the
@@ -588,14 +587,18 @@ class WorkflowExecutionService:
         for state in states:
             if state.state_id not in predecessor_ids:
                 continue
+
             if state.status == WorkflowExecutionStatusEnum.SUCCEEDED:
                 self.record_transition(
                     from_state_id=state.id,
                     to_state_id=None,
                     workflow_context=checkpoint_state or {},
                 )
-                return state.id
-            if state.status == WorkflowExecutionStatusEnum.IN_PROGRESS:
+
+            if state.state_id in predecessor_ids and state.status in (
+                WorkflowExecutionStatusEnum.SUCCEEDED,
+                WorkflowExecutionStatusEnum.IN_PROGRESS,
+            ):
                 try:
                     state.status = WorkflowExecutionStatusEnum.INTERRUPTED
                     state.save()
