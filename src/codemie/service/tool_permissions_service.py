@@ -28,8 +28,8 @@ class ToolPermissionsService:
     assistant/request/conversation policy.
 
     When the feature is enabled the base policy is selected first:
-      - allow_override=True:  request override or conversation-level policy may only raise
-        strictness above the assistant config, never lower it
+      - allow_override=True:  request override or conversation-level policy fully replaces
+        the assistant config when present, otherwise the assistant config is used
       - allow_override=False: assistant config only
 
     The customer floor is then applied as a strictness clamp on top: if the
@@ -57,10 +57,7 @@ class ToolPermissionsService:
             )
 
         if base.allow_override:
-            override = tool_call_policy_override or conversation_policy
-            effective_policy = (
-                ToolCallPolicy.stricter(override, base.tool_call_policy) if override else base.tool_call_policy
-            )
+            effective_policy = tool_call_policy_override or conversation_policy or base.tool_call_policy
         else:
             effective_policy = base.tool_call_policy
 

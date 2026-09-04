@@ -96,14 +96,14 @@ def test_request_override_raises_above_assistant(svc):
     assert result.tool_call_policy == ToolCallPolicy.ASK_FOR_APPROVAL
 
 
-def test_request_override_cannot_lower_assistant_ceiling(svc):
-    """The assistant's confirmation requirement is a hard ceiling a weaker request override cannot disable."""
+def test_request_override_can_lower_below_assistant(svc):
+    """A weaker request override fully replaces the assistant's policy when allow_override is set."""
     with _enabled_no_floor():
         result = svc.get_effective_permissions(
             _assistant(ToolCallPolicy.ASK_FOR_APPROVAL),
             tool_call_policy_override=ToolCallPolicy.AUTO_APPROVE,
         )
-    assert result.tool_call_policy == ToolCallPolicy.ASK_FOR_APPROVAL
+    assert result.tool_call_policy == ToolCallPolicy.AUTO_APPROVE
 
 
 def test_conversation_policy_raises_above_assistant(svc):
@@ -116,14 +116,14 @@ def test_conversation_policy_raises_above_assistant(svc):
     assert result.tool_call_policy == ToolCallPolicy.ASK_FOR_APPROVAL
 
 
-def test_conversation_policy_cannot_lower_assistant_ceiling(svc):
-    """The assistant's confirmation requirement is a hard ceiling a weaker conversation policy cannot disable."""
+def test_conversation_policy_can_lower_below_assistant(svc):
+    """A weaker conversation policy fully replaces the assistant's policy when allow_override is set."""
     with _enabled_no_floor():
         result = svc.get_effective_permissions(
             _assistant(ToolCallPolicy.ASK_FOR_APPROVAL),
             conversation_policy=ToolCallPolicy.AUTO_APPROVE,
         )
-    assert result.tool_call_policy == ToolCallPolicy.ASK_FOR_APPROVAL
+    assert result.tool_call_policy == ToolCallPolicy.AUTO_APPROVE
 
 
 def test_request_beats_conversation(svc):
